@@ -21,13 +21,13 @@ fn rejected(_: &()) -> Result<DecisionArm, ResolverError> {
     Ok(DecisionArm::Right)
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn future_outer_arm_preserves_the_current_nested_local_choice() {
+async fn future_outer_arm_preserves_the_current_nested_local_choice()
+-> core::result::Result<(), hibana::EndpointError> {
     // This transport is entirely in memory. Do not start an OS I/O driver.
-    let task_runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    task_runtime.block_on(async {
+
+    {
         const C: u8 = 0;
         const D: u8 = 1;
         const R: u8 = 2;
@@ -119,5 +119,7 @@ fn future_outer_arm_preserves_the_current_nested_local_choice() {
             assert_eq!(d.recv::<Skip>().await.unwrap(), 41);
             assert_eq!(r.recv::<Skip>().await.unwrap(), 53);
         }
-    });
+    };
+
+    Ok(())
 }

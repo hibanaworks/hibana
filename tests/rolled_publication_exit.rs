@@ -1,4 +1,6 @@
 //! A completed rolled publication must not select a previous descendant arm.
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use core::{
     cell::Cell,
     future::Future,
@@ -86,8 +88,10 @@ fn rolled_publication_exit_keeps_only_live_descendant_selection() {
     }
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn offer_reaches_a_new_sender_after_parallel_rolls_finish() {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn offer_reaches_a_new_sender_after_parallel_rolls_finish()
+-> core::result::Result<(), hibana::EndpointError> {
     type LeftData = g::Msg<1, ()>;
     type LeftStop = g::Msg<2, ()>;
     type LeftDone = g::Msg<3, ()>;
@@ -142,13 +146,20 @@ async fn offer_reaches_a_new_sender_after_parallel_rolls_finish() {
         receiver.send::<LeftDone>(&()).await?;
         receiver.offer().await?.recv::<Next>().await
     };
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(left, right, next, receiver)
+    (async {
+        async {
+            async { (left).await };
+            async { (right).await };
+            async { (next).await };
+            async { (receiver).await };
+        }
+        .await
     })
     .await
-    .expect("a completed parallel loop must not hide the next receive")
     .unwrap();
     assert!(queues.queue_is_empty());
+
+    Ok(())
 }
 
 type Publication<P> = g::Seq<

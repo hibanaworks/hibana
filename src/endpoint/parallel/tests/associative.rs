@@ -1,7 +1,9 @@
 use super::*;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn right_associated_parallel_borrows_have_the_same_flat_local_shape() {
+async fn right_associated_parallel_borrows_have_the_same_flat_local_shape()
+-> core::result::Result<(), hibana::EndpointError> {
     type A = g::Msg<151, u32>;
     type B = g::Msg<152, u32>;
     type C = g::Msg<153, u32>;
@@ -21,38 +23,43 @@ fn right_associated_parallel_borrows_have_the_same_flat_local_shape() {
     let sid = SessionId::new(1669);
     let mut a = rv.enter(sid, &a_program).unwrap();
     let mut b = rv.enter(sid, &b_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                let [mut a_first, mut a_second, mut a_third] = a.par().unwrap();
-                let [mut b_first, mut b_second, mut b_third] = b.par().unwrap();
-                let (b1, a2, b3, a1, b2, a3) = tokio::join!(
-                    b_first.recv::<A>(),
-                    a_second.recv::<B>(),
-                    b_third.recv::<C>(),
-                    a_first.send::<A>(&11),
-                    b_second.send::<B>(&12),
-                    a_third.send::<C>(&13),
-                );
-                assert_eq!(b1.unwrap(), 11);
-                assert_eq!(a2.unwrap(), 12);
-                assert_eq!(b3.unwrap(), 13);
-                a1.unwrap();
-                b2.unwrap();
-                a3.unwrap();
-            })
+    {
+        (async {
+            let [mut a_first, mut a_second, mut a_third] = a.par().unwrap();
+            let [mut b_first, mut b_second, mut b_third] = b.par().unwrap();
+            let (b1, a2, b3, a1, b2, a3) = async {
+                async { Ok::<_, hibana::EndpointError>((b_first.recv::<A>()).await) };
+
+                async { Ok::<_, hibana::EndpointError>((a_second.recv::<B>()).await) };
+
+                async { Ok::<_, hibana::EndpointError>((b_third.recv::<C>()).await) };
+
+                async { Ok::<_, hibana::EndpointError>((a_first.send::<A>(&11)).await) };
+
+                async { Ok::<_, hibana::EndpointError>((b_second.send::<B>(&12)).await) };
+
+                async { Ok::<_, hibana::EndpointError>((a_third.send::<C>(&13)).await) };
+            }
             .await
-            .expect("associative global grouping must not serialize local arms");
-        });
+            .expect("all child results are data");
+            assert_eq!(b1.unwrap(), 11);
+            assert_eq!(a2.unwrap(), 12);
+            assert_eq!(b3.unwrap(), 13);
+            a1.unwrap();
+            b2.unwrap();
+            a3.unwrap();
+        })
+        .await;
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_sequential_prefix_keeps_its_later_parallel_phase() {
+async fn a_sequential_prefix_keeps_its_later_parallel_phase()
+-> core::result::Result<(), hibana::EndpointError> {
     type Begin = g::Msg<154, ()>;
     type A = g::Msg<155, u32>;
     type B = g::Msg<156, u32>;
@@ -76,49 +83,77 @@ fn a_sequential_prefix_keeps_its_later_parallel_phase() {
     let sid = SessionId::new(1670);
     let mut a = rv.enter(sid, &a_program).unwrap();
     let mut b = rv.enter(sid, &b_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let [mut a_work, mut a_tail] = a.par().unwrap();
-            let [mut b_work, mut b_tail] = b.par().unwrap();
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                tokio::join!(
-                    async {
+    {
+        let [mut a_work, mut a_tail] = a.par().unwrap();
+        let [mut b_work, mut b_tail] = b.par().unwrap();
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         a_work.send::<Begin>(&()).await.unwrap();
                         let [mut request, mut notice] = a_work.par().unwrap();
-                        let (received, sent) =
-                            tokio::join!(notice.recv::<B>(), request.send::<A>(&7));
+                        let (received, sent) = async {
+                            async { Ok::<_, hibana::EndpointError>((notice.recv::<B>()).await) };
+                            async { Ok::<_, hibana::EndpointError>((request.send::<A>(&7)).await) };
+                        }
+                        .await
+                        .expect("all child results are data");
                         assert_eq!(received.unwrap(), 8);
                         sent.unwrap();
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         b_work.recv::<Begin>().await.unwrap();
                         let [mut request, mut notice] = b_work.par().unwrap();
-                        let (received, sent) =
-                            tokio::join!(request.recv::<A>(), notice.send::<B>(&8));
+                        let (received, sent) = async {
+                            async { Ok::<_, hibana::EndpointError>((request.recv::<A>()).await) };
+                            async { Ok::<_, hibana::EndpointError>((notice.send::<B>(&8)).await) };
+                        }
+                        .await
+                        .expect("all child results are data");
                         assert_eq!(received.unwrap(), 7);
                         sent.unwrap();
-                    },
-                    async {
-                        tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
+                        crate::test_support::in_process::sleep(core::time::Duration::from_secs(1))
+                            .await;
                         a_tail.send::<C>(&9).await.unwrap();
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         assert_eq!(b_tail.recv::<C>().await.unwrap(), 9);
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("the sequence must enable its own nested parallel phase");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_repeated_parallel_fragment_keeps_its_iteration_boundary() {
+async fn a_repeated_parallel_fragment_keeps_its_iteration_boundary()
+-> core::result::Result<(), hibana::EndpointError> {
     type A = g::Msg<158, u32>;
     type B = g::Msg<159, u32>;
     type C = g::Msg<160, u32>;
@@ -138,54 +173,95 @@ fn a_repeated_parallel_fragment_keeps_its_iteration_boundary() {
     let sid = SessionId::new(1671);
     let mut a = rv.enter(sid, &a_program).unwrap();
     let mut b = rv.enter(sid, &b_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let start = tokio::time::Instant::now();
-            let [mut a_cycles, mut a_tail] = a.par().unwrap();
-            let [mut b_cycles, mut b_tail] = b.par().unwrap();
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                tokio::join!(
-                    async {
+    {
+        let start = crate::test_support::in_process::now();
+        let [mut a_cycles, mut a_tail] = a.par().unwrap();
+        let [mut b_cycles, mut b_tail] = b.par().unwrap();
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         for value in [1, 2, 3] {
                             let [mut request, mut notice] = a_cycles.par().unwrap();
-                            let (received, sent) =
-                                tokio::join!(notice.recv::<B>(), request.send::<A>(&value));
+                            let (received, sent) = async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>((notice.recv::<B>()).await)
+                                };
+                                async {
+                                    Ok::<_, hibana::EndpointError>(
+                                        (request.send::<A>(&value)).await,
+                                    )
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                             assert_eq!(received.unwrap(), value + 10);
                             sent.unwrap();
                         }
-                        assert!(start.elapsed() < core::time::Duration::from_secs(1));
-                    },
-                    async {
+                        assert!(
+                            crate::test_support::in_process::now().saturating_sub(start)
+                                < core::time::Duration::from_secs(1)
+                        );
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         for value in [1, 2, 3] {
                             let [mut request, mut notice] = b_cycles.par().unwrap();
                             let reply = value + 10;
-                            let (received, sent) =
-                                tokio::join!(request.recv::<A>(), notice.send::<B>(&reply));
+                            let (received, sent) = async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>((request.recv::<A>()).await)
+                                };
+                                async {
+                                    Ok::<_, hibana::EndpointError>((notice.send::<B>(&reply)).await)
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                             assert_eq!(received.unwrap(), value);
                             sent.unwrap();
                         }
-                    },
-                    async {
-                        tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
+                        crate::test_support::in_process::sleep(core::time::Duration::from_secs(1))
+                            .await;
                         a_tail.send::<C>(&9).await.unwrap();
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         assert_eq!(b_tail.recv::<C>().await.unwrap(), 9);
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("the repeated fragment must stay independent of its sibling");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_role_without_an_arm_does_not_require_an_extra_borrow() {
+async fn a_role_without_an_arm_does_not_require_an_extra_borrow()
+-> core::result::Result<(), hibana::EndpointError> {
     type A = g::Msg<161, u32>;
     type Hidden = g::Msg<162, u32>;
     type B = g::Msg<163, u32>;
@@ -209,39 +285,53 @@ fn a_role_without_an_arm_does_not_require_an_extra_borrow() {
     let mut b = rv.enter(sid, &b_program).unwrap();
     let mut c = rv.enter(sid, &c_program).unwrap();
     let mut d = rv.enter(sid, &d_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                assert!(a.par::<3>().is_err());
-                let [mut request, mut notice] = a.par().unwrap();
-                let [mut peer_request, mut peer_notice] = b.par().unwrap();
-                tokio::join!(
-                    async {
+    {
+        (async {
+            assert!(a.par::<3>().is_err());
+            let [mut request, mut notice] = a.par().unwrap();
+            let [mut peer_request, mut peer_notice] = b.par().unwrap();
+            async {
+                async {
+                    let _: () = (async {
                         request.send::<A>(&7).await.unwrap();
                         assert_eq!(peer_request.recv::<A>().await.unwrap(), 7);
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         peer_notice.send::<B>(&8).await.unwrap();
                         assert_eq!(notice.recv::<B>().await.unwrap(), 8);
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         c.send::<Hidden>(&9).await.unwrap();
                         assert_eq!(d.recv::<Hidden>().await.unwrap(), 9);
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("projection must erase the unrelated role pair from these borrows");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn borrowing_parallel_arms_does_not_choose_an_unresolved_route() {
+async fn borrowing_parallel_arms_does_not_choose_an_unresolved_route()
+-> core::result::Result<(), hibana::EndpointError> {
     type A = g::Msg<164, u32>;
     type B = g::Msg<165, u32>;
     type C = g::Msg<166, u32>;
@@ -278,38 +368,41 @@ fn borrowing_parallel_arms_does_not_choose_an_unresolved_route() {
         receiver.par::<3>().is_err(),
         "borrowing must not guess a route before its first frame"
     );
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                sender.send::<D>(&17).await.unwrap();
-                let branch = receiver.offer().await.unwrap();
-                assert_eq!(branch.label(), 167);
-                assert_eq!(branch.recv::<D>().await.unwrap(), 17);
-                let [sent, mut send_e, mut send_f] = sender.par().unwrap();
-                let [received, mut recv_e, mut recv_f] = receiver.par().unwrap();
-                drop((sent, received));
-                let (e, f, se, sf) = tokio::join!(
-                    recv_e.recv::<E>(),
-                    recv_f.recv::<F>(),
-                    send_e.send::<E>(&18),
-                    send_f.send::<F>(&19),
-                );
-                assert_eq!(e.unwrap(), 18);
-                assert_eq!(f.unwrap(), 19);
-                se.unwrap();
-                sf.unwrap();
-            })
+    {
+        (async {
+            sender.send::<D>(&17).await.unwrap();
+            let branch = receiver.offer().await.unwrap();
+            assert_eq!(branch.label(), 167);
+            assert_eq!(branch.recv::<D>().await.unwrap(), 17);
+            let [sent, mut send_e, mut send_f] = sender.par().unwrap();
+            let [received, mut recv_e, mut recv_f] = receiver.par().unwrap();
+            drop((sent, received));
+            let (e, f, se, sf) = async {
+                async { Ok::<_, hibana::EndpointError>((recv_e.recv::<E>()).await) };
+
+                async { Ok::<_, hibana::EndpointError>((recv_f.recv::<F>()).await) };
+
+                async { Ok::<_, hibana::EndpointError>((send_e.send::<E>(&18)).await) };
+
+                async { Ok::<_, hibana::EndpointError>((send_f.send::<F>(&19)).await) };
+            }
             .await
-            .expect("the selected route must retain its independent arms");
-        });
+            .expect("all child results are data");
+            assert_eq!(e.unwrap(), 18);
+            assert_eq!(f.unwrap(), 19);
+            se.unwrap();
+            sf.unwrap();
+        })
+        .await;
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
-#[tokio::test(flavor = "current_thread")]
-async fn erased_outer_parallel_arms_do_not_hide_the_next_local_fork() {
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn erased_outer_parallel_arms_do_not_hide_the_next_local_fork()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::{
         g,
         runtime::{SessionKitStorage, ids::SessionId, program::project},
@@ -346,34 +439,63 @@ async fn erased_outer_parallel_arms_do_not_hide_the_next_local_fork() {
     let mut b = runtime.enter(session, &p1).unwrap();
     let mut c = runtime.enter(session, &p2).unwrap();
     let mut d = runtime.enter(session, &p3).unwrap();
-    let (_, _, independent, _) = tokio::join!(
+    let (_, _, independent, _) = async {
         async {
-            assert!(a.par::<2>().is_err());
-            a.send::<Begin>(&1).await.unwrap();
-            assert!(a.par::<4>().is_err());
-            {
-                let [mut left, mut right] = a.par().unwrap();
-                let (left, right) = tokio::join!(left.send::<Left>(&2), right.send::<Right>(&3));
-                left.unwrap();
-                right.unwrap();
-            }
-            assert_eq!(a.recv::<Done>().await.unwrap(), 4);
-        },
+            let _: () = (async {
+                assert!(a.par::<2>().is_err());
+                a.send::<Begin>(&1).await.unwrap();
+                assert!(a.par::<4>().is_err());
+                {
+                    let [mut left, mut right] = a.par().unwrap();
+                    let (left, right) = async {
+                        async { Ok::<_, hibana::EndpointError>((left.send::<Left>(&2)).await) };
+                        async { Ok::<_, hibana::EndpointError>((right.send::<Right>(&3)).await) };
+                    }
+                    .await
+                    .expect("all child results are data");
+                    left.unwrap();
+                    right.unwrap();
+                }
+                assert_eq!(a.recv::<Done>().await.unwrap(), 4);
+            })
+            .await;
+            Ok::<_, hibana::EndpointError>(())
+        };
+
         async {
-            let [mut work] = b.par().unwrap();
-            assert_eq!(work.recv::<Begin>().await.unwrap(), 1);
-            {
-                let [mut left, mut right] = work.par().unwrap();
-                let (right, left) = tokio::join!(right.recv::<Right>(), left.recv::<Left>());
-                assert_eq!((left.unwrap(), right.unwrap()), (2, 3));
-            }
-            work.send::<Done>(&4).await.unwrap();
-        },
-        c.send::<Independent>(&5),
+            let _: () = (async {
+                let [mut work] = b.par().unwrap();
+                assert_eq!(work.recv::<Begin>().await.unwrap(), 1);
+                {
+                    let [mut left, mut right] = work.par().unwrap();
+                    let (right, left) = async {
+                        async { Ok::<_, hibana::EndpointError>((right.recv::<Right>()).await) };
+                        async { Ok::<_, hibana::EndpointError>((left.recv::<Left>()).await) };
+                    }
+                    .await
+                    .expect("all child results are data");
+                    assert_eq!((left.unwrap(), right.unwrap()), (2, 3));
+                }
+                work.send::<Done>(&4).await.unwrap();
+            })
+            .await;
+            Ok::<_, hibana::EndpointError>(())
+        };
+
+        async { Ok::<_, hibana::EndpointError>((c.send::<Independent>(&5)).await) };
+
         async {
-            assert_eq!(d.recv::<Independent>().await.unwrap(), 5);
-        },
-    );
+            let _: () = (async {
+                assert_eq!(d.recv::<Independent>().await.unwrap(), 5);
+            })
+            .await;
+            Ok::<_, hibana::EndpointError>(())
+        };
+    }
+    .await
+    .expect("all child results are data");
     independent.unwrap();
     assert!(network.queue_is_empty());
+
+    Ok(())
 }

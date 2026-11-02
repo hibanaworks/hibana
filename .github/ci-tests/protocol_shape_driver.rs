@@ -58,8 +58,10 @@ impl Decisions<'_> {
     }
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn resolver_inputs_support_the_full_u16_identifier_range() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+#[test]
+async fn resolver_inputs_support_the_full_u16_identifier_range() -> core::result::Result<(), hibana::EndpointError>
+{
     type Left = g::Msg<250, ()>;
     type Right = g::Msg<251, ()>;
     let global = g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()).resolve::<65535>();
@@ -83,16 +85,18 @@ async fn resolver_inputs_support_the_full_u16_identifier_range() {
     .unwrap();
     let mut a = rv0.enter(SessionId::new(1), &p0).unwrap();
     let mut b = rv1.enter(SessionId::new(1), &p1).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(async { a.send::<Right>(&()).await }, async {
+    async {
+        async { a.send::<Right>(&()).await };
+        async {
             let branch = b.offer().await?;
             assert_eq!(branch.label(), 251);
             branch.recv::<Right>().await
-        })
-    })
+        };
+        Ok(())
+    }
     .await
-    .expect("resolver input stalled")
     .unwrap();
+    Ok(())
 }
 
 struct Programs {
@@ -401,14 +405,12 @@ async fn replay(
         if park_before_last && index + 1 == commands.len() {
             macro_rules! park {
                 ($endpoint:expr) => {{
-                    use core::{future::Future, task::Poll};
-                    let mut future = core::pin::pin!($endpoint.offer());
-                    match std::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await {
-                        Poll::Ready(Ok(branch)) => {
+                    match in_process::timeout(core::time::Duration::from_millis(1), $endpoint.offer()).await {
+                        Ok(Ok(branch)) => {
                             parked_label = Some(branch.label());
                             drop(branch);
                         }
-                        Poll::Ready(Err(_)) | Poll::Pending => return (outcome, None),
+                        Ok(Err(_)) | Err(_) => return (outcome, None),
                     }
                 }};
             }
@@ -439,7 +441,7 @@ async fn replay(
         }
         macro_rules! observe {
             ($operation:expr) => {
-                match tokio::time::timeout(core::time::Duration::from_millis(1), $operation).await {
+                match in_process::timeout(core::time::Duration::from_millis(1), $operation).await {
                     Ok(Ok(_)) => Outcome::Accepted,
                     Ok(Err(error)) => {
                         assert_eq!(
@@ -480,12 +482,11 @@ async fn replay(
                     None => Outcome::Unavailable,
                     Some(actor) => {
                         if command.receive {
-                            match tokio::time::timeout(
-                                core::time::Duration::from_millis(1),
-                                receive!($carrier[actor].as_mut().unwrap(), Loan, command),
-                            )
-                            .await
-                            {
+                            match in_process::timeout(core::time::Duration::from_millis(1), receive!(
+                                    $carrier[actor].as_mut().unwrap(),
+                                    Loan,
+                                    command
+                                )).await {
                                 Ok(Ok(endpoint)) => {
                                     assert!(
                                         $payload[actor].replace(endpoint).is_none(),
@@ -578,8 +579,9 @@ struct Scenario<'a> {
     completed_plan_words: &'a std::collections::BTreeSet<String>,
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn alias_replay_keeps_the_recorded_resolver_input() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+#[test]
+async fn alias_replay_keeps_the_recorded_resolver_input() -> core::result::Result<(), hibana::EndpointError> {
     type First = g::Msg<1, ()>;
     type Reused = g::Msg<0, ()>;
     let global = g::route(
@@ -636,10 +638,13 @@ async fn alias_replay_keeps_the_recorded_resolver_input() {
         .0,
         Outcome::Accepted,
     );
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn replay_preserves_selected_holders_across_two_resource_transfers() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+#[test]
+async fn replay_preserves_selected_holders_across_two_resource_transfers()
+-> core::result::Result<(), hibana::EndpointError> {
     fn programs() -> Programs {
         type Notice = g::Msg<REPLAY_NOTICE, ()>;
         type Loan<'r> = g::Msg<REPLAY_LOAN, Endpoint<'r, 3>>;
@@ -737,10 +742,13 @@ async fn replay_preserves_selected_holders_across_two_resource_transfers() {
             );
         }
     }
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn replay_allows_retained_work_when_an_unused_resource_moves() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+#[test]
+async fn replay_allows_retained_work_when_an_unused_resource_moves()
+-> core::result::Result<(), hibana::EndpointError> {
     fn programs() -> Programs {
         type Loan<'r> = g::Msg<REPLAY_LOAN, Endpoint<'r, 3>>;
         type Work = g::Msg<REPLAY_WORK, ()>;
@@ -802,6 +810,7 @@ async fn replay_allows_retained_work_when_an_unused_resource_moves() {
         Outcome::Accepted,
         "moving an unused resource must preserve the retained operation"
     );
+    Ok(())
 }
 
 async fn qualify(programs: Programs, scenario: Scenario<'_>) {

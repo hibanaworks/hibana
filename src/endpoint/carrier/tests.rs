@@ -92,12 +92,11 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
     drop(client);
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn pending_receive_keeps_its_io_but_releases_the_actor_borrow() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("runtime");
-    runtime.block_on(async {
+async fn pending_receive_keeps_its_io_but_releases_the_actor_borrow()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
         let protocol = g::send::<0, 1, Msg<1, u32>>();
         let role0 = project::<0>(&protocol);
         let role1 = project::<1>(&protocol);
@@ -129,5 +128,7 @@ fn pending_receive_keeps_its_io_but_releases_the_actor_borrow() {
         drop(lease);
         client.send::<Msg<1, u32>>(&37).await.expect("send");
         assert_eq!(receive.await.expect("receive"), 37);
-    });
+    };
+
+    Ok(())
 }

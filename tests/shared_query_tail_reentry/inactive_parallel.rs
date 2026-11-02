@@ -29,104 +29,104 @@ type Revise = g::Msg<11, ()>;
 type Approved = g::Msg<12, ()>;
 type ReviseFeedback = g::Msg<13, ()>;
 type ApproveFeedback = g::Msg<14, ()>;
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn inactive_parallel_dependency_does_not_block_outer_roll_reentry() {
+async fn inactive_parallel_dependency_does_not_block_outer_roll_reentry()
+-> core::result::Result<(), hibana::EndpointError> {
     // All communication is in-memory. The executor needs neither OS I/O nor
     // a clock, so this same test runs under Miri without opening a selector.
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let body = g::seq(
-                g::send::<OWNER, OWNER, Inner>(),
-                g::seq(
-                    g::send::<OWNER, CLIENT, RequestReady>(),
-                    g::route(
-                        g::seq(
-                            g::send::<CLIENT, OWNER, Open>(),
-                            g::send::<OWNER, CLIENT, Opened>(),
-                        ),
-                        g::seq(
-                            g::send::<CLIENT, OWNER, Request>(),
-                            g::route(
-                                g::seq(
-                                    g::send::<OWNER, OWNER, Validate>(),
-                                    g::send::<OWNER, CLIENT, Admitted>(),
-                                ),
-                                g::send::<OWNER, CLIENT, Rejected>(),
-                            ),
-                        ),
+    {
+        let body = g::seq(
+            g::send::<OWNER, OWNER, Inner>(),
+            g::seq(
+                g::send::<OWNER, CLIENT, RequestReady>(),
+                g::route(
+                    g::seq(
+                        g::send::<CLIENT, OWNER, Open>(),
+                        g::send::<OWNER, CLIENT, Opened>(),
                     ),
-                ),
-            )
-            .roll();
-            let review = g::seq(
-                g::send::<REVIEWER, REVIEWER, BeginReview>(),
-                g::send::<REVIEWER, OWNER, ReviewRequested>(),
-            );
-            let prefix = g::par(g::seq(g::send::<OWNER, OWNER, Outer>(), body), review);
-            let merge = g::seq(
-                g::send::<OWNER, OWNER, Merge>(),
-                g::seq(
-                    g::send::<OWNER, CLIENT, RequestReady>(),
                     g::seq(
                         g::send::<CLIENT, OWNER, Request>(),
-                        g::send::<OWNER, CLIENT, Admitted>(),
-                    ),
-                ),
-            )
-            .roll();
-            let accepted = g::seq(
-                g::send::<REVIEWER, REVIEWER, Approved>(),
-                g::seq(
-                    g::send::<REVIEWER, OWNER, ApproveFeedback>(),
-                    g::seq(
-                        g::send::<OWNER, CLIENT, Result>(),
-                        g::seq(
-                            g::send::<OWNER, CLIENT, Done>(),
-                            g::par(
-                                merge,
-                                g::seq(
-                                    g::send::<REVIEWER, CLIENT, CloseReady>(),
-                                    g::send::<CLIENT, REVIEWER, CloseExit>(),
-                                )
-                                .roll(),
+                        g::route(
+                            g::seq(
+                                g::send::<OWNER, OWNER, Validate>(),
+                                g::send::<OWNER, CLIENT, Admitted>(),
                             ),
+                            g::send::<OWNER, CLIENT, Rejected>(),
                         ),
                     ),
                 ),
-            );
-            let rejected = g::seq(
-                g::send::<REVIEWER, REVIEWER, Revise>(),
+            ),
+        )
+        .roll();
+        let review = g::seq(
+            g::send::<REVIEWER, REVIEWER, BeginReview>(),
+            g::send::<REVIEWER, OWNER, ReviewRequested>(),
+        );
+        let prefix = g::par(g::seq(g::send::<OWNER, OWNER, Outer>(), body), review);
+        let merge = g::seq(
+            g::send::<OWNER, OWNER, Merge>(),
+            g::seq(
+                g::send::<OWNER, CLIENT, RequestReady>(),
                 g::seq(
-                    g::send::<REVIEWER, OWNER, ReviseFeedback>(),
+                    g::send::<CLIENT, OWNER, Request>(),
+                    g::send::<OWNER, CLIENT, Admitted>(),
+                ),
+            ),
+        )
+        .roll();
+        let accepted = g::seq(
+            g::send::<REVIEWER, REVIEWER, Approved>(),
+            g::seq(
+                g::send::<REVIEWER, OWNER, ApproveFeedback>(),
+                g::seq(
+                    g::send::<OWNER, CLIENT, Result>(),
                     g::seq(
-                        g::send::<OWNER, CLIENT, Result>(),
                         g::send::<OWNER, CLIENT, Done>(),
+                        g::par(
+                            merge,
+                            g::seq(
+                                g::send::<REVIEWER, CLIENT, CloseReady>(),
+                                g::send::<CLIENT, REVIEWER, CloseExit>(),
+                            )
+                            .roll(),
+                        ),
                     ),
                 ),
-            );
-            let global = g::seq(
-                prefix,
+            ),
+        );
+        let rejected = g::seq(
+            g::send::<REVIEWER, REVIEWER, Revise>(),
+            g::seq(
+                g::send::<REVIEWER, OWNER, ReviseFeedback>(),
                 g::seq(
-                    g::send::<OWNER, REVIEWER, CanReview>(),
-                    g::route(accepted, rejected),
+                    g::send::<OWNER, CLIENT, Result>(),
+                    g::send::<OWNER, CLIENT, Done>(),
                 ),
-            )
-            .roll();
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let p2 = project::<2>(&global);
-            let mut bytes = vec![0; 1024 * 1024];
-            let mut storage = SessionKitStorage::uninit();
-            let kit = storage.init();
-            let carrier = crate::common::TestTransport::new();
-            let rv = kit.rendezvous(&mut bytes, carrier.clone()).unwrap();
-            let mut owner = rv.enter(SessionId::new(1), &p0).unwrap();
-            let mut client = rv.enter(SessionId::new(1), &p1).unwrap();
-            let mut reviewer = rv.enter(SessionId::new(1), &p2).unwrap();
-            tokio::join!(
-                async {
+            ),
+        );
+        let global = g::seq(
+            prefix,
+            g::seq(
+                g::send::<OWNER, REVIEWER, CanReview>(),
+                g::route(accepted, rejected),
+            ),
+        )
+        .roll();
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let p2 = project::<2>(&global);
+        let mut bytes = vec![0; 1024 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let kit = storage.init();
+        let carrier = crate::common::TestTransport::new();
+        let rv = kit.rendezvous(&mut bytes, carrier.clone()).unwrap();
+        let mut owner = rv.enter(SessionId::new(1), &p0).unwrap();
+        let mut client = rv.enter(SessionId::new(1), &p1).unwrap();
+        let mut reviewer = rv.enter(SessionId::new(1), &p2).unwrap();
+        async {
+            async {
+                let _: () = (async {
                     for _ in 0..3 {
                         owner.send::<Outer>(&()).await.expect("owner outer");
                         owner.send::<Inner>(&()).await.expect("owner inner open");
@@ -156,8 +156,13 @@ fn inactive_parallel_dependency_does_not_block_outer_roll_reentry() {
                         owner.send::<Result>(&()).await.expect("owner result");
                         owner.send::<Done>(&()).await.expect("owner done");
                     }
-                },
-                async {
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
                     for _ in 0..3 {
                         client
                             .recv::<RequestReady>()
@@ -177,8 +182,13 @@ fn inactive_parallel_dependency_does_not_block_outer_roll_reentry() {
                         client.recv::<Result>().await.expect("client result");
                         client.recv::<Done>().await.expect("client done");
                     }
-                },
-                async {
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
                     for _ in 0..3 {
                         reviewer
                             .send::<BeginReview>(&())
@@ -198,7 +208,14 @@ fn inactive_parallel_dependency_does_not_block_outer_roll_reentry() {
                             .await
                             .expect("reviewer revise feedback");
                     }
-                }
-            );
-        });
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
+    };
+
+    Ok(())
 }

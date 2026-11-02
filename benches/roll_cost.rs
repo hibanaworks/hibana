@@ -3,6 +3,8 @@
 mod callgrind;
 #[path = "../examples/support/in_memory.rs"]
 mod in_memory;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 #[path = "support/protocol_repetition.rs"]
 mod protocol_repetition;
 use protocol_repetition::repeated;
@@ -23,7 +25,12 @@ type Reply = Msg<2, u32>;
 const ROUNDS: u32 = 128;
 const OPERATIONS: u32 = 4 * ROUNDS;
 
-async fn measure(body_rounds: u32, programs: &(RoleProgram<0>, RoleProgram<1>), samples: usize) {
+#[hibana_runtime::scope]
+async fn measure(
+    body_rounds: u32,
+    programs: &(RoleProgram<0>, RoleProgram<1>),
+    samples: usize,
+) -> core::result::Result<(), hibana::EndpointError> {
     let mut durations = Vec::with_capacity(samples);
     for sample in 0..samples + 3 {
         let mut slab = [0u8; 64 * 1024];
@@ -37,20 +44,22 @@ async fn measure(body_rounds: u32, programs: &(RoleProgram<0>, RoleProgram<1>), 
         let mut b = rv.enter(sid, &programs.1).unwrap();
         let start = Instant::now();
         callgrind::start();
-        tokio::join!(
+        async {
             async {
                 for n in 0..ROUNDS {
-                    a.send::<Request>(&black_box(n)).await.unwrap();
-                    assert_eq!(a.recv::<Reply>().await.unwrap(), n + 1);
+                    a.send::<Request>(&black_box(n)).await?;
+                    assert_eq!(a.recv::<Reply>().await?, n + 1);
                 }
-            },
+            };
             async {
                 for n in 0..ROUNDS {
-                    assert_eq!(b.recv::<Request>().await.unwrap(), n);
-                    b.send::<Reply>(&black_box(n + 1)).await.unwrap();
+                    assert_eq!(b.recv::<Request>().await?, n);
+                    b.send::<Reply>(&black_box(n + 1)).await?;
                 }
-            },
-        );
+            };
+            Ok(())
+        }
+        .await?;
         callgrind::stop();
         let elapsed = start.elapsed();
         if sample >= 3 {
@@ -64,9 +73,11 @@ async fn measure(body_rounds: u32, programs: &(RoleProgram<0>, RoleProgram<1>), 
         durations[0],
         durations[samples / 2],
     );
+    Ok(())
 }
 
-fn main() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+async fn main() -> core::result::Result<(), hibana::EndpointError> {
     let samples = std::env::var("HIBANA_PERF_SAMPLES")
         .map(|s| s.parse::<usize>().unwrap())
         .unwrap_or(30);
@@ -84,14 +95,10 @@ fn main() {
     println!(
         "case\tbody_round_trips\tvisits\tendpoint_ops\tsamples\tbest_ns_per_op\tmedian_ns_per_op"
     );
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            for (size, programs) in &programs {
-                if body == "all" || body.parse::<u32>().unwrap() == *size {
-                    measure(*size, programs, samples).await;
-                }
-            }
-        });
+    for (size, programs) in &programs {
+        if body == "all" || body.parse::<u32>().unwrap() == *size {
+            measure(*size, programs, samples).await?;
+        }
+    }
+    Ok(())
 }

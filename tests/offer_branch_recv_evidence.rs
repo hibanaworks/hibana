@@ -1,4 +1,6 @@
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_ref.rs"]
@@ -23,8 +25,10 @@ use hibana::runtime::{
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_choice_after_a_parallel_join_survives_repeated_preview() {
+async fn a_choice_after_a_parallel_join_survives_repeated_preview()
+-> core::result::Result<(), hibana::EndpointError> {
     type First = Msg<220, ()>;
     type FirstReply = Msg<221, ()>;
     type Second = Msg<222, ()>;
@@ -54,57 +58,76 @@ fn a_choice_after_a_parallel_join_survives_repeated_preview() {
     let sid = SessionId::new(9483);
     let mut sender = rv0.enter(sid, &p0).unwrap();
     let mut receiver = rv1.enter(sid, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                {
-                    let [mut first, mut second] = sender.par().unwrap();
-                    let [mut first_peer, mut second_peer] = receiver.par().unwrap();
-                    tokio::join!(
-                        async {
+    {
+        (async {
+            {
+                let [mut first, mut second] = sender.par().unwrap();
+                let [mut first_peer, mut second_peer] = receiver.par().unwrap();
+                async {
+                    async {
+                        let _: () = (async {
                             first.send::<First>(&()).await.unwrap();
                             first.recv::<FirstReply>().await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             second.send::<Second>(&()).await.unwrap();
                             second.recv::<SecondReply>().await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             first_peer.recv::<First>().await.unwrap();
                             first_peer.send::<FirstReply>(&()).await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             second_peer.recv::<Second>().await.unwrap();
                             second_peer.send::<SecondReply>(&()).await.unwrap();
-                        }
-                    );
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
                 }
-                sender
-                    .offer()
-                    .await
-                    .unwrap()
-                    .send::<Left>(&())
-                    .await
-                    .unwrap();
-                let preview = receiver.offer().await.unwrap();
-                assert_eq!(preview.label(), 224);
-                drop(preview);
-                let branch = receiver.offer().await.unwrap();
-                assert_eq!(branch.label(), 224);
-                branch.recv::<Left>().await.unwrap();
-                assert!(network.queue_is_empty());
-            })
-            .await
-            .expect("the joined protocol must retain its choice");
-        });
+                .await
+                .expect("all child results are data");
+            }
+            sender
+                .offer()
+                .await
+                .unwrap()
+                .send::<Left>(&())
+                .await
+                .unwrap();
+            let preview = receiver.offer().await.unwrap();
+            assert_eq!(preview.label(), 224);
+            drop(preview);
+            let branch = receiver.offer().await.unwrap();
+            assert_eq!(branch.label(), 224);
+            branch.recv::<Left>().await.unwrap();
+            assert!(network.queue_is_empty());
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_completed_parallel_sibling_does_not_authorize_the_join_receive() {
+async fn a_completed_parallel_sibling_does_not_authorize_the_join_receive()
+-> core::result::Result<(), hibana::EndpointError> {
     type Left = Msg<230, ()>;
     type Right = Msg<231, ()>;
     type Independent = Msg<232, ()>;
@@ -127,27 +150,26 @@ fn a_completed_parallel_sibling_does_not_authorize_the_join_receive() {
     let sid = SessionId::new(9482);
     let mut sender = rv0.enter(sid, &p0).unwrap();
     let mut receiver = rv1.enter(sid, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            sender.send::<Independent>(&()).await.unwrap();
-            receiver.recv::<Independent>().await.unwrap();
-            sender.send::<Left>(&()).await.unwrap();
-            let tail = tokio::time::timeout(
-                core::time::Duration::from_millis(1),
-                receiver.recv::<Tail>(),
-            )
-            .await;
-            tail.expect("an out-of-order receive must return without waiting")
-                .expect_err("the branch frame was consumed as its sequential continuation");
-        });
+    {
+        sender.send::<Independent>(&()).await.unwrap();
+        receiver.recv::<Independent>().await.unwrap();
+        sender.send::<Left>(&()).await.unwrap();
+        let tail = crate::in_process::timeout(
+            core::time::Duration::from_millis(1),
+            receiver.recv::<Tail>(),
+        )
+        .await;
+        tail.expect("an out-of-order receive must return without waiting")
+            .expect_err("the branch frame was consumed as its sequential continuation");
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_completed_parallel_sibling_keeps_the_other_choice_observable() {
+async fn a_completed_parallel_sibling_keeps_the_other_choice_observable()
+-> core::result::Result<(), hibana::EndpointError> {
     type Left = Msg<230, ()>;
     type Right = Msg<231, ()>;
     type Independent = Msg<232, ()>;
@@ -170,29 +192,25 @@ fn a_completed_parallel_sibling_keeps_the_other_choice_observable() {
     let sid = SessionId::new(9481);
     let mut sender = rv0.enter(sid, &p0).unwrap();
     let mut receiver = rv1.enter(sid, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                sender.send::<Independent>(&()).await.unwrap();
-                receiver.recv::<Independent>().await.unwrap();
-                sender.send::<Left>(&()).await.unwrap();
-                let branch = receiver.offer().await.unwrap();
-                assert_eq!(branch.label(), 230);
-                drop(branch);
-                let branch = receiver.offer().await.unwrap();
-                assert_eq!(branch.label(), 230);
-                branch.recv::<Left>().await.unwrap();
-                sender.send::<Tail>(&()).await.unwrap();
-                receiver.recv::<Tail>().await.unwrap();
-                assert!(network.queue_is_empty());
-            })
-            .await
-            .expect("the remaining choice must stay observable");
-        });
+    {
+        (async {
+            sender.send::<Independent>(&()).await.unwrap();
+            receiver.recv::<Independent>().await.unwrap();
+            sender.send::<Left>(&()).await.unwrap();
+            let branch = receiver.offer().await.unwrap();
+            assert_eq!(branch.label(), 230);
+            drop(branch);
+            let branch = receiver.offer().await.unwrap();
+            assert_eq!(branch.label(), 230);
+            branch.recv::<Left>().await.unwrap();
+            sender.send::<Tail>(&()).await.unwrap();
+            receiver.recv::<Tail>().await.unwrap();
+            assert!(network.queue_is_empty());
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
@@ -851,88 +869,109 @@ fn forgotten_route_recv_future_leaves_endpoint_fail_closed() {
     });
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_same_lane_receive_choices_keep_their_exact_branch_admission() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            for choice in 0..3u8 {
-                for receiver_first in [false, true] {
-                    type A = Msg<210, ()>;
-                    type B = Msg<211, ()>;
-                    type C = Msg<212, ()>;
-                    let global = g::route(
-                        g::send::<0, 1, A>(),
-                        g::route(g::send::<0, 1, B>(), g::send::<0, 1, C>()),
-                    );
-                    let p0 = project::<0>(&global);
-                    let p1 = project::<1>(&global);
-                    let network = TestTransport::new();
-                    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
-                    let mut storage0 = SessionKitStorage::uninit();
-                    let mut storage1 = SessionKitStorage::uninit();
-                    let rv0 = storage0
-                        .init()
-                        .rendezvous(&mut slab0, network.clone())
-                        .unwrap();
-                    let rv1 = storage1
-                        .init()
-                        .rendezvous(&mut slab1, network.clone())
-                        .unwrap();
-                    let sid = SessionId::new(9490);
-                    let mut sender = rv0.enter(sid, &p0).unwrap();
-                    let mut receiver = rv1.enter(sid, &p1).unwrap();
-                    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                        let send = async {
-                            match choice {
-                                0 => sender.send::<A>(&()).await.unwrap(),
-                                1 => sender.send::<B>(&()).await.unwrap(),
-                                2 => sender.send::<C>(&()).await.unwrap(),
-                                _ => unreachable!(),
-                            }
-                            let header = network.queued_frame(1).0.bytes();
-                            assert_eq!(&header[4..7], &[0, 0, 1]);
-                            assert_eq!(
-                                u16::from_be_bytes([header[7], header[8]]),
-                                u16::from(choice)
-                            );
-                        };
-                        let receive = async {
-                            let branch = receiver.offer().await.unwrap();
-                            assert_eq!(
-                                branch.label(),
-                                210 + choice,
-                                "choice={choice} receiver_first={receiver_first}"
-                            );
-                            drop(branch);
-                            let branch = receiver.offer().await.unwrap();
-                            assert_eq!(
-                                branch.label(),
-                                210 + choice,
-                                "repeated preview choice={choice} receiver_first={receiver_first}"
-                            );
-                            match choice {
-                                0 => branch.recv::<A>().await.unwrap(),
-                                1 => branch.recv::<B>().await.unwrap(),
-                                2 => branch.recv::<C>().await.unwrap(),
-                                _ => unreachable!(),
-                            }
-                        };
-                        if receiver_first {
-                            tokio::join!(biased; receive, send);
-                        } else {
-                            tokio::join!(biased; send, receive);
+async fn nested_same_lane_receive_choices_keep_their_exact_branch_admission()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        for choice in 0..3u8 {
+            for receiver_first in [false, true] {
+                type A = Msg<210, ()>;
+                type B = Msg<211, ()>;
+                type C = Msg<212, ()>;
+                let global = g::route(
+                    g::send::<0, 1, A>(),
+                    g::route(g::send::<0, 1, B>(), g::send::<0, 1, C>()),
+                );
+                let p0 = project::<0>(&global);
+                let p1 = project::<1>(&global);
+                let network = TestTransport::new();
+                let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+                let mut storage0 = SessionKitStorage::uninit();
+                let mut storage1 = SessionKitStorage::uninit();
+                let rv0 = storage0
+                    .init()
+                    .rendezvous(&mut slab0, network.clone())
+                    .unwrap();
+                let rv1 = storage1
+                    .init()
+                    .rendezvous(&mut slab1, network.clone())
+                    .unwrap();
+                let sid = SessionId::new(9490);
+                let mut sender = rv0.enter(sid, &p0).unwrap();
+                let mut receiver = rv1.enter(sid, &p1).unwrap();
+                crate::in_process::timeout(core::time::Duration::from_secs(1), async {
+                    let send = async {
+                        match choice {
+                            0 => sender.send::<A>(&()).await.unwrap(),
+                            1 => sender.send::<B>(&()).await.unwrap(),
+                            2 => sender.send::<C>(&()).await.unwrap(),
+                            _ => unreachable!(),
                         }
-                    })
-                    .await
-                    .unwrap_or_else(|error| {
-                        panic!("choice={choice} receiver_first={receiver_first}: {error:?}")
-                    });
-                    assert!(network.queue_is_empty());
-                }
+                        let header = network.queued_frame(1).0.bytes();
+                        assert_eq!(&header[4..7], &[0, 0, 1]);
+                        assert_eq!(
+                            u16::from_be_bytes([header[7], header[8]]),
+                            u16::from(choice)
+                        );
+                    };
+                    let receive = async {
+                        let branch = receiver.offer().await.unwrap();
+                        assert_eq!(
+                            branch.label(),
+                            210 + choice,
+                            "choice={choice} receiver_first={receiver_first}"
+                        );
+                        drop(branch);
+                        let branch = receiver.offer().await.unwrap();
+                        assert_eq!(
+                            branch.label(),
+                            210 + choice,
+                            "repeated preview choice={choice} receiver_first={receiver_first}"
+                        );
+                        match choice {
+                            0 => branch.recv::<A>().await.unwrap(),
+                            1 => branch.recv::<B>().await.unwrap(),
+                            2 => branch.recv::<C>().await.unwrap(),
+                            _ => unreachable!(),
+                        }
+                    };
+                    if receiver_first {
+                        async {
+                            async {
+                                let _: () = (receive).await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                            async {
+                                let _: () = (send).await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                        }
+                        .await
+                        .expect("all child results are data");
+                    } else {
+                        async {
+                            async {
+                                let _: () = (send).await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                            async {
+                                let _: () = (receive).await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                        }
+                        .await
+                        .expect("all child results are data");
+                    }
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("choice={choice} receiver_first={receiver_first}: {error:?}")
+                });
+                assert!(network.queue_is_empty());
             }
-        });
+        }
+    };
+
+    Ok(())
 }

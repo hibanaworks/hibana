@@ -41,7 +41,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// future when it is created, so the sender can no longer use that value.
     /// Cancelling or failing the send does not return the transferred right.
     /// Dropping an unfinished owned-send future faults the local session run,
-    /// including when a `tokio::select!` timeout drops it before its first poll.
+    /// including when a deadline cancels it before its first poll.
     /// An unfinished predecessor on this view or payload returns `OutOfOrder`.
     ///
     /// Success means the transport accepted the frame, not that the peer has

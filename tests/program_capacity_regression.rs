@@ -1,6 +1,8 @@
 // Sequential choices retain every projected message within const-eval limits.
 #![forbid(long_running_const_eval)]
 
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 

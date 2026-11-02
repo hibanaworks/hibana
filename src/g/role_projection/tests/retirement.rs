@@ -11,8 +11,10 @@ mod observations;
 #[cfg(not(miri))]
 pub(super) use observations::{RetirementOrigin, RetirementSample, write_retirements};
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_completed_view_retires_without_cancelling_independent_work() {
+async fn a_completed_view_retires_without_cancelling_independent_work()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Seq<
         g::Send<0, 1, Loan>,
         g::Seq<
@@ -29,10 +31,8 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
     let auth_peer_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
     let receiver_program = crate::runtime::program::project::<6>(&g::Program::<Steps>::new());
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let network = TestTransport::new();
         let mut slab = std::vec![0; 80 * 1024];
         let mut storage = SessionKitStorage::uninit();
@@ -72,17 +72,30 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
         // Controlled transport delay proves the completed view's drop does not
         // make an independent projected send wait for its sibling's readiness.
         network.pause_send(1);
-        let (worker_sent, auth_sent, (), ()) = tokio::join!(
-            worker.send::<Value>(&8),
-            auth.send::<Value>(&9),
+        let (worker_sent, auth_sent, (), ()) = async {
+            async { Ok::<_, hibana::EndpointError>((worker.send::<Value>(&8)).await) };
+
+            async { Ok::<_, hibana::EndpointError>((auth.send::<Value>(&9)).await) };
+
             async {
-                assert_eq!(auth_peer.recv::<Value>().await.unwrap(), 9);
-                network.resume_send();
-            },
+                let _: () = (async {
+                    assert_eq!(auth_peer.recv::<Value>().await.unwrap(), 9);
+                    network.resume_send();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                assert_eq!(value_peer.recv::<Value>().await.unwrap(), 8);
-            },
-        );
+                let _: () = (async {
+                    assert_eq!(value_peer.recv::<Value>().await.unwrap(), 8);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
         worker_sent.unwrap();
         auth_sent.unwrap();
         worker.send::<OtherLoan>(auth).await.unwrap();
@@ -113,5 +126,7 @@ fn a_completed_view_retires_without_cancelling_independent_work() {
                 }],
             );
         }
-    });
+    };
+
+    Ok(())
 }

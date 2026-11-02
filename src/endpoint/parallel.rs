@@ -99,15 +99,16 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ///     g::send::<1, 0, Notice>(),
     /// );
     ///
-    /// async fn client(mut client: Endpoint<'_, 0>) -> Result<(), EndpointError> {
+    /// #[hibana_runtime::scope]
+    /// async fn client(mut client: Endpoint<0>) -> Result<(), EndpointError> {
     ///     let [mut requests, mut notices] = client.par()?;
-    ///     let (reply, notice) = tokio::try_join!(
+    ///     let (reply, notice) = async {
     ///         async {
     ///             requests.send::<Request>(&7).await?;
     ///             requests.recv::<Reply>().await
-    ///         },
-    ///         notices.recv::<Notice>(),
-    ///     )?;
+    ///         };
+    ///         async { notices.recv::<Notice>().await };
+    ///     }.await?;
     ///     Ok(())
     /// }
     /// ```

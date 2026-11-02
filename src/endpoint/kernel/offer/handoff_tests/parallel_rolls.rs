@@ -1,8 +1,10 @@
 use super::*;
 use crate::runtime::resolver::{DecisionArm, ResolverRef};
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish() {
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish()
+-> core::result::Result<(), hibana::EndpointError> {
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
     type Left = g::Msg<1, ()>;
     type OtherLeft = g::Msg<2, ()>;
@@ -63,8 +65,8 @@ async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish() 
     let db = rv0.enter(sid, &p3).unwrap();
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(
+    (async {
+        async {
             async {
                 owner.send::<Loan<'_>>(db).await?;
                 {
@@ -76,43 +78,49 @@ async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish() 
                 }
                 let _db = owner.recv::<Returned<'_>>().await?;
                 Ok::<_, crate::EndpointError>(())
-            },
+            };
+
             async {
                 let mut db = worker.recv::<Loan<'_>>().await?;
                 {
                     let [mut left, mut right] = db.par()?;
-                    tokio::try_join!(
+                    async {
                         async {
                             for _ in 0..2 {
                                 left.offer().await?.send::<Left>(&()).await?;
                             }
                             left.recv::<LeftDone>().await
-                        },
+                        };
+
                         async {
                             for _ in 0..2 {
                                 right.send::<Right>(&()).await?;
                             }
                             right.recv::<RightDone>().await
-                        }
-                    )?;
+                        };
+                    }
+                    .await?;
                 }
                 let next = db.offer().await?;
                 assert_eq!(next.label(), 7);
                 next.send::<Next>(&()).await?;
                 worker.recv::<Next>().await?;
                 worker.send::<Returned<'_>>(db).await
-            },
+            };
+
             async {
                 let [mut right] = service.par()?;
                 for _ in 0..2 {
                     right.offer().await?.recv::<Right>().await?;
                 }
                 right.send::<RightDone>(&()).await
-            }
-        )
+            };
+        }
+        .await
     })
     .await
-    .expect("parallel roll continuation stalled")
     .unwrap();
     assert!(network.queue_is_empty());
+
+    Ok(())
 }

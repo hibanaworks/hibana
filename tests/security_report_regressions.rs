@@ -13,6 +13,8 @@ mod rolled_routes;
 #[path = "security_report_regressions/send_continuations.rs"]
 mod send_continuations;
 
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use common::{TestTransport, TestTx};
 use core::{
     future::Future,

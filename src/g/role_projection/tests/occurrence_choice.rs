@@ -41,74 +41,72 @@ type Steps = g::Seq<
 #[cfg(not(miri))]
 type Wire = (crate::transport::FrameHeader, std::vec::Vec<u8>);
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
+async fn changing_rolled_loans_teach_only_the_received_occurrences_choices()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 32>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let number = Cell::new(7u32);
-            let mut owner_slab = [0; 64 * 1024];
-            let mut worker_slab = [0; 64 * 1024];
-            let mut service_slab = [0; 64 * 1024];
-            let mut owner_storage = SessionKitStorage::uninit();
-            let mut worker_storage = SessionKitStorage::uninit();
-            let mut service_storage = SessionKitStorage::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let worker_rv = worker_storage
-                .init()
-                .rendezvous(&mut worker_slab, network.clone())
-                .unwrap();
-            let service_rv = service_storage
-                .init()
-                .rendezvous(&mut service_slab, network.clone())
-                .unwrap();
-            owner_rv
-                .set_resolver(
-                    &owner_program,
-                    ResolverRef::<971>::decision_state(&number, |_| Ok(DecisionArm::Left)),
-                )
-                .unwrap();
-            owner_rv
-                .set_resolver(
-                    &owner_program,
-                    ResolverRef::<972>::decision_state(&number, |number| {
-                        Ok(if number.get() % 2 == 1 {
-                            DecisionArm::Left
-                        } else {
-                            DecisionArm::Right
-                        })
-                    }),
-                )
-                .unwrap();
-            let session = SessionId::new(9063);
-            let mut owner = owner_rv.enter(session, &owner_program).unwrap();
-            let mut db = owner_rv.enter(session, &db_program).unwrap();
-            let mut worker = worker_rv.enter(session, &worker_program).unwrap();
-            let mut service = service_rv.enter(session, &service_program).unwrap();
-            let initial = unsafe {
-                [
-                    actor_snapshot(&owner),
-                    actor_snapshot(&worker),
-                    actor_snapshot(&service),
-                ]
-            };
-            let operations = RefCell::new(std::vec::Vec::new());
-            let (sends, (_notice_before, _notice_after, receipts), ()) =
-                tokio::time::timeout(core::time::Duration::from_secs(30), async {
-                    tokio::join!(
-                        async {
+    {
+        let network = TestTransport::new();
+        let number = Cell::new(7u32);
+        let mut owner_slab = [0; 64 * 1024];
+        let mut worker_slab = [0; 64 * 1024];
+        let mut service_slab = [0; 64 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut worker_storage = SessionKitStorage::uninit();
+        let mut service_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let worker_rv = worker_storage
+            .init()
+            .rendezvous(&mut worker_slab, network.clone())
+            .unwrap();
+        let service_rv = service_storage
+            .init()
+            .rendezvous(&mut service_slab, network.clone())
+            .unwrap();
+        owner_rv
+            .set_resolver(
+                &owner_program,
+                ResolverRef::<971>::decision_state(&number, |_| Ok(DecisionArm::Left)),
+            )
+            .unwrap();
+        owner_rv
+            .set_resolver(
+                &owner_program,
+                ResolverRef::<972>::decision_state(&number, |number| {
+                    Ok(if number.get() % 2 == 1 {
+                        DecisionArm::Left
+                    } else {
+                        DecisionArm::Right
+                    })
+                }),
+            )
+            .unwrap();
+        let session = SessionId::new(9063);
+        let mut owner = owner_rv.enter(session, &owner_program).unwrap();
+        let mut db = owner_rv.enter(session, &db_program).unwrap();
+        let mut worker = worker_rv.enter(session, &worker_program).unwrap();
+        let mut service = service_rv.enter(session, &service_program).unwrap();
+        let initial = unsafe {
+            [
+                actor_snapshot(&owner),
+                actor_snapshot(&worker),
+                actor_snapshot(&service),
+            ]
+        };
+        let operations = RefCell::new(std::vec::Vec::new());
+        let (sends, (_notice_before, _notice_after, receipts), ()) = (async {
+            async {
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
                             // SAFETY: this pinned runtime uses TestTransport throughout.
                             let before = unsafe { actor_snapshot(&owner) };
                             let branch = owner.offer().await.unwrap();
@@ -180,8 +178,14 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                                 ),
                             });
                             sends
-                        },
-                        async {
+                        })
+                        .await,
+                    )
+                };
+
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
                             let notice_before = unsafe { actor_snapshot(&worker) };
                             let branch = worker.offer().await.unwrap();
                             assert_eq!(branch.label(), 8);
@@ -230,80 +234,89 @@ fn changing_rolled_loans_teach_only_the_received_occurrences_choices() {
                                 receipts.push((before, after, returned, return_wire));
                             }
                             (notice_before, notice_after, receipts)
-                        },
-                        async {
-                            let before = unsafe { actor_snapshot(&service) };
-                            let number = service.recv::<Read>().await.unwrap();
-                            operations.borrow_mut().push(OperationObservation {
-                                view: 3,
-                                label: 3,
-                                before,
-                                after: unsafe { actor_snapshot(&service) },
-                                frame: FrameBoundary::Received(
-                                    network.received_frame(3, session, 0),
-                                ),
-                            });
-                            let before = unsafe { actor_snapshot(&service) };
-                            service.send::<Value>(&(number + 1)).await.unwrap();
-                            operations.borrow_mut().push(OperationObservation {
-                                view: 3,
-                                label: 4,
-                                before,
-                                after: unsafe { actor_snapshot(&service) },
-                                frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
-                            });
-                        },
+                        })
+                        .await,
                     )
-                })
-                .await
-                .expect("alternating owned choices stopped progressing");
-            assert!(network.queue_is_empty());
-            assert_eq!(sends.len(), 5);
-            assert_eq!(receipts.len(), 4);
-            assert!(
-                sends
+                };
+
+                async {
+                    let _: () = (async {
+                        let before = unsafe { actor_snapshot(&service) };
+                        let number = service.recv::<Read>().await.unwrap();
+                        operations.borrow_mut().push(OperationObservation {
+                            view: 3,
+                            label: 3,
+                            before,
+                            after: unsafe { actor_snapshot(&service) },
+                            frame: FrameBoundary::Received(network.received_frame(3, session, 0)),
+                        });
+                        let before = unsafe { actor_snapshot(&service) };
+                        service.send::<Value>(&(number + 1)).await.unwrap();
+                        operations.borrow_mut().push(OperationObservation {
+                            view: 3,
+                            label: 4,
+                            before,
+                            after: unsafe { actor_snapshot(&service) },
+                            frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
+                        });
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
+            .await
+            .expect("all child results are data")
+        })
+        .await;
+        assert!(network.queue_is_empty());
+        assert_eq!(sends.len(), 5);
+        assert_eq!(receipts.len(), 4);
+        assert!(
+            sends
+                .iter()
+                .all(|(_, wire)| wire.0.lane() == sends[0].1.0.lane())
+        );
+        assert_eq!(sends[1].1.1, sends[3].1.1);
+        assert_eq!(sends[3].1.1, sends[4].1.1);
+        assert_eq!(receipts[3].0.choices, receipts[3].1.choices);
+        assert!(receipts[3].0.completion_mutations < receipts[3].1.completion_mutations);
+        let operations = operations.into_inner();
+        assert_eq!(operations.len(), 22);
+        super::distributed_source::check_observations(&operations);
+        for actor in &initial {
+            assert_eq!(
+                &operations
                     .iter()
-                    .all(|(_, wire)| wire.0.lane() == sends[0].1.0.lane())
+                    .find(|op| op.before.actor == actor.actor)
+                    .unwrap()
+                    .before,
+                actor
             );
-            assert_eq!(sends[1].1.1, sends[3].1.1);
-            assert_eq!(sends[3].1.1, sends[4].1.1);
-            assert_eq!(receipts[3].0.choices, receipts[3].1.choices);
-            assert!(receipts[3].0.completion_mutations < receipts[3].1.completion_mutations);
-            let operations = operations.into_inner();
-            assert_eq!(operations.len(), 22);
-            super::distributed_source::check_observations(&operations);
-            for actor in &initial {
-                assert_eq!(
-                    &operations
-                        .iter()
-                        .find(|op| op.before.actor == actor.actor)
-                        .unwrap()
-                        .before,
-                    actor
-                );
-            }
-            #[cfg(not(miri))]
-            {
-                write_observations(
-                    [
-                        owner_program.role_image_ref(),
-                        worker_program.role_image_ref(),
-                    ],
-                    &sends,
-                    &receipts,
-                    (&_notice_before, &_notice_after),
-                );
-                write_distributed(
-                    [
-                        owner_program.role_image_ref(),
-                        worker_program.role_image_ref(),
-                        service_program.role_image_ref(),
-                    ],
-                    &initial,
-                    &operations,
-                );
-            }
-        });
+        }
+        #[cfg(not(miri))]
+        {
+            write_observations(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                ],
+                &sends,
+                &receipts,
+                (&_notice_before, &_notice_after),
+            );
+            write_distributed(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                    service_program.role_image_ref(),
+                ],
+                &initial,
+                &operations,
+            );
+        }
+    };
+
+    Ok(())
 }
 
 /// Choose compatible complete witnesses from the copied local knowledge.

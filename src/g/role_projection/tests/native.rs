@@ -72,8 +72,10 @@ impl Drop for ChildGuard {
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs() {
+#[hibana_runtime::main]
+#[test]
+async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
+-> std::io::Result<()> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
@@ -158,7 +160,7 @@ async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
         let mut owner = owner_rv.enter(SID, &owner_program).unwrap();
         let mut service = service_rv.enter(SID, &service_program).unwrap();
         let db = service_rv.enter(SID, &db_program).unwrap();
-        tokio::join!(
+        async {
             async {
                 service.send::<Loan>(db).await.unwrap();
                 let delta = service.recv::<Read>().await.unwrap();
@@ -179,7 +181,7 @@ async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
                 resource.write_all(&value.to_be_bytes()).unwrap();
                 service.send::<Value>(&value).await.unwrap();
                 drop(service.recv::<Loan>().await.unwrap());
-            },
+            };
             async {
                 let db = owner.recv::<Loan>().await.unwrap();
                 owner.send::<Loan>(db).await.unwrap();
@@ -187,11 +189,17 @@ async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
 
                 // A test observation, not a protocol authority: establish that
                 // no sender runtime or address space remains before using DB.
-                tokio::time::timeout(Duration::from_secs(3), async {
-                    while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-                    }
-                })
+                hibana_runtime::race(
+                    async {
+                        while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+                            hibana_runtime::host::sleep(Duration::from_millis(1))
+                                .await
+                                .unwrap();
+                        }
+                        Ok::<(), std::io::Error>(())
+                    },
+                    hibana_runtime::host::deadline(Duration::from_secs(3)),
+                )
                 .await
                 .unwrap();
                 let output = child.0.take().unwrap().wait_with_output().unwrap();
@@ -207,8 +215,11 @@ async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
                 db.send::<Read>(&5).await.unwrap();
                 assert_eq!(db.recv::<Value>().await.unwrap(), 49);
                 owner.send::<Loan>(db).await.unwrap();
-            }
-        );
+            };
+            Ok(())
+        }
+        .await
+        .unwrap();
         let mut bytes = [0; 4];
         resource.seek(SeekFrom::Start(0)).unwrap();
         resource.read_exact(&mut bytes).unwrap();
@@ -217,11 +228,14 @@ async fn a_process_returns_the_endpoint_and_exits_before_its_continuation_runs()
     // Every issued view and child has retired before the native queue fence.
     // Keep the physical binding alive through that fence.
     drop(mailboxes);
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate process entrypoint exercised by the parent native proof"]
-async fn worker_process() {
+async fn worker_process() -> std::io::Result<()> {
     let parent: u32 = std::env::var("HIBANA_NATIVE_PARENT")
         .unwrap()
         .parse()
@@ -266,38 +280,114 @@ async fn worker_process() {
     // Test observation only: force the unread-frame schedule without taking
     // the frame from the queue or changing any protocol state. The next DB
     // receive belongs to OWNER, after the ordinary Loan handoff below.
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            for socket in &observation_sockets {
-                let mut bytes = [0u8; 13];
-                // SAFETY: the socket is live and nonblocking; bytes is writable
-                // for its exact length. MSG_PEEK does not consume the datagram.
-                let length = unsafe {
-                    libc::recv(
-                        socket.as_raw_fd(),
-                        bytes.as_mut_ptr().cast(),
-                        bytes.len(),
-                        libc::MSG_PEEK,
-                    )
-                };
-                if length < 0 {
-                    assert_eq!(
-                        std::io::Error::last_os_error().kind(),
-                        std::io::ErrorKind::WouldBlock
-                    );
-                    continue;
+    hibana_runtime::race(
+        async {
+            loop {
+                for socket in &observation_sockets {
+                    let mut bytes = [0u8; 13];
+                    // SAFETY: the socket is live and nonblocking; bytes is writable
+                    // for its exact length. MSG_PEEK does not consume the datagram.
+                    let length = unsafe {
+                        libc::recv(
+                            socket.as_raw_fd(),
+                            bytes.as_mut_ptr().cast(),
+                            bytes.len(),
+                            libc::MSG_PEEK,
+                        )
+                    };
+                    if length < 0 {
+                        assert_eq!(
+                            std::io::Error::last_os_error().kind(),
+                            std::io::ErrorKind::WouldBlock
+                        );
+                        continue;
+                    }
+                    assert_eq!(length, 13);
+                    assert_eq!(bytes[..4], SID.raw().to_be_bytes());
+                    assert_eq!(bytes[5..7], [2, 10]);
+                    assert_eq!(bytes[9..13], 123u32.to_be_bytes());
+                    std::println!("unread service frame observed before Endpoint return");
+                    return Ok::<(), std::io::Error>(());
                 }
-                assert_eq!(length, 13);
-                assert_eq!(bytes[..4], SID.raw().to_be_bytes());
-                assert_eq!(bytes[5..7], [2, 10]);
-                assert_eq!(bytes[9..13], 123u32.to_be_bytes());
-                std::println!("unread service frame observed before Endpoint return");
-                return;
+                hibana_runtime::host::sleep(Duration::from_millis(1))
+                    .await
+                    .unwrap();
             }
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-    })
+        },
+        hibana_runtime::host::deadline(Duration::from_secs(3)),
+    )
     .await
     .unwrap();
     worker.send::<Loan>(db).await.unwrap();
+
+    Ok(())
+}
+
+#[hibana_runtime::main]
+#[test]
+async fn dropping_a_view_pending_send_cannot_publish_its_old_payload() -> std::io::Result<()> {
+    type Message = g::Msg<1, u32>;
+    type Begin = g::Msg<2, ()>;
+    type Loan = g::Msg<3, hibana::Endpoint<'static, 2>>;
+    type Steps = g::Seq<
+        g::Send<0, 1, Begin>,
+        g::Seq<g::Send<2, 1, Message>, g::Seq<g::Send<0, 3, Loan>, g::Send<3, 0, Loan>>>,
+    >;
+    // Four source events give this projection's lane upper bound.
+    const LANES: usize = g::ProgramProjection::<Steps, 4>::SOURCE_EFF_LIST.len();
+    let global = g::Program::<Steps>::new();
+    let owner_program = crate::runtime::program::project::<0>(&global);
+    let resource_program = crate::runtime::program::project::<2>(&global);
+    let target_program = crate::runtime::program::project::<1>(&global);
+    let mailboxes = Mailboxes::new(&[0, 1, 2, 3], LANES).unwrap();
+    // SAFETY: this fixture owns one physical resource and its only issuer.
+    let binding = unsafe { crate::runtime::transport::EndpointBinding::new() };
+    let source_io = NativeTransport::new(
+        mailboxes.directory(),
+        mailboxes.descriptors(&[0, 2]).unwrap(),
+        Some((2, &binding)),
+    )
+    .unwrap();
+    let target_io = NativeTransport::new(
+        mailboxes.directory(),
+        mailboxes.descriptors(&[1]).unwrap(),
+        None,
+    )
+    .unwrap();
+    let mut source_slab = vec![0; 64 * 1024];
+    let mut target_slab = vec![0; 64 * 1024];
+    let mut source_storage = SessionKitStorage::uninit();
+    let mut target_storage = SessionKitStorage::uninit();
+    let source_rv = source_storage
+        .init()
+        .rendezvous(&mut source_slab, source_io)
+        .unwrap();
+    let target_rv = target_storage
+        .init()
+        .rendezvous(&mut target_slab, target_io)
+        .unwrap();
+    let sid = SessionId::new(9013);
+    let mut owner = source_rv.enter(sid, &owner_program).unwrap();
+    let mut resource = source_rv.enter(sid, &resource_program).unwrap();
+    let mut target = target_rv.enter(sid, &target_program).unwrap();
+    {
+        // This is real protocol Pending: the same actor's owner view must
+        // first send Begin. It does not depend on a reactor's first poll.
+        let mut send = core::pin::pin!(resource.send::<Message>(&7));
+        let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+        assert!(send.as_mut().poll(&mut cx).is_pending());
+    }
+    let receivers = mailboxes.descriptors(&[1]).unwrap();
+    let mut packet = [0; 64];
+    for (_, receiver) in receivers {
+        assert_eq!(
+            receiver.recv(&mut packet).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+    owner.send::<Begin>(&()).await.unwrap();
+    target.recv::<Begin>().await.unwrap();
+    resource.send::<Message>(&8).await.unwrap();
+    assert_eq!(target.recv::<Message>().await.unwrap(), 8);
+    Ok(())
 }

@@ -19,59 +19,57 @@ type BranchSteps = g::Seq<
     g::Seq<g::Route<g::Send<1, 0, Finish>, g::Send<1, 0, Stop>>, g::Send<0, 1, Final>>,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_queued_old_continuation_survives_a_new_body_visit() {
+async fn a_queued_old_continuation_survives_a_new_body_visit()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
     let a_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let b_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut a_slab = [0; 16 * 1024];
-            let mut b_slab = [0; 16 * 1024];
-            let mut a_storage = SessionKitStorage::uninit();
-            let mut b_storage = SessionKitStorage::uninit();
-            let a_rv = a_storage
-                .init()
-                .rendezvous(&mut a_slab, network.clone())
-                .unwrap();
-            let b_rv = b_storage
-                .init()
-                .rendezvous(&mut b_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9072);
-            let mut a = a_rv.enter(sid, &a_program).unwrap();
-            let mut b = b_rv.enter(sid, &b_program).unwrap();
-            tokio::time::timeout(core::time::Duration::from_millis(100), async {
-                a.send::<Start>(&7).await.unwrap();
-                assert_eq!(b.recv::<Start>().await.unwrap(), 7);
-                b.send::<Ack>(&8).await.unwrap();
-                assert_eq!(a.recv::<Ack>().await.unwrap(), 8);
-                b.send::<Finish>(&9).await.unwrap();
-                a.send::<Start>(&10).await.unwrap();
-                assert_eq!(b.recv::<Start>().await.unwrap(), 10);
-                b.send::<Ack>(&11).await.unwrap();
-                // SAFETY: a retains its pinned TestTransport actor and no
-                // operation is polled between these read-only observations.
-                let before = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
-                let admitted = unsafe { crate::endpoint::proof_snapshot::actor_admissions(&a) };
-                assert_eq!(before.retained_rolls, [0]);
-                assert_eq!(admitted, [false, true, true]);
-                assert_eq!(a.recv::<Finish>().await.unwrap(), 9);
-                assert_eq!(a.recv::<Ack>().await.unwrap(), 11);
-                a.send::<Start>(&12).await.unwrap();
-                assert_eq!(b.recv::<Start>().await.unwrap(), 12);
-                b.send::<Ack>(&13).await.unwrap();
-                assert_eq!(a.recv::<Ack>().await.unwrap(), 13);
-            })
-            .await
-            .expect("an accepted old continuation must not strand the new visit");
-            assert!(network.queue_is_empty());
-        });
+    {
+        let network = TestTransport::new();
+        let mut a_slab = [0; 16 * 1024];
+        let mut b_slab = [0; 16 * 1024];
+        let mut a_storage = SessionKitStorage::uninit();
+        let mut b_storage = SessionKitStorage::uninit();
+        let a_rv = a_storage
+            .init()
+            .rendezvous(&mut a_slab, network.clone())
+            .unwrap();
+        let b_rv = b_storage
+            .init()
+            .rendezvous(&mut b_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9072);
+        let mut a = a_rv.enter(sid, &a_program).unwrap();
+        let mut b = b_rv.enter(sid, &b_program).unwrap();
+        (async {
+            a.send::<Start>(&7).await.unwrap();
+            assert_eq!(b.recv::<Start>().await.unwrap(), 7);
+            b.send::<Ack>(&8).await.unwrap();
+            assert_eq!(a.recv::<Ack>().await.unwrap(), 8);
+            b.send::<Finish>(&9).await.unwrap();
+            a.send::<Start>(&10).await.unwrap();
+            assert_eq!(b.recv::<Start>().await.unwrap(), 10);
+            b.send::<Ack>(&11).await.unwrap();
+            // SAFETY: a retains its pinned TestTransport actor and no
+            // operation is polled between these read-only observations.
+            let before = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
+            let admitted = unsafe { crate::endpoint::proof_snapshot::actor_admissions(&a) };
+            assert_eq!(before.retained_rolls, [0]);
+            assert_eq!(admitted, [false, true, true]);
+            assert_eq!(a.recv::<Finish>().await.unwrap(), 9);
+            assert_eq!(a.recv::<Ack>().await.unwrap(), 11);
+            a.send::<Start>(&12).await.unwrap();
+            assert_eq!(b.recv::<Start>().await.unwrap(), 12);
+            b.send::<Ack>(&13).await.unwrap();
+            assert_eq!(a.recv::<Ack>().await.unwrap(), 13);
+        })
+        .await;
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
 /// Serialize read-only evidence; all Endpoint operations remain above.
@@ -221,91 +219,89 @@ theorem theLateReceiveHasItsActualMeasuredTransition :
     std::fs::write(directory.join("ElasticContinuationGenerated.lean"), source).unwrap();
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_queued_old_branch_does_not_skip_the_fresh_body_receive() {
+async fn a_queued_old_branch_does_not_skip_the_fresh_body_receive()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<BranchSteps, 32>::VALIDATION;
     let a_program = crate::runtime::program::project::<0>(&g::Program::<BranchSteps>::new());
     let b_program = crate::runtime::program::project::<1>(&g::Program::<BranchSteps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            for expected_label in [203, 204] {
-                let network = TestTransport::new();
-                let mut a_slab = [0; 16 * 1024];
-                let mut b_slab = [0; 16 * 1024];
-                let mut a_storage = SessionKitStorage::uninit();
-                let mut b_storage = SessionKitStorage::uninit();
-                let a_rv = a_storage
-                    .init()
-                    .rendezvous(&mut a_slab, network.clone())
-                    .unwrap();
-                let b_rv = b_storage
-                    .init()
-                    .rendezvous(&mut b_slab, network.clone())
-                    .unwrap();
-                let sid = SessionId::new(9073);
-                let mut a = a_rv.enter(sid, &a_program).unwrap();
-                let mut b = b_rv.enter(sid, &b_program).unwrap();
-                tokio::time::timeout(core::time::Duration::from_millis(100), async {
-                    a.send::<Start>(&7).await.unwrap();
-                    assert_eq!(b.recv::<Start>().await.unwrap(), 7);
-                    b.send::<Ack>(&8).await.unwrap();
-                    let branch = a.offer().await.unwrap();
-                    assert_eq!(branch.label(), 202);
-                    assert_eq!(branch.recv::<Ack>().await.unwrap(), 8);
-                    match expected_label {
-                        203 => b.send::<Finish>(&9).await.unwrap(),
-                        204 => b.send::<Stop>(&9).await.unwrap(),
-                        _ => unreachable!(),
-                    }
-                    a.send::<Start>(&10).await.unwrap();
-                    assert_eq!(b.recv::<Start>().await.unwrap(), 10);
-                    b.send::<OtherAck>(&11).await.unwrap();
-                    // SAFETY: a owns this pinned TestTransport actor; no poll
-                    // occurs between the two copied admission observations.
-                    let before = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
-                    let admitted = unsafe { crate::endpoint::proof_snapshot::actor_admissions(&a) };
-                    assert_eq!(before.retained_rolls, [0]);
-                    assert!(admitted[2] && admitted[3]);
-                    #[cfg(not(miri))]
-                    let wire = network.accepted_frame(0, 0);
-                    let branch = a.offer().await.unwrap();
-                    assert_eq!(branch.label(), expected_label);
-                    match branch.label() {
-                        203 => assert_eq!(branch.recv::<Finish>().await.unwrap(), 9),
-                        204 => assert_eq!(branch.recv::<Stop>().await.unwrap(), 9),
-                        _ => unreachable!(),
-                    }
-                    // SAFETY: the completed branch released its local borrow;
-                    // no further operation is polled during this observation.
-                    let after = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
-                    assert_eq!(after.retained_rolls, before.retained_rolls);
-                    assert_eq!(after.completion_mutations, before.completion_mutations + 1);
-                    assert!(!after.steps[2].done);
-                    #[cfg(not(miri))]
-                    if expected_label == 203 {
-                        write_retained_admission(
-                            a_program.role_image_ref(),
-                            &before,
-                            &admitted,
-                            &after,
-                            &wire,
-                        );
-                    }
-                    let branch = a.offer().await.unwrap();
-                    assert_eq!(branch.label(), 208);
-                    assert_eq!(branch.recv::<OtherAck>().await.unwrap(), 11);
-                    a.send::<Final>(&14).await.unwrap();
-                    assert_eq!(b.recv::<Final>().await.unwrap(), 14);
-                })
-                .await
-                .expect("an earlier branch cannot hide the fresh body head");
-                assert!(network.queue_is_empty());
-            }
-        });
+    {
+        for expected_label in [203, 204] {
+            let network = TestTransport::new();
+            let mut a_slab = [0; 16 * 1024];
+            let mut b_slab = [0; 16 * 1024];
+            let mut a_storage = SessionKitStorage::uninit();
+            let mut b_storage = SessionKitStorage::uninit();
+            let a_rv = a_storage
+                .init()
+                .rendezvous(&mut a_slab, network.clone())
+                .unwrap();
+            let b_rv = b_storage
+                .init()
+                .rendezvous(&mut b_slab, network.clone())
+                .unwrap();
+            let sid = SessionId::new(9073);
+            let mut a = a_rv.enter(sid, &a_program).unwrap();
+            let mut b = b_rv.enter(sid, &b_program).unwrap();
+            (async {
+                a.send::<Start>(&7).await.unwrap();
+                assert_eq!(b.recv::<Start>().await.unwrap(), 7);
+                b.send::<Ack>(&8).await.unwrap();
+                let branch = a.offer().await.unwrap();
+                assert_eq!(branch.label(), 202);
+                assert_eq!(branch.recv::<Ack>().await.unwrap(), 8);
+                match expected_label {
+                    203 => b.send::<Finish>(&9).await.unwrap(),
+                    204 => b.send::<Stop>(&9).await.unwrap(),
+                    _ => unreachable!(),
+                }
+                a.send::<Start>(&10).await.unwrap();
+                assert_eq!(b.recv::<Start>().await.unwrap(), 10);
+                b.send::<OtherAck>(&11).await.unwrap();
+                // SAFETY: a owns this pinned TestTransport actor; no poll
+                // occurs between the two copied admission observations.
+                let before = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
+                let admitted = unsafe { crate::endpoint::proof_snapshot::actor_admissions(&a) };
+                assert_eq!(before.retained_rolls, [0]);
+                assert!(admitted[2] && admitted[3]);
+                #[cfg(not(miri))]
+                let wire = network.accepted_frame(0, 0);
+                let branch = a.offer().await.unwrap();
+                assert_eq!(branch.label(), expected_label);
+                match branch.label() {
+                    203 => assert_eq!(branch.recv::<Finish>().await.unwrap(), 9),
+                    204 => assert_eq!(branch.recv::<Stop>().await.unwrap(), 9),
+                    _ => unreachable!(),
+                }
+                // SAFETY: the completed branch released its local borrow;
+                // no further operation is polled during this observation.
+                let after = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&a) };
+                assert_eq!(after.retained_rolls, before.retained_rolls);
+                assert_eq!(after.completion_mutations, before.completion_mutations + 1);
+                assert!(!after.steps[2].done);
+                #[cfg(not(miri))]
+                if expected_label == 203 {
+                    write_retained_admission(
+                        a_program.role_image_ref(),
+                        &before,
+                        &admitted,
+                        &after,
+                        &wire,
+                    );
+                }
+                let branch = a.offer().await.unwrap();
+                assert_eq!(branch.label(), 208);
+                assert_eq!(branch.recv::<OtherAck>().await.unwrap(), 11);
+                a.send::<Final>(&14).await.unwrap();
+                assert_eq!(b.recv::<Final>().await.unwrap(), 14);
+            })
+            .await;
+            assert!(network.queue_is_empty());
+        }
+    };
+
+    Ok(())
 }
 
 #[test]
@@ -422,61 +418,59 @@ fn retained_roll_completion_has_storage_past_a_full_event_word() {
     });
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_late_branch_is_available_while_the_new_body_head_is_ordinary() {
+async fn a_late_branch_is_available_while_the_new_body_head_is_ordinary()
+-> core::result::Result<(), hibana::EndpointError> {
     type Stop = g::Msg<204, u32>;
     type BranchSteps = g::Seq<g::Roll<Body>, g::Route<g::Send<1, 0, Finish>, g::Send<1, 0, Stop>>>;
     let () = g::ProgramProjection::<BranchSteps, 16>::VALIDATION;
     let a_program = crate::runtime::program::project::<0>(&g::Program::<BranchSteps>::new());
     let b_program = crate::runtime::program::project::<1>(&g::Program::<BranchSteps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            for expected_label in [203, 204] {
-                let network = TestTransport::new();
-                let mut a_slab = [0; 16 * 1024];
-                let mut b_slab = [0; 16 * 1024];
-                let mut a_storage = SessionKitStorage::uninit();
-                let mut b_storage = SessionKitStorage::uninit();
-                let a_rv = a_storage
-                    .init()
-                    .rendezvous(&mut a_slab, network.clone())
-                    .unwrap();
-                let b_rv = b_storage
-                    .init()
-                    .rendezvous(&mut b_slab, network.clone())
-                    .unwrap();
-                let sid = SessionId::new(9074);
-                let mut a = a_rv.enter(sid, &a_program).unwrap();
-                let mut b = b_rv.enter(sid, &b_program).unwrap();
-                tokio::time::timeout(core::time::Duration::from_millis(100), async {
-                    a.send::<Start>(&7).await.unwrap();
-                    assert_eq!(b.recv::<Start>().await.unwrap(), 7);
-                    b.send::<Ack>(&8).await.unwrap();
-                    assert_eq!(a.recv::<Ack>().await.unwrap(), 8);
-                    match expected_label {
-                        203 => b.send::<Finish>(&9).await.unwrap(),
-                        204 => b.send::<Stop>(&9).await.unwrap(),
-                        _ => unreachable!(),
-                    }
-                    a.send::<Start>(&10).await.unwrap();
-                    assert_eq!(b.recv::<Start>().await.unwrap(), 10);
-                    b.send::<Ack>(&11).await.unwrap();
-                    let branch = a.offer().await.unwrap();
-                    assert_eq!(branch.label(), expected_label);
-                    match branch.label() {
-                        203 => assert_eq!(branch.recv::<Finish>().await.unwrap(), 9),
-                        204 => assert_eq!(branch.recv::<Stop>().await.unwrap(), 9),
-                        _ => unreachable!(),
-                    }
-                    assert_eq!(a.recv::<Ack>().await.unwrap(), 11);
-                })
-                .await
-                .expect("a late branch remains observable beside an ordinary body head");
-                assert!(network.queue_is_empty());
-            }
-        });
+    {
+        for expected_label in [203, 204] {
+            let network = TestTransport::new();
+            let mut a_slab = [0; 16 * 1024];
+            let mut b_slab = [0; 16 * 1024];
+            let mut a_storage = SessionKitStorage::uninit();
+            let mut b_storage = SessionKitStorage::uninit();
+            let a_rv = a_storage
+                .init()
+                .rendezvous(&mut a_slab, network.clone())
+                .unwrap();
+            let b_rv = b_storage
+                .init()
+                .rendezvous(&mut b_slab, network.clone())
+                .unwrap();
+            let sid = SessionId::new(9074);
+            let mut a = a_rv.enter(sid, &a_program).unwrap();
+            let mut b = b_rv.enter(sid, &b_program).unwrap();
+            (async {
+                a.send::<Start>(&7).await.unwrap();
+                assert_eq!(b.recv::<Start>().await.unwrap(), 7);
+                b.send::<Ack>(&8).await.unwrap();
+                assert_eq!(a.recv::<Ack>().await.unwrap(), 8);
+                match expected_label {
+                    203 => b.send::<Finish>(&9).await.unwrap(),
+                    204 => b.send::<Stop>(&9).await.unwrap(),
+                    _ => unreachable!(),
+                }
+                a.send::<Start>(&10).await.unwrap();
+                assert_eq!(b.recv::<Start>().await.unwrap(), 10);
+                b.send::<Ack>(&11).await.unwrap();
+                let branch = a.offer().await.unwrap();
+                assert_eq!(branch.label(), expected_label);
+                match branch.label() {
+                    203 => assert_eq!(branch.recv::<Finish>().await.unwrap(), 9),
+                    204 => assert_eq!(branch.recv::<Stop>().await.unwrap(), 9),
+                    _ => unreachable!(),
+                }
+                assert_eq!(a.recv::<Ack>().await.unwrap(), 11);
+            })
+            .await;
+            assert!(network.queue_is_empty());
+        }
+    };
+
+    Ok(())
 }

@@ -15,12 +15,11 @@ use core::{future::Future, pin::pin, task::Context};
 static_assertions::assert_not_impl_any!(EndpointOwner: Clone, Copy, Send, Sync);
 static_assertions::assert_not_impl_any!(Endpoint<'static, 0>: Clone, Copy, Send, Sync);
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn foreign_view_or_generation_cannot_release_a_live_endpoint() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("runtime");
-    runtime.block_on(async {
+async fn foreign_view_or_generation_cannot_release_a_live_endpoint()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
         let protocol = g::send::<0, 1, Msg<1, u32>>();
         let client_program: RoleProgram<0> = project(&protocol);
         let server_program: RoleProgram<1> = project(&protocol);
@@ -63,17 +62,18 @@ fn foreign_view_or_generation_cannot_release_a_live_endpoint() {
         };
         client.send::<Msg<1, u32>>(&7).await.expect("request");
         assert_eq!(server.recv::<Msg<1, u32>>().await.expect("request"), 7);
-    });
+    };
+
+    Ok(())
 }
 
 // These tests use the in-memory carrier and need task scheduling, not OS I/O.
-// Keep the same Tokio runtime in native and Miri runs without opening kqueue.
+// Native tests and Miri drive the same in-memory I/O.
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn moving_owner_preserves_committed_cursor_and_live_lease() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("runtime");
-    runtime.block_on(async {
+async fn moving_owner_preserves_committed_cursor_and_live_lease()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
         let protocol = g::seq(
             g::send::<0, 1, Msg<1, u32>>(),
             g::seq(
@@ -112,15 +112,16 @@ fn moving_owner_preserves_committed_cursor_and_live_lease() {
         assert_eq!(client.recv::<Msg<2, u32>>().await.expect("reply"), 8);
         client.send::<Msg<3, u32>>(&9).await.expect("continuation");
         assert_eq!(server.recv::<Msg<3, u32>>().await.expect("continuation"), 9);
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn wrong_role_returns_the_same_unconsumed_owner() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("runtime");
-    runtime.block_on(async {
+async fn wrong_role_returns_the_same_unconsumed_owner()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
         let protocol = g::send::<0, 1, Msg<1, u32>>();
         let client_program: RoleProgram<0> = project(&protocol);
         let server_program: RoleProgram<1> = project(&protocol);
@@ -146,15 +147,16 @@ fn wrong_role_returns_the_same_unconsumed_owner() {
         };
         client.send::<Msg<1, u32>>(&37).await.expect("request");
         assert_eq!(server.recv::<Msg<1, u32>>().await.expect("request"), 37);
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn moving_owner_preserves_unconsumed_route_frame() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("runtime");
-    runtime.block_on(async {
+async fn moving_owner_preserves_unconsumed_route_frame()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
         let protocol = g::route(
             g::seq(
                 g::send::<0, 1, Msg<1, u32>>(),
@@ -194,15 +196,16 @@ fn moving_owner_preserves_unconsumed_route_frame() {
             .await
             .expect("right continuation");
         assert_eq!(client.recv::<Msg<4, u32>>().await.expect("reply"), 42);
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn moving_owner_preserves_independent_repetition_cursors() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("runtime");
-    runtime.block_on(async {
+async fn moving_owner_preserves_independent_repetition_cursors()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
         let protocol = g::par(
             g::seq(
                 g::send::<0, 1, Msg<1, u32>>(),
@@ -263,7 +266,9 @@ fn moving_owner_preserves_independent_repetition_cursors() {
             client.recv::<Msg<2, u32>>().await.expect("next left reply"),
             10
         );
-    });
+    };
+
+    Ok(())
 }
 
 #[test]

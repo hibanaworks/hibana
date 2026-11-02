@@ -48,8 +48,10 @@ pub(super) type LocalSteps = g::Seq<
     g::Resolve<g::Route<g::Send<10, 10, g::Msg<20, ()>>, g::Send<10, 10, g::Msg<21, ()>>>, 710>,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_completed_right_arm_reopens_the_public_route_without_receiving() {
+async fn a_completed_right_arm_reopens_the_public_route_without_receiving()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::runtime::program::project;
 
     let global = g::seq(
@@ -95,15 +97,11 @@ fn a_completed_right_arm_reopens_the_public_route_without_receiving() {
     let sid = SessionId::new(849);
     let mut db = db_rv.enter(sid, &db_program).unwrap();
     let mut service = service_rv.enter(sid, &service_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(240), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         for value in [41, 43, 42, 44, 45] {
                             number.set(value);
                             let branch = db.offer().await.unwrap();
@@ -116,8 +114,13 @@ fn a_completed_right_arm_reopens_the_public_route_without_receiving() {
                         }
                         db.send::<AfterRead>(&47).await.unwrap();
                         assert_eq!(db.recv::<AfterValue>().await.unwrap(), 48);
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         for expected in [41, 43, 42, 44, 45] {
                             let branch = service.offer().await.unwrap();
                             let value = match branch.label() {
@@ -130,12 +133,18 @@ fn a_completed_right_arm_reopens_the_public_route_without_receiving() {
                         }
                         assert_eq!(service.recv::<AfterRead>().await.unwrap(), 47);
                         service.send::<AfterValue>(&48).await.unwrap();
-                    }
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("a completed right arm must not wait for an incoming request");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
 mod remote_controller {

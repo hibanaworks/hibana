@@ -19,43 +19,41 @@ type Steps = g::Seq<
     >,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
+async fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let peer_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut owner_slab = [0; 32 * 1024];
-            let mut peer_slab = [0; 32 * 1024];
-            let mut owner_storage = SessionKitStorage::uninit();
-            let mut peer_storage = SessionKitStorage::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let peer_rv = peer_storage
-                .init()
-                .rendezvous(&mut peer_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9058);
-            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-            let db = owner_rv.enter(sid, &db_program).unwrap();
-            let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
-            let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
-            let mut service = peer_rv.enter(sid, &service_program).unwrap();
-            let (observed, loop_wires, (outside_wire, ())) =
-                tokio::time::timeout(core::time::Duration::from_secs(240), async {
-                    tokio::join!(
-                        async {
+    {
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 32 * 1024];
+        let mut peer_slab = [0; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut peer_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let peer_rv = peer_storage
+            .init()
+            .rendezvous(&mut peer_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9058);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let db = owner_rv.enter(sid, &db_program).unwrap();
+        let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
+        let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
+        let mut service = peer_rv.enter(sid, &service_program).unwrap();
+        let (observed, loop_wires, (outside_wire, ())) = (async {
+            async {
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
                             // SAFETY: OWNER and DB use owner_rv's pinned actor.
                             let initial = unsafe { actor_snapshot(&owner) };
                             let initial_admitted = unsafe { actor_admissions(&owner) };
@@ -123,8 +121,14 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                                 ],
                                 [first_send_wire, outside_send_wire, fresh_send_wire],
                             )
-                        },
-                        async {
+                        })
+                        .await,
+                    )
+                };
+
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
                             let mut wires = std::vec::Vec::new();
                             for number in [17, 23] {
                                 let mut db = worker.recv::<Loan>().await.unwrap();
@@ -136,48 +140,75 @@ fn a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt() {
                                 wires.push(network.queued_frame(0));
                             }
                             wires
-                        },
-                        async {
-                            tokio::join!(
-                                async {
-                                    let db = peer.recv::<OutsideLoan>().await.unwrap();
-                                    peer.send::<OutsideLoan>(db).await.unwrap();
-                                    network.queued_frame(0)
-                                },
-                                async {
-                                    for number in [17, 23] {
-                                        assert_eq!(service.recv::<Read>().await.unwrap(), number);
-                                        service.send::<Value>(&(number + 1)).await.unwrap();
-                                    }
-                                    assert_eq!(service.recv::<AfterRead>().await.unwrap(), 91);
-                                },
-                            )
-                        },
+                        })
+                        .await,
                     )
-                })
-                .await
-                .expect("a legal closed body could not refresh its resource");
-            assert!(network.queue_is_empty());
-            assert_eq!(observed.0[6].counter, observed.0[4].counter + 2);
-            assert_eq!(loop_wires.len(), 2);
-            assert_eq!(loop_wires[1].1[0], 10);
-            assert_eq!(outside_wire.1[0], 10);
-            let read = observed.0[6]
-                .steps
-                .iter()
-                .position(|step| matches!(step.action, LocalAction::Send { label: 30, .. }))
-                .unwrap();
-            assert!(observed.1[4][read]);
-            #[cfg(not(miri))]
-            write_observations(
-                owner_program.role_image_ref(),
-                &observed.0,
-                &observed.1,
-                &outside_wire,
-                &loop_wires,
-                &observed.2,
-            );
-        });
+                };
+
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
+                            async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>(
+                                        (async {
+                                            let db = peer.recv::<OutsideLoan>().await.unwrap();
+                                            peer.send::<OutsideLoan>(db).await.unwrap();
+                                            network.queued_frame(0)
+                                        })
+                                        .await,
+                                    )
+                                };
+
+                                async {
+                                    let _: () = (async {
+                                        for number in [17, 23] {
+                                            assert_eq!(
+                                                service.recv::<Read>().await.unwrap(),
+                                                number
+                                            );
+                                            service.send::<Value>(&(number + 1)).await.unwrap();
+                                        }
+                                        assert_eq!(service.recv::<AfterRead>().await.unwrap(), 91);
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data")
+                        })
+                        .await,
+                    )
+                };
+            }
+            .await
+            .expect("all child results are data")
+        })
+        .await;
+        assert!(network.queue_is_empty());
+        assert_eq!(observed.0[6].counter, observed.0[4].counter + 2);
+        assert_eq!(loop_wires.len(), 2);
+        assert_eq!(loop_wires[1].1[0], 10);
+        assert_eq!(outside_wire.1[0], 10);
+        let read = observed.0[6]
+            .steps
+            .iter()
+            .position(|step| matches!(step.action, LocalAction::Send { label: 30, .. }))
+            .unwrap();
+        assert!(observed.1[4][read]);
+        #[cfg(not(miri))]
+        write_observations(
+            owner_program.role_image_ref(),
+            &observed.0,
+            &observed.1,
+            &outside_wire,
+            &loop_wires,
+            &observed.2,
+        );
+    };
+
+    Ok(())
 }
 
 #[cfg(not(miri))]

@@ -1,4 +1,4 @@
-//! Serialization of passive cuts from the existing direct Tokio localsides.
+//! Serialization of passive cuts from the direct Endpoint localsides.
 use crate::{
     endpoint::proof_snapshot::{OperationCutSnapshot, operation_cut_source},
     global::compiled::images::RoleDescriptorRef,

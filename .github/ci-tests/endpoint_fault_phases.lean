@@ -118,7 +118,7 @@ def phasePointActor? (plan : SourceOccurrenceCut source) (point : SourcePoint) :
   | .accepted event => (action? plan.path.bindings ⟨event, .send⟩).map (·.actor)
   | .committed action => (action? plan.path.bindings action).map (·.actor)
 
-/-- All non-gated work in these localsides is driven to quiescence by Tokio.
+/-- All non-gated work in these localsides is driven to quiescence by the closed in-process Driver.
 This rejects omitting an enabled automatic operation or a ready EOF, rather
 than predicting availability from an incomplete observed trace alone. -/
 def faultPhaseQuiescent (plan : SourceOccurrenceCut source) (channels : Array (Nat × Nat × Nat))

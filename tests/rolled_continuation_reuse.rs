@@ -1,11 +1,15 @@
 //! Elastic reentry must not share an outbound selector with a continuation.
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use hibana::g::{self, Msg, ProjectionProblem};
 
 #[path = "../examples/support/in_memory.rs"]
 mod in_memory;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_distinct_outbound_continuation_keeps_the_completed_roll_available() {
+async fn a_distinct_outbound_continuation_keeps_the_completed_roll_available()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::runtime::{SessionKitStorage, ids::SessionId, program::project};
     type Ping = Msg<1, u32>;
     type Switch = Msg<2, ()>;
@@ -21,37 +25,46 @@ fn a_distinct_outbound_continuation_keeps_the_completed_roll_available() {
     let session = SessionId::new(9018);
     let mut left = runtime.enter(session, &p0).unwrap();
     let mut right = runtime.enter(session, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         left.send::<Ping>(&1).await.unwrap();
                         left.send::<Switch>(&()).await.unwrap();
                         left.send::<Ping>(&2).await.unwrap();
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         assert_eq!(right.recv::<Ping>().await.unwrap(), 1);
                         right.recv::<Switch>().await.unwrap();
                         assert_eq!(right.recv::<Ping>().await.unwrap(), 2);
-                    },
-                );
-                assert!(
-                    left.send::<Switch>(&()).await.is_err(),
-                    "repeating Ping must not reset the one-shot continuation"
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("a completed roll remains repeatable after the continuation");
-        });
+            .expect("all child results are data");
+            assert!(
+                left.send::<Switch>(&()).await.is_err(),
+                "repeating Ping must not reset the one-shot continuation"
+            );
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn an_unrolled_prefix_cannot_restart_after_its_continuation() {
+async fn an_unrolled_prefix_cannot_restart_after_its_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::runtime::{SessionKitStorage, ids::SessionId, program::project};
     type First = Msg<1, ()>;
     type Second = Msg<2, ()>;
@@ -67,26 +80,24 @@ fn an_unrolled_prefix_cannot_restart_after_its_continuation() {
     let session = SessionId::new(9019);
     let mut left = runtime.enter(session, &p0).unwrap();
     let mut right = runtime.enter(session, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                left.send::<First>(&()).await.unwrap();
-                right.recv::<First>().await.unwrap();
-                left.send::<Second>(&()).await.unwrap();
-                right.recv::<Second>().await.unwrap();
-                assert!(left.send::<First>(&()).await.is_err());
-            })
-            .await
-            .expect("both one-shot messages must finish");
-        });
+    {
+        (async {
+            left.send::<First>(&()).await.unwrap();
+            right.recv::<First>().await.unwrap();
+            left.send::<Second>(&()).await.unwrap();
+            right.recv::<Second>().await.unwrap();
+            assert!(left.send::<First>(&()).await.is_err());
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn an_acquired_view_guards_repeated_requests_before_the_owner_continuation() {
+async fn an_acquired_view_guards_repeated_requests_before_the_owner_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::{
         Endpoint,
         runtime::{
@@ -131,46 +142,71 @@ fn an_acquired_view_guards_repeated_requests_before_the_owner_continuation() {
         let mut db = owner_runtime.enter(sid, &db_program).unwrap();
         let mut worker = worker_runtime.enter(sid, &worker_program).unwrap();
         let mut service = service_runtime.enter(sid, &service_program).unwrap();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .start_paused(true)
-            .build()
-            .unwrap()
-            .block_on(async {
-                let owner_run = async {
-                    for _ in 0..2 {
-                        owner.send::<Loan<'_>>(db).await.unwrap();
-                        db = owner.recv::<Loan<'_>>().await.unwrap();
+        {
+            let owner_run = async {
+                for _ in 0..2 {
+                    owner.send::<Loan<'_>>(db).await.unwrap();
+                    db = owner.recv::<Loan<'_>>().await.unwrap();
+                }
+                db.send::<Read>(&99).await.unwrap();
+                assert_eq!(db.recv::<Value>().await.unwrap(), 109);
+            };
+            let worker_run = async {
+                for value in [11, 12] {
+                    let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+                    db.send::<Read>(&value).await.unwrap();
+                    assert_eq!(db.recv::<Value>().await.unwrap(), value + 10);
+                    worker.send::<Loan<'_>>(db).await.unwrap();
+                }
+            };
+            let service_run = async {
+                for expected in [11, 12, 99] {
+                    let value = service.recv::<Read>().await.unwrap();
+                    assert_eq!(value, expected);
+                    service.send::<Value>(&(value + 10)).await.unwrap();
+                }
+            };
+            (async {
+                if reverse {
+                    async {
+                        async {
+                            let _: () = (service_run).await;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+                        async {
+                            let _: () = (worker_run).await;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+                        async {
+                            let _: () = (owner_run).await;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
                     }
-                    db.send::<Read>(&99).await.unwrap();
-                    assert_eq!(db.recv::<Value>().await.unwrap(), 109);
-                };
-                let worker_run = async {
-                    for value in [11, 12] {
-                        let mut db = worker.recv::<Loan<'_>>().await.unwrap();
-                        db.send::<Read>(&value).await.unwrap();
-                        assert_eq!(db.recv::<Value>().await.unwrap(), value + 10);
-                        worker.send::<Loan<'_>>(db).await.unwrap();
+                    .await
+                    .expect("all child results are data");
+                } else {
+                    async {
+                        async {
+                            let _: () = (owner_run).await;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+                        async {
+                            let _: () = (worker_run).await;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+                        async {
+                            let _: () = (service_run).await;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
                     }
-                };
-                let service_run = async {
-                    for expected in [11, 12, 99] {
-                        let value = service.recv::<Read>().await.unwrap();
-                        assert_eq!(value, expected);
-                        service.send::<Value>(&(value + 10)).await.unwrap();
-                    }
-                };
-                tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                    if reverse {
-                        tokio::join!(biased; service_run, worker_run, owner_run);
-                    } else {
-                        tokio::join!(biased; owner_run, worker_run, service_run);
-                    }
-                })
-                .await
-                .expect("both repeated loans and the owner's continuation must finish");
-            });
+                    .await
+                    .expect("all child results are data");
+                }
+            })
+            .await;
+        };
     }
+    Ok(())
 }
 
 #[test]

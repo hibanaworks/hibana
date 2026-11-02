@@ -19,18 +19,18 @@ type Steps = g::Seq<
     >,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_owned_send_cannot_wait_for_a_transitive_predecessor_using_its_payload() {
+async fn an_owned_send_cannot_wait_for_a_transitive_predecessor_using_its_payload()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     let third_program = crate::runtime::program::project::<12>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 96 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
         let rv = storage
@@ -56,11 +56,15 @@ fn an_owned_send_cannot_wait_for_a_transitive_predecessor_using_its_payload() {
             matches!(result, Poll::Ready(Err(_))),
             "a transitive borrowed-view predecessor must reject, not wait: {result:?}"
         );
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn two_parallel_joins_release_the_owned_transfers_after_both_fragments_finish() {
+async fn two_parallel_joins_release_the_owned_transfers_after_both_fragments_finish()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
@@ -73,10 +77,8 @@ fn two_parallel_joins_release_the_owned_transfers_after_both_fragments_finish() 
     let second_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     let middle_left_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
     let middle_right_program = crate::runtime::program::project::<6>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 160 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
         let rv = storage
@@ -95,36 +97,88 @@ fn two_parallel_joins_release_the_owned_transfers_after_both_fragments_finish() 
         let mut second = rv.enter(sid, &second_program).unwrap();
         let mut middle_left = rv.enter(sid, &middle_left_program).unwrap();
         let mut middle_right = rv.enter(sid, &middle_right_program).unwrap();
-        let ((), db, auth, third, (), (), (), ()) = tokio::join!(
+        let ((), db, auth, third, (), (), (), ()) = async {
             async {
-                let mut db = db;
-                let (left, right) = tokio::join!(auth.send::<Read>(&7), db.send::<Read>(&11),);
-                left.unwrap();
-                right.unwrap();
-                let (left, right) =
-                    tokio::join!(auth.send::<Value>(&13), third.send::<Value>(&17),);
-                left.unwrap();
-                right.unwrap();
-                owner.send::<Loan>(db).await.unwrap();
-                owner.send::<OtherLoan>(auth).await.unwrap();
-                owner.send::<ThirdLoan>(third).await.unwrap();
-            },
-            async { worker.recv::<Loan>().await.unwrap() },
-            async { other.recv::<OtherLoan>().await.unwrap() },
-            async { third_worker.recv::<ThirdLoan>().await.unwrap() },
+                let _: () = (async {
+                    let mut db = db;
+                    let (left, right) = async {
+                        async { Ok::<_, hibana::EndpointError>((auth.send::<Read>(&7)).await) };
+                        async { Ok::<_, hibana::EndpointError>((db.send::<Read>(&11)).await) };
+                    }
+                    .await
+                    .expect("all child results are data");
+                    left.unwrap();
+                    right.unwrap();
+                    let (left, right) = async {
+                        async { Ok::<_, hibana::EndpointError>((auth.send::<Value>(&13)).await) };
+                        async { Ok::<_, hibana::EndpointError>((third.send::<Value>(&17)).await) };
+                    }
+                    .await
+                    .expect("all child results are data");
+                    left.unwrap();
+                    right.unwrap();
+                    owner.send::<Loan>(db).await.unwrap();
+                    owner.send::<OtherLoan>(auth).await.unwrap();
+                    owner.send::<ThirdLoan>(third).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                assert_eq!(first.recv::<Read>().await.unwrap(), 7);
-            },
+                Ok::<_, hibana::EndpointError>(
+                    (async { worker.recv::<Loan>().await.unwrap() }).await,
+                )
+            };
+
             async {
-                assert_eq!(second.recv::<Read>().await.unwrap(), 11);
-            },
+                Ok::<_, hibana::EndpointError>(
+                    (async { other.recv::<OtherLoan>().await.unwrap() }).await,
+                )
+            };
+
             async {
-                assert_eq!(middle_left.recv::<Value>().await.unwrap(), 13);
-            },
+                Ok::<_, hibana::EndpointError>(
+                    (async { third_worker.recv::<ThirdLoan>().await.unwrap() }).await,
+                )
+            };
+
             async {
-                assert_eq!(middle_right.recv::<Value>().await.unwrap(), 17);
-            },
-        );
+                let _: () = (async {
+                    assert_eq!(first.recv::<Read>().await.unwrap(), 7);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
+                    assert_eq!(second.recv::<Read>().await.unwrap(), 11);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
+                    assert_eq!(middle_left.recv::<Value>().await.unwrap(), 13);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
+                    assert_eq!(middle_right.recv::<Value>().await.unwrap(), 17);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
         drop((db, auth, third));
-    });
+    };
+
+    Ok(())
 }

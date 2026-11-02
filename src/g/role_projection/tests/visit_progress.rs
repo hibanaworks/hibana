@@ -19,187 +19,197 @@ struct Cut {
     accepted: Vec<usize>,
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_complete_actor_visit_exposes_real_parallel_admissions_and_completion() {
-    // The transport is entirely in memory. Use Tokio's executor without an
-    // OS I/O driver so Miri can execute the same concurrent localsides.
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
-            let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
-            let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
-            let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
-            let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-            let peer_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
-            let network = TestTransport::new();
-            let mut owner_slab = [0; 32 * 1024];
-            let mut peer_slab = [0; 48 * 1024];
-            let mut owner_storage = SessionKitStorage::uninit();
-            let mut peer_storage = SessionKitStorage::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let peer_rv = peer_storage
-                .init()
-                .rendezvous(&mut peer_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9054);
-            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-            let db = owner_rv.enter(sid, &db_program).unwrap();
-            let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
-            let mut reader = peer_rv.enter(sid, &reader_program).unwrap();
-            let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
-            let mut cuts = Vec::new();
-            let mut wires = Vec::new();
+async fn a_complete_actor_visit_exposes_real_parallel_admissions_and_completion()
+-> core::result::Result<(), hibana::EndpointError> {
+    // Native tests and Miri drive the same in-memory I/O and localsides.
+    {
+        let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
+        let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
+        let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
+        let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
+        let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
+        let peer_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 32 * 1024];
+        let mut peer_slab = [0; 48 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut peer_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let peer_rv = peer_storage
+            .init()
+            .rendezvous(&mut peer_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9054);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let db = owner_rv.enter(sid, &db_program).unwrap();
+        let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
+        let mut reader = peer_rv.enter(sid, &reader_program).unwrap();
+        let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
+        let mut cuts = Vec::new();
+        let mut wires = Vec::new();
 
-            // SAFETY: all four live endpoints retain their pinned TestTransport actors.
-            // Copy only read-only evidence under each existing short operation lease.
-            cuts.push(Cut {
-                name: "visitInitial",
-                actors: unsafe {
-                    [
-                        (actor_snapshot(&owner), actor_admissions(&owner)),
-                        (actor_snapshot(&worker), actor_admissions(&worker)),
-                        (actor_snapshot(&reader), actor_admissions(&reader)),
-                        (actor_snapshot(&peer), actor_admissions(&peer)),
-                    ]
-                },
-                accepted: vec![],
-            });
-
-            owner.send::<Loan>(db).await.unwrap();
-            wires.push(network.queued_frame(1));
-            assert_eq!(wires[0].1, [10, 0, 0]);
-            cuts.push(Cut {
-                name: "visitLoanAccepted",
-                // SAFETY: the same four TestTransport actors remain pinned.
-                actors: unsafe {
-                    [
-                        (actor_snapshot(&owner), actor_admissions(&owner)),
-                        (actor_snapshot(&worker), actor_admissions(&worker)),
-                        (actor_snapshot(&reader), actor_admissions(&reader)),
-                        (actor_snapshot(&peer), actor_admissions(&peer)),
-                    ]
-                },
-                accepted: vec![0],
-            });
-
-            let mut db = worker.recv::<Loan>().await.unwrap();
-            cuts.push(Cut {
-                name: "visitLoanReceived",
-                // SAFETY: receipt preserves the concrete actor types and allocation.
-                actors: unsafe {
-                    [
-                        (actor_snapshot(&owner), actor_admissions(&owner)),
-                        (actor_snapshot(&worker), actor_admissions(&worker)),
-                        (actor_snapshot(&reader), actor_admissions(&reader)),
-                        (actor_snapshot(&peer), actor_admissions(&peer)),
-                    ]
-                },
-                accepted: vec![0],
-            });
-            // The global's two independent sends are both admitted before either
-            // runs, then driven as concurrent futures on distinct affine views.
-            assert_eq!(cuts.last().unwrap().actors[1].1, [false, true, true, false]);
-            let (read, value) = tokio::join!(db.send::<Read>(&17), worker.send::<Value>(&19));
-            read.unwrap();
-            value.unwrap();
-            wires.push(network.queued_frame(3));
-            wires.push(network.queued_frame(4));
-            cuts.push(Cut {
-                name: "visitParallelAccepted",
-                // SAFETY: both send futures released their short actor borrows.
-                actors: unsafe {
-                    [
-                        (actor_snapshot(&owner), actor_admissions(&owner)),
-                        (actor_snapshot(&worker), actor_admissions(&worker)),
-                        (actor_snapshot(&reader), actor_admissions(&reader)),
-                        (actor_snapshot(&peer), actor_admissions(&peer)),
-                    ]
-                },
-                accepted: vec![0, 1, 2],
-            });
-            let (read, value) = tokio::join!(reader.recv::<Read>(), peer.recv::<Value>());
-            assert_eq!(read.unwrap(), 17);
-            assert_eq!(value.unwrap(), 19);
-            cuts.push(Cut {
-                name: "visitParallelReceived",
-                // SAFETY: both receive operations finished before copying progress.
-                actors: unsafe {
-                    [
-                        (actor_snapshot(&owner), actor_admissions(&owner)),
-                        (actor_snapshot(&worker), actor_admissions(&worker)),
-                        (actor_snapshot(&reader), actor_admissions(&reader)),
-                        (actor_snapshot(&peer), actor_admissions(&peer)),
-                    ]
-                },
-                accepted: vec![0, 1, 2],
-            });
-
-            worker.send::<Loan>(db).await.unwrap();
-            wires.push(network.queued_frame(0));
-            assert_eq!(wires[3].1, [10, 0, 3]);
-            cuts.push(Cut {
-                name: "visitReturnAccepted",
-                // SAFETY: WORKER's own view retains its actor after the owned move.
-                actors: unsafe {
-                    [
-                        (actor_snapshot(&owner), actor_admissions(&owner)),
-                        (actor_snapshot(&worker), actor_admissions(&worker)),
-                        (actor_snapshot(&reader), actor_admissions(&reader)),
-                        (actor_snapshot(&peer), actor_admissions(&peer)),
-                    ]
-                },
-                accepted: vec![0, 1, 2, 3],
-            });
-            let db = owner.recv::<Loan>().await.unwrap();
-            cuts.push(Cut {
-                name: "visitComplete",
-                // SAFETY: the returned continuation and all actor records are live.
-                actors: unsafe {
-                    [
-                        (actor_snapshot(&owner), actor_admissions(&owner)),
-                        (actor_snapshot(&worker), actor_admissions(&worker)),
-                        (actor_snapshot(&reader), actor_admissions(&reader)),
-                        (actor_snapshot(&peer), actor_admissions(&peer)),
-                    ]
-                },
-                accepted: vec![0, 1, 2, 3],
-            });
-            assert!(
-                cuts.last()
-                    .unwrap()
-                    .actors
-                    .iter()
-                    .all(|(snapshot, admitted)| {
-                        snapshot.steps.iter().all(|step| step.done)
-                            && admitted.iter().all(|&ready| !ready)
-                    })
-            );
-            for (cut, expected) in cuts.iter().zip([0, 1, 1, 3, 3, 4, 4]) {
-                assert_eq!(cut.accepted.len(), expected);
-                assert_eq!(
-                    cut.actors.each_ref().map(|(actor, _)| actor.actor),
-                    [0, 1, 3, 4]
-                );
-                std::eprintln!("{}: accepted={:?}", cut.name, cut.accepted);
-            }
-            #[cfg(not(miri))]
-            write_observations(
+        // SAFETY: all four live endpoints retain their pinned TestTransport actors.
+        // Copy only read-only evidence under each existing short operation lease.
+        cuts.push(Cut {
+            name: "visitInitial",
+            actors: unsafe {
                 [
-                    owner_program.role_image_ref(),
-                    worker_program.role_image_ref(),
-                    reader_program.role_image_ref(),
-                    peer_program.role_image_ref(),
-                ],
-                &cuts,
-                &wires,
-            );
-            drop(db);
+                    (actor_snapshot(&owner), actor_admissions(&owner)),
+                    (actor_snapshot(&worker), actor_admissions(&worker)),
+                    (actor_snapshot(&reader), actor_admissions(&reader)),
+                    (actor_snapshot(&peer), actor_admissions(&peer)),
+                ]
+            },
+            accepted: vec![],
         });
+
+        owner.send::<Loan>(db).await.unwrap();
+        wires.push(network.queued_frame(1));
+        assert_eq!(wires[0].1, [10, 0, 0]);
+        cuts.push(Cut {
+            name: "visitLoanAccepted",
+            // SAFETY: the same four TestTransport actors remain pinned.
+            actors: unsafe {
+                [
+                    (actor_snapshot(&owner), actor_admissions(&owner)),
+                    (actor_snapshot(&worker), actor_admissions(&worker)),
+                    (actor_snapshot(&reader), actor_admissions(&reader)),
+                    (actor_snapshot(&peer), actor_admissions(&peer)),
+                ]
+            },
+            accepted: vec![0],
+        });
+
+        let mut db = worker.recv::<Loan>().await.unwrap();
+        cuts.push(Cut {
+            name: "visitLoanReceived",
+            // SAFETY: receipt preserves the concrete actor types and allocation.
+            actors: unsafe {
+                [
+                    (actor_snapshot(&owner), actor_admissions(&owner)),
+                    (actor_snapshot(&worker), actor_admissions(&worker)),
+                    (actor_snapshot(&reader), actor_admissions(&reader)),
+                    (actor_snapshot(&peer), actor_admissions(&peer)),
+                ]
+            },
+            accepted: vec![0],
+        });
+        // The global's two independent sends are both admitted before either
+        // runs, then driven as concurrent futures on distinct affine views.
+        assert_eq!(cuts.last().unwrap().actors[1].1, [false, true, true, false]);
+        let (read, value) = async {
+            async { Ok::<_, hibana::EndpointError>((db.send::<Read>(&17)).await) };
+            async { Ok::<_, hibana::EndpointError>((worker.send::<Value>(&19)).await) };
+        }
+        .await
+        .expect("all child results are data");
+        read.unwrap();
+        value.unwrap();
+        wires.push(network.queued_frame(3));
+        wires.push(network.queued_frame(4));
+        cuts.push(Cut {
+            name: "visitParallelAccepted",
+            // SAFETY: both send futures released their short actor borrows.
+            actors: unsafe {
+                [
+                    (actor_snapshot(&owner), actor_admissions(&owner)),
+                    (actor_snapshot(&worker), actor_admissions(&worker)),
+                    (actor_snapshot(&reader), actor_admissions(&reader)),
+                    (actor_snapshot(&peer), actor_admissions(&peer)),
+                ]
+            },
+            accepted: vec![0, 1, 2],
+        });
+        let (read, value) = async {
+            async { Ok::<_, hibana::EndpointError>((reader.recv::<Read>()).await) };
+            async { Ok::<_, hibana::EndpointError>((peer.recv::<Value>()).await) };
+        }
+        .await
+        .expect("all child results are data");
+        assert_eq!(read.unwrap(), 17);
+        assert_eq!(value.unwrap(), 19);
+        cuts.push(Cut {
+            name: "visitParallelReceived",
+            // SAFETY: both receive operations finished before copying progress.
+            actors: unsafe {
+                [
+                    (actor_snapshot(&owner), actor_admissions(&owner)),
+                    (actor_snapshot(&worker), actor_admissions(&worker)),
+                    (actor_snapshot(&reader), actor_admissions(&reader)),
+                    (actor_snapshot(&peer), actor_admissions(&peer)),
+                ]
+            },
+            accepted: vec![0, 1, 2],
+        });
+
+        worker.send::<Loan>(db).await.unwrap();
+        wires.push(network.queued_frame(0));
+        assert_eq!(wires[3].1, [10, 0, 3]);
+        cuts.push(Cut {
+            name: "visitReturnAccepted",
+            // SAFETY: WORKER's own view retains its actor after the owned move.
+            actors: unsafe {
+                [
+                    (actor_snapshot(&owner), actor_admissions(&owner)),
+                    (actor_snapshot(&worker), actor_admissions(&worker)),
+                    (actor_snapshot(&reader), actor_admissions(&reader)),
+                    (actor_snapshot(&peer), actor_admissions(&peer)),
+                ]
+            },
+            accepted: vec![0, 1, 2, 3],
+        });
+        let db = owner.recv::<Loan>().await.unwrap();
+        cuts.push(Cut {
+            name: "visitComplete",
+            // SAFETY: the returned continuation and all actor records are live.
+            actors: unsafe {
+                [
+                    (actor_snapshot(&owner), actor_admissions(&owner)),
+                    (actor_snapshot(&worker), actor_admissions(&worker)),
+                    (actor_snapshot(&reader), actor_admissions(&reader)),
+                    (actor_snapshot(&peer), actor_admissions(&peer)),
+                ]
+            },
+            accepted: vec![0, 1, 2, 3],
+        });
+        assert!(
+            cuts.last()
+                .unwrap()
+                .actors
+                .iter()
+                .all(|(snapshot, admitted)| {
+                    snapshot.steps.iter().all(|step| step.done)
+                        && admitted.iter().all(|&ready| !ready)
+                })
+        );
+        for (cut, expected) in cuts.iter().zip([0, 1, 1, 3, 3, 4, 4]) {
+            assert_eq!(cut.accepted.len(), expected);
+            assert_eq!(
+                cut.actors.each_ref().map(|(actor, _)| actor.actor),
+                [0, 1, 3, 4]
+            );
+            std::eprintln!("{}: accepted={:?}", cut.name, cut.accepted);
+        }
+        #[cfg(not(miri))]
+        write_observations(
+            [
+                owner_program.role_image_ref(),
+                worker_program.role_image_ref(),
+                reader_program.role_image_ref(),
+                peer_program.role_image_ref(),
+            ],
+            &cuts,
+            &wires,
+        );
+        drop(db);
+    };
+
+    Ok(())
 }
 
 /// Encode copied evidence. No Endpoint operation or authorization lives here.

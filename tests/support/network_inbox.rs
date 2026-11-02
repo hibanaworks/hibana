@@ -1,8 +1,5 @@
-//! Test-only stable logical inboxes accessed through independent TCP connections.
-//! Actors share neither socket descriptors nor runtime memory. The separate
-//! server stores bytes, readiness and a test journal; it knows no choreography,
-//! current holder, Endpoint binding or continuation. This loopback fixture is
-//! not an authenticated production transport or a brokerless migration test.
+//! Test-only stable logical TCP inboxes, owned by their I/O participant.
+//! The peer stores bytes and a journal; it has no choreography or holder table.
 #![deny(unsafe_code)]
 
 use hibana::runtime::{
@@ -11,23 +8,19 @@ use hibana::runtime::{
     },
     wire::Payload,
 };
+pub use hibana_runtime::host::Process;
+use hibana_runtime::host::{Io, deadline as timeout, sleep};
 use std::{
     collections::{BTreeMap, VecDeque},
     future::Future,
-    io::{self, BufRead, Write},
-    net::SocketAddr,
+    io::{self, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
     pin::Pin,
-    process::{Child, Command, Stdio},
-    sync::Arc,
+    process::{Command, Stdio},
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
     vec,
     vec::Vec,
-};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::{Mutex, Notify},
 };
 
 const SEND: u8 = 1;
@@ -40,222 +33,294 @@ const DEADLINE: Duration = Duration::from_secs(5);
 type Key = (u32, u8, u8);
 type IoFuture<T> = Pin<std::boxed::Box<dyn Future<Output = Result<T, TransportError>>>>;
 
-#[derive(Default)]
-struct Inbox {
-    frames: Mutex<VecDeque<Vec<u8>>>,
-    ready: Notify,
-}
-
-struct Server {
-    inboxes: Mutex<BTreeMap<Key, Arc<Inbox>>>,
-    journal: Mutex<Vec<(u8, Vec<u8>)>>,
-    acknowledgement_delay: fn(FrameHeader) -> Duration,
-}
-
-impl Server {
-    async fn inbox(&self, key: Key) -> Arc<Inbox> {
-        Arc::clone(self.inboxes.lock().await.entry(key).or_default())
-    }
-
-    async fn connection(&self, mut stream: TcpStream) -> io::Result<()> {
-        match stream.read_u8().await? {
-            SEND => {
-                let packet = read_packet(&mut stream).await?;
-                let header: [u8; HEADER] = packet[..HEADER].try_into().unwrap();
-                let key = (
-                    u32::from_be_bytes(header[..4].try_into().unwrap()),
-                    header[6],
-                    header[4],
-                );
-                let inbox = self.inbox(key).await;
-                let mut frames = inbox.frames.lock().await;
-                self.journal.lock().await.push((SEND, packet.clone()));
-                frames.push_back(packet);
-                drop(frames);
-                inbox.ready.notify_waiters();
-                let delay = (self.acknowledgement_delay)(FrameHeader::from_bytes(header));
-                if !delay.is_zero() {
-                    tokio::time::sleep(delay).await;
-                }
-                // Acceptance precedes this acknowledgement. Losing its TCP
-                // connection must not retract or duplicate the queued frame.
-                stream.write_u8(0).await?;
-            }
-            RECV => {
-                let session = stream.read_u32().await?;
-                let role = stream.read_u8().await?;
-                let lane = stream.read_u8().await?;
-                let inbox = self.inbox((session, role, lane)).await;
-                loop {
-                    let ready = inbox.ready.notified();
-                    tokio::pin!(ready);
-                    ready.as_mut().enable();
-                    let mut frames = inbox.frames.lock().await;
-                    if let Some(packet) = frames.pop_front() {
-                        self.journal.lock().await.push((RECV, packet.clone()));
-                        drop(frames);
-                        write_packet(&mut stream, &packet).await?;
-                        break;
-                    }
-                    drop(frames);
-                    ready.await;
-                }
-            }
-            JOURNAL => {
-                let journal = self.journal.lock().await.clone();
-                stream
-                    .write_u32(u32::try_from(journal.len()).unwrap())
-                    .await?;
-                for (operation, packet) in journal.iter() {
-                    stream.write_u8(*operation).await?;
-                    write_packet(&mut stream, packet).await?;
-                }
-            }
-            _ => return Err(io::Error::from(io::ErrorKind::InvalidData)),
-        }
-        stream.shutdown().await
-    }
-}
-
-async fn read_packet(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
-    let length = usize::try_from(stream.read_u32().await?).unwrap();
-    if !(HEADER..=MAX_PACKET).contains(&length) {
-        return Err(io::Error::from(io::ErrorKind::InvalidData));
-    }
-    let mut packet = vec![0; length];
-    stream.read_exact(&mut packet).await?;
-    Ok(packet)
-}
-
-async fn write_packet(stream: &mut TcpStream, packet: &[u8]) -> io::Result<()> {
-    stream
-        .write_u32(u32::try_from(packet.len()).unwrap())
-        .await?;
-    stream.write_all(packet).await
+// These fields are partial socket input/output, not application progress.
+struct Connection {
+    stream: TcpStream,
+    input: Vec<u8>,
+    output: Vec<u8>,
+    written: usize,
+    acknowledgement_at: Instant,
 }
 
 pub struct Peer {
     pub address: SocketAddr,
-    task: tokio::task::JoinHandle<()>,
+    listener: TcpListener,
+    connections: Vec<Connection>,
+    inboxes: BTreeMap<Key, VecDeque<Vec<u8>>>,
+    journal: Vec<(u8, Vec<u8>)>,
+    acknowledgement_delay: fn(FrameHeader) -> Duration,
 }
 
 impl Peer {
-    pub async fn start(acknowledgement_delay: fn(FrameHeader) -> Duration) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = Arc::new(Server {
-            inboxes: Mutex::new(BTreeMap::new()),
-            journal: Mutex::new(Vec::new()),
+    pub fn bind(acknowledgement_delay: fn(FrameHeader) -> Duration) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        Self {
+            address: listener.local_addr().unwrap(),
+            listener,
+            connections: Vec::new(),
+            inboxes: BTreeMap::new(),
+            journal: Vec::new(),
             acknowledgement_delay,
-        });
-        let task = tokio::spawn(async move {
+        }
+    }
+
+    /// Drive this peer beside the Endpoint participants in an explicit scope.
+    /// The fixture polls actual sockets; it makes no transport throughput claim.
+    pub async fn serve(&mut self) -> io::Result<()> {
+        loop {
             loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                let server = Arc::clone(&server);
-                tokio::spawn(async move { server.connection(stream).await });
+                match self.listener.accept() {
+                    Ok((stream, _)) => {
+                        stream.set_nonblocking(true)?;
+                        self.connections.push(Connection {
+                            stream,
+                            input: Vec::new(),
+                            output: Vec::new(),
+                            written: 0,
+                            acknowledgement_at: Instant::now(),
+                        });
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => return Err(error),
+                }
             }
-        });
-        Self { address, task }
-    }
-
-    pub async fn journal(&self) -> Vec<(u8, Vec<u8>)> {
-        journal(self.address).await
-    }
-}
-
-impl Drop for Peer {
-    fn drop(&mut self) {
-        self.task.abort();
+            // A delayed ACK or empty receive never stops another connection.
+            let inboxes = &mut self.inboxes;
+            let journal = &mut self.journal;
+            let acknowledgement_delay = self.acknowledgement_delay;
+            self.connections.retain_mut(|connection| {
+                let result = (|| -> io::Result<bool> {
+                    if connection.output.is_empty() {
+                        let mut bytes = [0; 4096];
+                        loop {
+                            match connection.stream.read(&mut bytes) {
+                                Ok(0) => return Ok(false),
+                                Ok(count) => {
+                                    connection.input.extend_from_slice(&bytes[..count]);
+                                    if connection.input.len() > MAX_PACKET + 5 {
+                                        return Err(io::ErrorKind::InvalidData.into());
+                                    }
+                                }
+                                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                                    continue;
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
+                        let input = &connection.input;
+                        match input.first().copied() {
+                            Some(SEND) if input.len() >= 5 => {
+                                let length =
+                                    u32::from_be_bytes(input[1..5].try_into().unwrap()) as usize;
+                                if !(HEADER..=MAX_PACKET).contains(&length) {
+                                    return Err(io::ErrorKind::InvalidData.into());
+                                }
+                                if input.len() == length + 5 {
+                                    let packet = input[5..].to_vec();
+                                    let header: [u8; HEADER] = packet[..HEADER].try_into().unwrap();
+                                    let key = (
+                                        u32::from_be_bytes(header[..4].try_into().unwrap()),
+                                        header[6],
+                                        header[4],
+                                    );
+                                    journal.push((SEND, packet.clone()));
+                                    inboxes.entry(key).or_default().push_back(packet);
+                                    // Publication precedes the ACK, including its
+                                    // configured delay and a subsequent disconnect.
+                                    connection.output.push(0);
+                                    connection.acknowledgement_at = Instant::now()
+                                        + acknowledgement_delay(FrameHeader::from_bytes(header));
+                                } else if input.len() > length + 5 {
+                                    return Err(io::ErrorKind::InvalidData.into());
+                                }
+                            }
+                            Some(RECV) if input.len() == 7 => {
+                                let key = (
+                                    u32::from_be_bytes(input[1..5].try_into().unwrap()),
+                                    input[5],
+                                    input[6],
+                                );
+                                if let Some(packet) =
+                                    inboxes.get_mut(&key).and_then(VecDeque::pop_front)
+                                {
+                                    journal.push((RECV, packet.clone()));
+                                    connection
+                                        .output
+                                        .extend_from_slice(&(packet.len() as u32).to_be_bytes());
+                                    connection.output.extend_from_slice(&packet);
+                                }
+                            }
+                            Some(JOURNAL) if input.len() == 1 => {
+                                connection
+                                    .output
+                                    .extend_from_slice(&(journal.len() as u32).to_be_bytes());
+                                for (operation, packet) in journal.iter() {
+                                    connection.output.push(*operation);
+                                    connection
+                                        .output
+                                        .extend_from_slice(&(packet.len() as u32).to_be_bytes());
+                                    connection.output.extend_from_slice(packet);
+                                }
+                            }
+                            Some(SEND | RECV) | None => {}
+                            Some(_) => return Err(io::ErrorKind::InvalidData.into()),
+                        }
+                    }
+                    if connection.output.is_empty()
+                        || Instant::now() < connection.acknowledgement_at
+                    {
+                        return Ok(true);
+                    }
+                    while connection.written < connection.output.len() {
+                        match connection
+                            .stream
+                            .write(&connection.output[connection.written..])
+                        {
+                            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+                            Ok(count) => connection.written += count,
+                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                                return Ok(true);
+                            }
+                            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    Ok(false)
+                })();
+                match result {
+                    Ok(keep) => keep,
+                    // Closing a failed connection cannot retract queued bytes.
+                    Err(error) => {
+                        std::eprintln!("TCP fixture connection: {error}");
+                        false
+                    }
+                }
+            });
+            sleep(Duration::from_millis(1)).await?;
+        }
     }
 }
 
 pub async fn serve(acknowledgement_delay: fn(FrameHeader) -> Duration) {
-    let peer = Peer::start(acknowledgement_delay).await;
+    let mut peer = Peer::bind(acknowledgement_delay);
     std::println!("inbox={}", peer.address);
     io::stdout().flush().unwrap();
-    std::future::pending::<()>().await;
+    peer.serve().await.unwrap();
 }
 
-pub struct Process(pub Child);
-
-impl Process {
-    pub async fn wait_success(&mut self) {
-        tokio::time::timeout(DEADLINE, async {
-            loop {
-                if let Some(status) = self.0.try_wait().unwrap() {
-                    assert!(status.success(), "network peer failed: {status}");
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        })
-        .await
-        .expect("network peer exits within the test deadline");
+pub async fn line(input: &mut Io) -> io::Result<std::string::String> {
+    let mut bytes = Vec::new();
+    loop {
+        let mut byte = [0];
+        if input.read(&mut byte).await? == 0 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        if byte[0] == b'\n' {
+            return std::string::String::from_utf8(bytes)
+                .map_err(|_| io::ErrorKind::InvalidData.into());
+        }
+        bytes.push(byte[0]);
     }
 }
 
-impl Drop for Process {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        self.0.wait().expect("reap test network process");
+pub async fn read_exact(stream: &mut Io, bytes: &mut [u8]) -> io::Result<()> {
+    let mut read = 0;
+    while read != bytes.len() {
+        let count = stream.read(&mut bytes[read..]).await?;
+        if count == 0 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        read += count;
     }
+    Ok(())
+}
+async fn read_u8(stream: &mut Io) -> io::Result<u8> {
+    let mut bytes = [0];
+    read_exact(stream, &mut bytes).await?;
+    Ok(bytes[0])
+}
+async fn read_u32(stream: &mut Io) -> io::Result<u32> {
+    let mut bytes = [0; 4];
+    read_exact(stream, &mut bytes).await?;
+    Ok(u32::from_be_bytes(bytes))
+}
+async fn read_packet(stream: &mut Io) -> io::Result<Vec<u8>> {
+    let length = read_u32(stream).await? as usize;
+    if !(HEADER..=MAX_PACKET).contains(&length) {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let mut packet = vec![0; length];
+    read_exact(stream, &mut packet).await?;
+    Ok(packet)
+}
+async fn write_packet(stream: &mut Io, packet: &[u8]) -> io::Result<()> {
+    stream
+        .write_all(&(packet.len() as u32).to_be_bytes())
+        .await?;
+    stream.write_all(packet).await
 }
 
 pub struct Broker {
     pub address: SocketAddr,
     _process: Process,
+    _output: Io,
 }
-
 impl Broker {
     pub async fn start(entrypoint: &str) -> Self {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--ignored", "--exact", entrypoint, "--nocapture"])
-            .env("HIBANA_NETWORK_BROKER", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let process = Process(child);
-        let address = tokio::time::timeout(
-            DEADLINE,
-            tokio::task::spawn_blocking(move || {
-                for line in io::BufReader::new(stdout).lines() {
-                    let line = line.unwrap();
+        let mut process = Process::spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--ignored", "--exact", entrypoint, "--nocapture"])
+                .env("HIBANA_NETWORK_BROKER", "1")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit()),
+        )
+        .unwrap();
+        let (input, mut output) = process.io().unwrap();
+        drop(input);
+        let address = hibana_runtime::race(
+            async {
+                loop {
+                    let line = line(&mut output).await?;
                     if let Some((_, address)) = line.split_once("inbox=") {
-                        return address.parse::<SocketAddr>().unwrap();
+                        return address.parse::<SocketAddr>().map_err(io::Error::other);
                     }
                 }
-                panic!("broker exited without publishing its TCP address");
-            }),
+            },
+            timeout(DEADLINE),
         )
         .await
-        .unwrap()
         .unwrap();
         Self {
             address,
             _process: process,
+            _output: output,
         }
     }
-
     pub async fn journal(&self) -> Vec<(u8, Vec<u8>)> {
         journal(self.address).await
     }
 }
 
-async fn journal(address: SocketAddr) -> Vec<(u8, Vec<u8>)> {
-    tokio::time::timeout(DEADLINE, async {
-        let mut stream = TcpStream::connect(address).await.unwrap();
-        stream.write_u8(JOURNAL).await.unwrap();
-        let length = stream.read_u32().await.unwrap();
-        let mut journal = Vec::new();
-        for _ in 0..length {
-            let operation = stream.read_u8().await.unwrap();
-            assert!(matches!(operation, SEND | RECV));
-            journal.push((operation, read_packet(&mut stream).await.unwrap()));
-        }
-        journal
-    })
+pub async fn journal(address: SocketAddr) -> Vec<(u8, Vec<u8>)> {
+    hibana_runtime::race(
+        async {
+            let mut stream = Io::connect(address).await?;
+            stream.write_all(&[JOURNAL]).await?;
+            let length = read_u32(&mut stream).await?;
+            let mut journal = Vec::new();
+            for _ in 0..length {
+                let operation = read_u8(&mut stream).await?;
+                assert!(matches!(operation, SEND | RECV));
+                journal.push((operation, read_packet(&mut stream).await?));
+            }
+            Ok::<_, io::Error>(journal)
+        },
+        timeout(DEADLINE),
+    )
     .await
     .unwrap()
 }
@@ -296,10 +361,15 @@ pub struct Rx {
 }
 
 async fn deadline<T>(work: impl Future<Output = io::Result<T>>) -> Result<T, TransportError> {
-    tokio::time::timeout(DEADLINE, work)
+    hibana_runtime::race(work, timeout(DEADLINE))
         .await
-        .map_err(|_| TransportError::Deadline)?
-        .map_err(|_| TransportError::Offline)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::TimedOut {
+                TransportError::Deadline
+            } else {
+                TransportError::Offline
+            }
+        })
 }
 
 impl Transport for NetworkTransport<'_> {
@@ -357,10 +427,10 @@ impl Transport for NetworkTransport<'_> {
             packet.extend_from_slice(outgoing.payload().as_bytes());
             let address = self.addresses[usize::from(outgoing.target_role())];
             tx.state = SendIo::Pending(std::boxed::Box::pin(deadline(async move {
-                let mut stream = TcpStream::connect(address).await?;
-                stream.write_u8(SEND).await?;
+                let mut stream = Io::connect(address).await?;
+                stream.write_all(&[SEND]).await?;
                 write_packet(&mut stream, &packet).await?;
-                if stream.read_u8().await? != 0 {
+                if read_u8(&mut stream).await? != 0 {
                     return Err(io::Error::from(io::ErrorKind::InvalidData));
                 }
                 Ok(())
@@ -408,11 +478,13 @@ impl Transport for NetworkTransport<'_> {
             let address = self.addresses[usize::from(rx.port.local_role())];
             let port = rx.port;
             rx.state = ReceiveIo::Pending(std::boxed::Box::pin(deadline(async move {
-                let mut stream = TcpStream::connect(address).await?;
-                stream.write_u8(RECV).await?;
-                stream.write_u32(port.session_id().raw()).await?;
-                stream.write_u8(port.local_role()).await?;
-                stream.write_u8(port.lane()).await?;
+                let mut stream = Io::connect(address).await?;
+                stream.write_all(&[RECV]).await?;
+                stream
+                    .write_all(&port.session_id().raw().to_be_bytes())
+                    .await?;
+                stream.write_all(&[port.local_role()]).await?;
+                stream.write_all(&[port.lane()]).await?;
                 read_packet(&mut stream).await
             })));
         }

@@ -18,28 +18,28 @@ type Global = g::Par<preemption::Global, g::Send<0, 2, Independent>>;
 
 mod publication;
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_polls() {
+#[hibana_runtime::main]
+#[test]
+async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_polls()
+-> core::result::Result<(), hibana::EndpointError> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     // SAFETY: this namespace has one issuer. Its children and inbox are fenced
     // before the binding, including while unwinding.
     let binding = unsafe { crate::runtime::transport::EndpointBinding::new() };
     let broker = Broker::start(BROKER).await;
-    let mut child = Process(
+    let mut child = Process::spawn(
         Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", WORKER, "--nocapture"])
-            .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string())
-            .spawn()
-            .unwrap(),
-    );
-    let mut peer = Process(
+            .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string()),
+    )
+    .unwrap();
+    let mut peer = Process::spawn(
         Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", PEER, "--nocapture"])
-            .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string())
-            .spawn()
-            .unwrap(),
-    );
+            .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string()),
+    )
+    .unwrap();
     let observations;
     let operation_observations;
     let pending_journal;
@@ -64,10 +64,18 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
         let independent_tag = independent.proof_tag();
         {
             let mut transfer = pin!(resources.send::<Loan>(db));
-            tokio::select! {
-                result = &mut transfer => panic!("delayed acknowledgement returned before the peer finished: {result:?}"),
-                () = child.wait_success() => {}
-            }
+            hibana_runtime::race(
+                async {
+                    panic!(
+                        "delayed acknowledgement returned before the peer finished: {:?}",
+                        transfer.as_mut().await
+                    );
+                },
+                async {
+                    assert!(child.wait().await.unwrap().success());
+                },
+            )
+            .await;
             // The peer has used and returned DB, yet the original send future
             // has not returned. This is outside its synchronous kernel lease.
             // SAFETY: storage retains this exact pinned NetworkTransport actor.
@@ -95,7 +103,7 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
                 } if eff_index.dense_ordinal() == prepared.0 && lane == prepared.2)));
             let pending = pending_cut.actor.clone();
             independent.send::<Independent>(&77).await.unwrap();
-            peer.wait_success().await;
+            assert!((peer).wait().await.unwrap().success());
             // SAFETY: both observations use the same pinned sender actor.
             assert!(unsafe { tag.matches_header() });
             assert!(unsafe { tag.is_send_payload::<NetworkTransport<'_>>() });
@@ -119,16 +127,27 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
         // SAFETY: the resident header remains allocated, now retired.
         assert!(!unsafe { tag.matches_header() });
         let mut db = resources.recv::<Loan>().await.unwrap();
-        tokio::join!(
+        async {
             async {
-                db.send::<Read>(&42).await.unwrap();
-                assert_eq!(db.recv::<Value>().await.unwrap(), 43);
-            },
+                let _: () = (async {
+                    db.send::<Read>(&42).await.unwrap();
+                    assert_eq!(db.recv::<Value>().await.unwrap(), 43);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                assert_eq!(resources.recv::<Read>().await.unwrap(), 42);
-                resources.send::<Value>(&43).await.unwrap();
-            },
-        );
+                let _: () = (async {
+                    assert_eq!(resources.recv::<Read>().await.unwrap(), 42);
+                    resources.send::<Value>(&43).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
     }
     publication::write_observations(&observations, &pending_journal, &operation_observations);
     let journal = broker.journal().await;
@@ -149,11 +168,14 @@ async fn a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_p
     drop(child);
     drop(peer);
     drop(broker);
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "delayed TCP acknowledgement server exercised by the parent fixture"]
-async fn broker_process() {
+async fn broker_process() -> core::result::Result<(), hibana::EndpointError> {
     inbox::serve(|header| {
         if header.bytes()[5..7] == [0, 1] {
             Duration::from_secs(1)
@@ -162,11 +184,14 @@ async fn broker_process() {
         }
     })
     .await;
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate peer exercised by the pending-send network fixture"]
-async fn worker_process() {
+async fn worker_process() -> core::result::Result<(), hibana::EndpointError> {
     let address: SocketAddr = std::env::var("HIBANA_NETWORK_ADDRESS")
         .unwrap()
         .parse()
@@ -180,22 +205,36 @@ async fn worker_process() {
         .unwrap();
     let mut worker = rv.enter(SID, &program).unwrap();
     let mut db = worker.recv::<Loan>().await.unwrap();
-    tokio::join!(
+    async {
         async {
-            db.send::<Read>(&41).await.unwrap();
-            assert_eq!(db.recv::<Value>().await.unwrap(), 42);
-        },
+            let _: () = (async {
+                db.send::<Read>(&41).await.unwrap();
+                assert_eq!(db.recv::<Value>().await.unwrap(), 42);
+            })
+            .await;
+            Ok::<_, hibana::EndpointError>(())
+        };
+
         async {
-            assert_eq!(worker.recv::<Read>().await.unwrap(), 41);
-            worker.send::<Value>(&42).await.unwrap();
-        },
-    );
+            let _: () = (async {
+                assert_eq!(worker.recv::<Read>().await.unwrap(), 41);
+                worker.send::<Value>(&42).await.unwrap();
+            })
+            .await;
+            Ok::<_, hibana::EndpointError>(())
+        };
+    }
+    .await
+    .expect("all child results are data");
     worker.send::<Loan>(db).await.unwrap();
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate peer exercised by the parallel pending-send fixture"]
-async fn independent_peer_process() {
+async fn independent_peer_process() -> core::result::Result<(), hibana::EndpointError> {
     let address: SocketAddr = std::env::var("HIBANA_NETWORK_ADDRESS")
         .unwrap()
         .parse()
@@ -209,4 +248,6 @@ async fn independent_peer_process() {
         .unwrap();
     let mut peer = rv.enter(SID, &program).unwrap();
     assert_eq!(peer.recv::<Independent>().await.unwrap(), 77);
+
+    Ok(())
 }

@@ -1,4 +1,6 @@
 //! Borrowed handles with inline mutable buffers, driven through real Endpoints.
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use core::{
     cell::{Cell, RefCell},
     future::Future,
@@ -90,8 +92,10 @@ impl Transport for Carrier {
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn borrowed_handles_support_repeated_send_receive_and_cancellation() {
+async fn borrowed_handles_support_repeated_send_receive_and_cancellation()
+-> core::result::Result<(), hibana::EndpointError> {
     let global = g::seq(
         g::send::<0, 1, g::Msg<1, u8>>(),
         g::send::<0, 1, g::Msg<2, u8>>(),
@@ -112,28 +116,38 @@ fn borrowed_handles_support_repeated_send_receive_and_cancellation() {
         .unwrap();
     let mut sender = rv.enter(SessionId::new(9981), &sender_program).unwrap();
     let mut receiver = rv.enter(SessionId::new(9981), &receiver_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            {
-                let mut cancelled = pin!(sender.send::<g::Msg<1, u8>>(&99));
-                assert!(
-                    cancelled
-                        .as_mut()
-                        .poll(&mut Context::from_waker(Waker::noop()))
-                        .is_pending()
-                );
-            }
-            let ((), ()) = tokio::join!(
-                async {
+    {
+        {
+            let mut cancelled = pin!(sender.send::<g::Msg<1, u8>>(&99));
+            assert!(
+                cancelled
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        let ((), ()) = async {
+            async {
+                let _: () = (async {
                     sender.send::<g::Msg<1, u8>>(&17).await.unwrap();
                     sender.send::<g::Msg<2, u8>>(&19).await.unwrap();
-                },
-                async {
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
                     assert_eq!(receiver.recv::<g::Msg<1, u8>>().await.unwrap(), 17);
                     assert_eq!(receiver.recv::<g::Msg<2, u8>>().await.unwrap(), 19);
-                },
-            );
-        });
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
+    };
+
+    Ok(())
 }

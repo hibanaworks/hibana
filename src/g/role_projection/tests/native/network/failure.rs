@@ -20,8 +20,10 @@ const BEFORE: &str =
 const AFTER: &str =
     "g::role_projection::tests::native::network::failure::worker_exits_after_receipt";
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority() {
+#[hibana_runtime::main]
+#[test]
+async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority()
+-> core::result::Result<(), hibana::EndpointError> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
@@ -32,14 +34,13 @@ async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority(
         // issuer. Process guards and broker fence precede the binding's drop.
         let binding = unsafe { crate::runtime::transport::EndpointBinding::new() };
         let broker = Broker::start(BROKER).await;
-        let mut worker = Process(
+        let mut worker = Process::spawn(
             Command::new(std::env::current_exe().unwrap())
                 .args(["--ignored", "--exact", entrypoint, "--nocapture"])
                 .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string())
-                .env("HIBANA_NETWORK_PARENT", std::process::id().to_string())
-                .spawn()
-                .unwrap(),
-        );
+                .env("HIBANA_NETWORK_PARENT", std::process::id().to_string()),
+        )
+        .unwrap();
         {
             let mut slab = vec![0; 64 * 1024];
             let mut storage = SessionKitStorage::uninit();
@@ -54,15 +55,33 @@ async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority(
             let mut service = rv.enter(SID, &service_program).unwrap();
             let db = rv.enter(SID, &db_program).unwrap();
             let began = Instant::now();
-            let (returned, requested) = tokio::time::timeout(Duration::from_secs(8), async {
-                tokio::join!(
-                    async {
-                        owner.send::<Loan>(db).await.unwrap();
-                        owner.recv::<Loan>().await
-                    },
-                    service.recv::<Read>(),
-                )
-            })
+            let (returned, requested) = hibana_runtime::race(
+                async {
+                    Ok::<_, std::io::Error>(
+                        (async {
+                            async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>(
+                                        (async {
+                                            owner.send::<Loan>(db).await.unwrap();
+                                            owner.recv::<Loan>().await
+                                        })
+                                        .await,
+                                    )
+                                };
+
+                                async {
+                                    Ok::<_, hibana::EndpointError>((service.recv::<Read>()).await)
+                                };
+                            }
+                            .await
+                            .expect("all child results are data")
+                        })
+                        .await,
+                    )
+                },
+                hibana_runtime::host::deadline(Duration::from_secs(8)),
+            )
             .await
             .expect("carrier deadlines must finish before the test watchdog");
             assert!(returned.is_err());
@@ -84,7 +103,7 @@ async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority(
                     .is_err()
             );
         }
-        worker.wait_success().await;
+        assert!((worker).wait().await.unwrap().success());
         {
             let mut slab = vec![0; 64 * 1024];
             let mut storage = SessionKitStorage::uninit();
@@ -124,15 +143,17 @@ async fn a_tcp_holder_loss_ends_the_run_without_restoring_the_initial_authority(
         drop(worker);
         drop(broker);
     }
+    Ok(())
 }
 
 #[test]
 #[ignore = "separate pre-receive exit exercised by the TCP failure fixture"]
 fn worker_exits_before_receipt() {}
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate post-receive exit exercised by the TCP failure fixture"]
-async fn worker_exits_after_receipt() {
+async fn worker_exits_after_receipt() -> core::result::Result<(), hibana::EndpointError> {
     let address: SocketAddr = std::env::var("HIBANA_NETWORK_ADDRESS")
         .unwrap()
         .parse()
@@ -146,4 +167,6 @@ async fn worker_exits_after_receipt() {
         .unwrap();
     let mut worker = rv.enter(SID, &program).unwrap();
     drop(worker.recv::<Loan>().await.unwrap());
+
+    Ok(())
 }

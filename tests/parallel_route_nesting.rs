@@ -1,6 +1,8 @@
 mod common;
 #[path = "../examples/support/in_memory.rs"]
 mod in_memory;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/tls_ref.rs"]
@@ -15,8 +17,10 @@ use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge() {
+async fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};
 
     let global = g::route(
@@ -58,16 +62,12 @@ fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge() {
         let mut controller = rv0.enter(sid, &p0).unwrap();
         let mut relay = rv1.enter(sid, &p1).unwrap();
         let mut receiver = rv2.enter(sid, &p2).unwrap();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .start_paused(true)
-            .build()
-            .unwrap()
-            .block_on(async {
-                tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                    tokio::join!(
-                        async {
-                            tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+        {
+            (async {
+                    async {
+
+                        async { let _: () = (async {
+                            crate::in_process::sleep(core::time::Duration::from_millis(1)).await;
                             for right in choices {
                                 choice.set(if right {
                                     DecisionArm::Right
@@ -91,8 +91,10 @@ fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge() {
                                     controller.send::<Msg<1, ()>>(&()).await.unwrap();
                                 }
                             }
-                        },
-                        async {
+                        }).await;
+                        Ok::<_, hibana::EndpointError>(()) };
+
+                        async { let _: () = (async {
                             for right in choices {
                                 for _ in 0..2 {
                                     let branch = relay.offer().await.expect("relay preview");
@@ -109,8 +111,10 @@ fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge() {
                                     relay.send::<Msg<2, ()>>(&()).await.unwrap();
                                 }
                             }
-                        },
-                        async {
+                        }).await;
+                        Ok::<_, hibana::EndpointError>(()) };
+
+                        async { let _: () = (async {
                             for right in choices {
                                 for _ in 0..2 {
                                     let branch = receiver.offer().await.expect("receiver preview");
@@ -127,17 +131,19 @@ fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge() {
                                     receiver.recv::<Msg<2, ()>>().await.unwrap();
                                 }
                             }
-                        },
-                    );
-                })
-                .await
-                .expect("the selected local protocols must finish");
-            });
+                        }).await;
+                        Ok::<_, hibana::EndpointError>(()) };
+}.await.expect("all child results are data");
+                }).await;
+        };
     }
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_nested_resolver_can_select_another_arm_on_the_next_visit() {
+async fn a_nested_resolver_can_select_another_arm_on_the_next_visit()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};
 
     let global = g::route(
@@ -171,15 +177,11 @@ fn a_nested_resolver_can_select_another_arm_on_the_next_visit() {
     let mut observer = rv0.enter(sid, &p0).unwrap();
     let mut controller = rv1.enter(sid, &p1).unwrap();
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         for choice in [DecisionArm::Left, DecisionArm::Right] {
                             input.set(choice);
                             let branch = controller.offer().await.unwrap();
@@ -198,8 +200,13 @@ fn a_nested_resolver_can_select_another_arm_on_the_next_visit() {
                                 }
                             }
                         }
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         for label in [2, 4] {
                             let branch = observer.offer().await.unwrap();
                             assert_eq!(branch.label(), label);
@@ -217,16 +224,24 @@ fn a_nested_resolver_can_select_another_arm_on_the_next_visit() {
                                 _ => unreachable!(),
                             }
                         }
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("the next resolver choice must not wait for its own reply");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts() {
+async fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::{Endpoint, runtime::transport::EndpointBinding};
     type Start = Msg<0, ()>;
     type Ack = Msg<1, ()>;
@@ -264,67 +279,97 @@ fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts() {
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let initial_db = rv0.enter(sid, &p3).unwrap();
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         let mut db = initial_db;
                         let [mut ordinary, mut loan] = owner.par().unwrap();
                         for _ in 0..2 {
-                            let (returned, ()) = tokio::join!(
-                                biased;
+                            let (returned, ()) = async {
                                 async {
-                                    for _ in 0..2 {
-                                        loan.send::<Loan<'_>>(db).await.unwrap();
-                                        loan.recv::<Read>().await.unwrap();
-                                        loan.send::<Value>(&()).await.unwrap();
-                                        db = loan.recv::<Return<'_>>().await.unwrap();
-                                    }
-                                    db
-                                },
+                                    Ok::<_, hibana::EndpointError>(
+                                        (async {
+                                            for _ in 0..2 {
+                                                loan.send::<Loan<'_>>(db).await.unwrap();
+                                                loan.recv::<Read>().await.unwrap();
+                                                loan.send::<Value>(&()).await.unwrap();
+                                                db = loan.recv::<Return<'_>>().await.unwrap();
+                                            }
+                                            db
+                                        })
+                                        .await,
+                                    )
+                                };
+
                                 async {
-                                    tokio::task::yield_now().await;
-                                    ordinary.send::<Start>(&()).await.unwrap();
-                                    ordinary.recv::<Ack>().await.unwrap();
-                                },
-                            );
+                                    let _: () = (async {
+                                        hibana_runtime::yield_now().await;
+                                        ordinary.send::<Start>(&()).await.unwrap();
+                                        ordinary.recv::<Ack>().await.unwrap();
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                             db = returned;
                         }
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         let [mut ordinary, mut loan] = worker.par().unwrap();
                         for _ in 0..2 {
-                            tokio::join!(
-                                biased;
+                            async {
                                 async {
-                                    for _ in 0..2 {
-                                        let mut db = loan.recv::<Loan<'_>>().await.unwrap();
-                                        db.send::<Read>(&()).await.unwrap();
-                                        db.recv::<Value>().await.unwrap();
-                                        loan.send::<Return<'_>>(db).await.unwrap();
-                                    }
-                                },
+                                    let _: () = (async {
+                                        for _ in 0..2 {
+                                            let mut db = loan.recv::<Loan<'_>>().await.unwrap();
+                                            db.send::<Read>(&()).await.unwrap();
+                                            db.recv::<Value>().await.unwrap();
+                                            loan.send::<Return<'_>>(db).await.unwrap();
+                                        }
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
                                 async {
-                                    ordinary.recv::<Start>().await.unwrap();
-                                    ordinary.send::<Ack>(&()).await.unwrap();
-                                },
-                            );
+                                    let _: () = (async {
+                                        ordinary.recv::<Start>().await.unwrap();
+                                        ordinary.send::<Ack>(&()).await.unwrap();
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                         }
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("independent parent and nested loan must both progress");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn retained_parallel_borrows_allow_a_nested_repeat() {
+async fn retained_parallel_borrows_allow_a_nested_repeat()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::{Endpoint, runtime::transport::EndpointBinding};
     type Loan<'r> = Msg<0, Endpoint<'r, 3>>;
     type Read = Msg<1, ()>;
@@ -378,91 +423,142 @@ fn retained_parallel_borrows_allow_a_nested_repeat() {
     let mut service = rv2.enter(sid, &p2).unwrap();
     let initial_db = rv0.enter(sid, &p3).unwrap();
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         let mut db = initial_db;
                         let [mut loan, mut work] = owner.par().unwrap();
                         for visit in 0..2 {
-                            let (returned, ()) =
-                                tokio::join!(
-                                    async {
-                                        loan.send::<Loan<'_>>(db).await.unwrap_or_else(|error| {
-                                            panic!("owner loan in outer visit {visit}: {error:?}")
-                                        });
-                                        loan.recv::<Return<'_>>().await.expect("owner return")
-                                    },
-                                    async {
+                            let (returned, ()) = async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>(
+                                        (async {
+                                            loan.send::<Loan<'_>>(db).await.unwrap_or_else(|error| {
+                                        panic!("owner loan in outer visit {visit}: {error:?}")
+                                    });
+                                            loan.recv::<Return<'_>>().await.expect("owner return")
+                                        })
+                                        .await,
+                                    )
+                                };
+
+                                async {
+                                    let _: () = (async {
                                         for inner in 0..2 {
                                             work.send::<Start>(&()).await.unwrap_or_else(|error| {
-                                    panic!("owner start in visit {visit}/{inner}: {error:?}")
-                                });
+                                        panic!("owner start in visit {visit}/{inner}: {error:?}")
+                                    });
                                             work.recv::<Ack>().await.expect("owner ack");
                                         }
-                                    },
-                                );
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                             db = returned;
                         }
                         drop(db);
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         let [mut loan, mut work] = worker.par().unwrap();
                         for visit in 0..2 {
-                            tokio::join!(
+                            async {
                                 async {
-                                    let mut db =
-                                        loan.recv::<Loan<'_>>().await.unwrap_or_else(|error| {
-                                            panic!("worker loan in outer visit {visit}: {error:?}")
+                                    let _: () = (async {
+                                        let mut db =
+                                            loan.recv::<Loan<'_>>().await.unwrap_or_else(|error| {
+                                                panic!(
+                                                    "worker loan in outer visit {visit}: {error:?}"
+                                                )
+                                            });
+                                        db.send::<Read>(&()).await.expect("worker read");
+                                        db.recv::<Value>().await.expect("worker value");
+                                        loan.send::<Return<'_>>(db).await.unwrap_or_else(|error| {
+                                            panic!(
+                                                "worker return in outer visit {visit}: {error:?}"
+                                            )
                                         });
-                                    db.send::<Read>(&()).await.expect("worker read");
-                                    db.recv::<Value>().await.expect("worker value");
-                                    loan.send::<Return<'_>>(db).await.unwrap_or_else(|error| {
-                                        panic!("worker return in outer visit {visit}: {error:?}")
-                                    });
-                                },
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
                                 async {
-                                    for _ in 0..2 {
-                                        work.recv::<Start>().await.expect("worker start");
-                                        work.send::<Work>(&()).await.expect("worker work");
-                                        work.recv::<Done>().await.expect("worker done");
-                                        work.send::<Ack>(&()).await.expect("worker ack");
-                                    }
-                                },
-                            );
+                                    let _: () = (async {
+                                        for _ in 0..2 {
+                                            work.recv::<Start>().await.expect("worker start");
+                                            work.send::<Work>(&()).await.expect("worker work");
+                                            work.recv::<Done>().await.expect("worker done");
+                                            work.send::<Ack>(&()).await.expect("worker ack");
+                                        }
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                         }
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         let [mut db, mut work] = service.par().unwrap();
                         for _ in 0..2 {
-                            tokio::join!(
+                            async {
                                 async {
-                                    db.recv::<Read>().await.expect("service read");
-                                    db.send::<Value>(&()).await.expect("service value");
-                                },
+                                    let _: () = (async {
+                                        db.recv::<Read>().await.expect("service read");
+                                        db.send::<Value>(&()).await.expect("service value");
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
                                 async {
-                                    for _ in 0..2 {
-                                        work.recv::<Work>().await.expect("service work");
-                                        work.send::<Done>(&()).await.expect("service done");
-                                    }
-                                },
-                            );
+                                    let _: () = (async {
+                                        for _ in 0..2 {
+                                            work.recv::<Work>().await.expect("service work");
+                                            work.send::<Done>(&()).await.expect("service done");
+                                        }
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                         }
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("nested parallel repetition stalled");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_parent_preview_can_use_a_parallel_head_before_a_child_choice() {
+async fn a_parent_preview_can_use_a_parallel_head_before_a_child_choice()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};
 
     let global = g::route(
@@ -488,47 +584,79 @@ fn a_parent_preview_can_use_a_parallel_head_before_a_child_choice() {
     let (mut controller, mut receiver) =
         (rv0.enter(sid, &p0).unwrap(), rv1.enter(sid, &p1).unwrap());
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         let branch = controller.offer().await.unwrap();
                         assert_eq!(branch.label(), 12);
                         drop(branch);
                         let [mut choice, mut ordinary] = controller.par().unwrap();
-                        tokio::join!(
-                            async { choice.send::<Msg<8, ()>>(&()).await.unwrap() },
-                            async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() },
-                        );
-                    },
-                    async {
+                        async {
+                            async {
+                                let _: () =
+                                    (async { choice.send::<Msg<8, ()>>(&()).await.unwrap() }).await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+
+                            async {
+                                let _: () =
+                                    (async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() })
+                                        .await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                        }
+                        .await
+                        .expect("all child results are data");
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         let branch = receiver.offer().await.unwrap();
                         assert!([8, 12].contains(&branch.label()));
                         drop(branch);
                         let [mut choice, mut ordinary] = receiver.par().unwrap();
-                        tokio::join!(
+                        async {
                             async {
-                                let branch = choice.offer().await.unwrap();
-                                assert_eq!(branch.label(), 8);
-                                branch.recv::<Msg<8, ()>>().await.unwrap();
-                            },
-                            async { ordinary.recv::<Msg<12, ()>>().await.unwrap() },
-                        );
-                    },
-                );
-            })
+                                let _: () = (async {
+                                    let branch = choice.offer().await.unwrap();
+                                    assert_eq!(branch.label(), 8);
+                                    branch.recv::<Msg<8, ()>>().await.unwrap();
+                                })
+                                .await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+
+                            async {
+                                let _: () =
+                                    (async { ordinary.recv::<Msg<12, ()>>().await.unwrap() }).await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                        }
+                        .await
+                        .expect("all child results are data");
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("a parent preview waited for its child's choice");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_parent_preview_does_not_call_a_parallel_child_resolver() {
+async fn a_parent_preview_does_not_call_a_parallel_child_resolver()
+-> core::result::Result<(), hibana::EndpointError> {
     use core::cell::Cell;
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};
 
@@ -563,52 +691,84 @@ fn a_parent_preview_does_not_call_a_parallel_child_resolver() {
     let (mut controller, mut receiver) =
         (rv0.enter(sid, &p0).unwrap(), rv1.enter(sid, &p1).unwrap());
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         let branch = controller.offer().await.unwrap();
                         assert_eq!(branch.label(), 12);
                         drop(branch);
                         let [mut choice, mut ordinary] = controller.par().unwrap();
-                        tokio::join!(
+                        async {
                             async {
-                                child_decision.set(Some(DecisionArm::Right));
-                                let branch = choice.offer().await.unwrap();
-                                assert_eq!(branch.label(), 8);
-                                branch.send::<Msg<8, ()>>(&()).await.unwrap();
-                            },
-                            async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() },
-                        );
-                    },
-                    async {
+                                let _: () = (async {
+                                    child_decision.set(Some(DecisionArm::Right));
+                                    let branch = choice.offer().await.unwrap();
+                                    assert_eq!(branch.label(), 8);
+                                    branch.send::<Msg<8, ()>>(&()).await.unwrap();
+                                })
+                                .await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+
+                            async {
+                                let _: () =
+                                    (async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() })
+                                        .await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                        }
+                        .await
+                        .expect("all child results are data");
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         let branch = receiver.offer().await.unwrap();
                         assert!([8, 12].contains(&branch.label()));
                         drop(branch);
                         let [mut choice, mut ordinary] = receiver.par().unwrap();
-                        tokio::join!(
+                        async {
                             async {
-                                let branch = choice.offer().await.unwrap();
-                                assert_eq!(branch.label(), 8);
-                                branch.recv::<Msg<8, ()>>().await.unwrap();
-                            },
-                            async { ordinary.recv::<Msg<12, ()>>().await.unwrap() },
-                        );
-                    },
-                );
-            })
+                                let _: () = (async {
+                                    let branch = choice.offer().await.unwrap();
+                                    assert_eq!(branch.label(), 8);
+                                    branch.recv::<Msg<8, ()>>().await.unwrap();
+                                })
+                                .await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+
+                            async {
+                                let _: () =
+                                    (async { ordinary.recv::<Msg<12, ()>>().await.unwrap() }).await;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+                        }
+                        .await
+                        .expect("all child results are data");
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("a parent preview waited for its child's resolver");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn parallel_borrows_repeat_before_the_next_parallel_group() {
+async fn parallel_borrows_repeat_before_the_next_parallel_group()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::{Endpoint, runtime::transport::EndpointBinding};
     type Loan<'r> = Msg<4, Endpoint<'r, 3>>;
     type Return<'r> = Msg<7, Endpoint<'r, 3>>;
@@ -678,585 +838,614 @@ fn parallel_borrows_repeat_before_the_next_parallel_group() {
     let mut collector = rv2.enter(sid, &p2).unwrap();
     let initial_db = rv0.enter(sid, &p3).unwrap();
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::try_join!(
-                    async {
-                        let mut db = initial_db;
-                        {
-                            let [mut exchange, mut loan] = owner.par()?;
-                            for _ in 0..2 {
-                                let ((), returned) = tokio::try_join!(
-                                    async {
-                                        exchange.send::<Msg<0, ()>>(&()).await?;
-                                        exchange.recv::<Msg<1, ()>>().await?;
-                                        exchange.send::<Msg<2, ()>>(&()).await?;
-                                        exchange.recv::<Msg<3, ()>>().await
-                                    },
-                                    async {
-                                        loan.send::<Loan<'_>>(db).await?;
-                                        loan.recv::<Msg<5, ()>>().await?;
-                                        loan.send::<Msg<6, ()>>(&()).await?;
-                                        loan.recv::<Return<'_>>().await
-                                    }
-                                )?;
-                                db = returned;
+    {
+        (async {
+            async {
+                async {
+                    let mut db = initial_db;
+                    {
+                        let [mut exchange, mut loan] = owner.par()?;
+                        for _ in 0..2 {
+                            let ((), returned) = async {
+                                async {
+                                    exchange.send::<Msg<0, ()>>(&()).await?;
+                                    exchange.recv::<Msg<1, ()>>().await?;
+                                    exchange.send::<Msg<2, ()>>(&()).await?;
+                                    exchange.recv::<Msg<3, ()>>().await
+                                };
+
+                                async {
+                                    loan.send::<Loan<'_>>(db).await?;
+                                    loan.recv::<Msg<5, ()>>().await?;
+                                    loan.send::<Msg<6, ()>>(&()).await?;
+                                    loan.recv::<Return<'_>>().await
+                                };
                             }
+                            .await?;
+                            db = returned;
                         }
-                        let [mut loan, mut notice] = owner.par()?;
-                        let (db, ()) = tokio::try_join!(
+                    }
+                    let [mut loan, mut notice] = owner.par()?;
+                    let (db, ()) = async {
+                        async {
+                            loan.send::<TailLoan<'_>>(db).await?;
+                            loan.recv::<Msg<9, ()>>().await?;
+                            loan.send::<Msg<10, ()>>(&()).await?;
+                            loan.recv::<TailReturn<'_>>().await
+                        };
+
+                        async {
+                            notice.send::<Msg<12, ()>>(&()).await?;
+                            notice.send::<Msg<13, ()>>(&()).await
+                        };
+                    }
+                    .await?;
+                    drop(db);
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    {
+                        let [mut exchange, mut loan] = worker.par()?;
+                        for _ in 0..2 {
                             async {
-                                loan.send::<TailLoan<'_>>(db).await?;
-                                loan.recv::<Msg<9, ()>>().await?;
-                                loan.send::<Msg<10, ()>>(&()).await?;
-                                loan.recv::<TailReturn<'_>>().await
-                            },
-                            async {
-                                notice.send::<Msg<12, ()>>(&()).await?;
-                                notice.send::<Msg<13, ()>>(&()).await
+                                async {
+                                    exchange.recv::<Msg<0, ()>>().await?;
+                                    exchange.send::<Msg<1, ()>>(&()).await?;
+                                    exchange.recv::<Msg<2, ()>>().await?;
+                                    exchange.send::<Msg<3, ()>>(&()).await
+                                };
+
+                                async {
+                                    let mut db = loan.recv::<Loan<'_>>().await?;
+                                    db.send::<Msg<5, ()>>(&()).await?;
+                                    db.recv::<Msg<6, ()>>().await?;
+                                    loan.send::<Return<'_>>(db).await
+                                };
                             }
-                        )?;
-                        drop(db);
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        {
-                            let [mut exchange, mut loan] = worker.par()?;
-                            for _ in 0..2 {
-                                tokio::try_join!(
-                                    async {
-                                        exchange.recv::<Msg<0, ()>>().await?;
-                                        exchange.send::<Msg<1, ()>>(&()).await?;
-                                        exchange.recv::<Msg<2, ()>>().await?;
-                                        exchange.send::<Msg<3, ()>>(&()).await
-                                    },
-                                    async {
-                                        let mut db = loan.recv::<Loan<'_>>().await?;
-                                        db.send::<Msg<5, ()>>(&()).await?;
-                                        db.recv::<Msg<6, ()>>().await?;
-                                        loan.send::<Return<'_>>(db).await
-                                    }
-                                )?;
-                            }
+                            .await?;
                         }
-                        let [mut loan, mut notice] = worker.par()?;
-                        tokio::try_join!(
-                            async {
-                                let mut db = loan.recv::<TailLoan<'_>>().await?;
-                                db.send::<Msg<9, ()>>(&()).await?;
-                                db.recv::<Msg<10, ()>>().await?;
-                                loan.send::<TailReturn<'_>>(db).await
-                            },
-                            async {
-                                notice.recv::<Msg<12, ()>>().await?;
-                                notice.send::<Msg<14, ()>>(&()).await
-                            }
-                        )?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
+                    }
+                    let [mut loan, mut notice] = worker.par()?;
                     async {
-                        let [mut notice] = collector.par()?;
-                        notice.recv::<Msg<13, ()>>().await?;
-                        notice.recv::<Msg<14, ()>>().await
-                    },
-                )
-            })
+                        async {
+                            let mut db = loan.recv::<TailLoan<'_>>().await?;
+                            db.send::<Msg<9, ()>>(&()).await?;
+                            db.recv::<Msg<10, ()>>().await?;
+                            loan.send::<TailReturn<'_>>(db).await
+                        };
+
+                        async {
+                            notice.recv::<Msg<12, ()>>().await?;
+                            notice.send::<Msg<14, ()>>(&()).await
+                        };
+                    }
+                    .await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let [mut notice] = collector.par()?;
+                    notice.recv::<Msg<13, ()>>().await?;
+                    notice.recv::<Msg<14, ()>>().await
+                };
+            }
             .await
-            .expect("retained parallel borrows did not complete both visits and the tail")
-            .unwrap();
-        });
+        })
+        .await
+        .unwrap();
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolved_parent_waits_for_its_message_selected_child_without_blocking_a_sibling() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+async fn resolved_parent_waits_for_its_message_selected_child_without_blocking_a_sibling()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        use hibana::runtime::resolver::{DecisionArm, ResolverRef};
 
-            let global = g::par(
-                g::route(
-                    g::send::<0, 1, Msg<0, ()>>(),
-                    g::route(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 1, Msg<2, ()>>()),
-                )
-                .resolve::<0>(),
-                g::send::<0, 1, Msg<3, ()>>(),
-            );
-            let (p0, p1) = (project::<0>(&global), project::<1>(&global));
-            let transport = in_memory::InMemoryTransport::new([]);
-            let (mut slab0, mut slab1) = (vec![0; 32 * 1024], vec![0; 32 * 1024]);
-            let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
-            let rv0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
-            let rv1 = s1.init().rendezvous(&mut slab1, transport).unwrap();
-            rv0.set_resolver(
-                &p0,
-                ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+        let global = g::par(
+            g::route(
+                g::send::<0, 1, Msg<0, ()>>(),
+                g::route(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 1, Msg<2, ()>>()),
             )
-            .unwrap();
-            let sid = SessionId::new(90);
-            let (mut e0, mut e1) = (rv0.enter(sid, &p0).unwrap(), rv1.enter(sid, &p1).unwrap());
-            let [mut choice0, mut sibling0] = e0.par().unwrap();
-            let [mut choice1, mut sibling1] = e1.par().unwrap();
+            .resolve::<0>(),
+            g::send::<0, 1, Msg<3, ()>>(),
+        );
+        let (p0, p1) = (project::<0>(&global), project::<1>(&global));
+        let transport = in_memory::InMemoryTransport::new([]);
+        let (mut slab0, mut slab1) = (vec![0; 32 * 1024], vec![0; 32 * 1024]);
+        let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
+        let rv0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, transport).unwrap();
+        rv0.set_resolver(
+            &p0,
+            ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+        )
+        .unwrap();
+        let sid = SessionId::new(90);
+        let (mut e0, mut e1) = (rv0.enter(sid, &p0).unwrap(), rv1.enter(sid, &p1).unwrap());
+        let [mut choice0, mut sibling0] = e0.par().unwrap();
+        let [mut choice1, mut sibling1] = e1.par().unwrap();
 
-            let (preview, ()) = tokio::join!(
-                tokio::time::timeout(core::time::Duration::from_millis(1), choice0.offer()),
-                async {
+        let (preview, ()) = async {
+            async {
+                Ok::<_, hibana::EndpointError>(
+                    (crate::in_process::timeout(
+                        core::time::Duration::from_millis(1),
+                        choice0.offer(),
+                    ))
+                    .await,
+                )
+            };
+
+            async {
+                let _: () = (async {
                     sibling0.send::<Msg<3, ()>>(&()).await.unwrap();
                     sibling1.recv::<Msg<3, ()>>().await.unwrap();
-                }
-            );
-            assert!(
-                preview.is_err(),
-                "the child choice needs its selecting send"
-            );
-            drop(preview);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
+        assert!(
+            preview.is_err(),
+            "the child choice needs its selecting send"
+        );
+        drop(preview);
 
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::try_join!(choice0.send::<Msg<1, ()>>(&()), async {
+        (async {
+            async {
+                async { (choice0.send::<Msg<1, ()>>(&())).await };
+                async {
                     let branch = choice1.offer().await?;
                     assert_eq!(branch.label(), 1);
                     branch.recv::<Msg<1, ()>>().await
-                })
-            })
+                };
+            }
             .await
-            .expect("the selected child did not complete")
-            .unwrap();
-        });
+        })
+        .await
+        .unwrap();
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolved_choice_reopens_after_parallel_inner_repetition() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+async fn resolved_choice_reopens_after_parallel_inner_repetition()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        use hibana::runtime::resolver::{DecisionArm, ResolverRef};
 
-            let repeated = g::seq(
-                g::send::<1, 0, Msg<0, ()>>(),
+        let repeated = g::seq(
+            g::send::<1, 0, Msg<0, ()>>(),
+            g::seq(
+                g::send::<0, 2, Msg<1, ()>>(),
+                g::seq(g::send::<2, 0, Msg<2, ()>>(), g::send::<0, 1, Msg<3, ()>>()),
+            ),
+        )
+        .roll();
+        let once = g::seq(
+            g::send::<1, 0, Msg<4, ()>>(),
+            g::seq(
+                g::send::<0, 2, Msg<5, ()>>(),
+                g::seq(g::send::<2, 0, Msg<6, ()>>(), g::send::<0, 1, Msg<7, ()>>()),
+            ),
+        );
+        let global = g::route(
+            g::par(repeated, once),
+            g::seq(
+                g::send::<1, 0, Msg<8, ()>>(),
                 g::seq(
-                    g::send::<0, 2, Msg<1, ()>>(),
-                    g::seq(g::send::<2, 0, Msg<2, ()>>(), g::send::<0, 1, Msg<3, ()>>()),
+                    g::send::<1, 2, Msg<9, ()>>(),
+                    g::send::<0, 2, Msg<10, ()>>(),
                 ),
-            )
-            .roll();
-            let once = g::seq(
-                g::send::<1, 0, Msg<4, ()>>(),
-                g::seq(
-                    g::send::<0, 2, Msg<5, ()>>(),
-                    g::seq(g::send::<2, 0, Msg<6, ()>>(), g::send::<0, 1, Msg<7, ()>>()),
-                ),
-            );
-            let global = g::route(
-                g::par(repeated, once),
-                g::seq(
-                    g::send::<1, 0, Msg<8, ()>>(),
-                    g::seq(
-                        g::send::<1, 2, Msg<9, ()>>(),
-                        g::send::<0, 2, Msg<10, ()>>(),
-                    ),
-                ),
-            )
-            .resolve::<0>()
-            .roll();
-            let (p0, p1, p2) = (
-                project::<0>(&global),
-                project::<1>(&global),
-                project::<2>(&global),
-            );
-            let calls = core::cell::Cell::new(0);
-            let transport = in_memory::InMemoryTransport::new([]);
-            let [mut slab0, mut slab1, mut slab2] =
-                [vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]];
-            let (mut s0, mut s1, mut s2) = (
-                SessionKitStorage::uninit(),
-                SessionKitStorage::uninit(),
-                SessionKitStorage::uninit(),
-            );
-            let rv0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
-            let rv1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
-            let rv2 = s2.init().rendezvous(&mut slab2, transport.clone()).unwrap();
-            rv1.set_resolver(
-                &p1,
-                ResolverRef::<0>::decision_state(&calls, |calls| {
-                    calls.set(calls.get() + 1);
-                    Ok(DecisionArm::Left)
-                }),
-            )
-            .unwrap();
-            let sid = SessionId::new(89);
-            let (mut e0, mut e1, mut e2) = (
-                rv0.enter(sid, &p0).unwrap(),
-                rv1.enter(sid, &p1).unwrap(),
-                rv2.enter(sid, &p2).unwrap(),
-            );
-            let run0 = async {
-                for _ in 0..2 {
-                    let branch = e0.offer().await?;
-                    assert!([0, 4].contains(&branch.label()));
-                    drop(branch);
-                    let [mut repeated, mut once] = e0.par()?;
-                    tokio::try_join!(
-                        async {
-                            for _ in 0..2 {
-                                repeated.recv::<Msg<0, ()>>().await?;
-                                repeated.send::<Msg<1, ()>>(&()).await?;
-                                repeated.recv::<Msg<2, ()>>().await?;
-                                repeated.send::<Msg<3, ()>>(&()).await?;
-                            }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        async {
-                            once.recv::<Msg<4, ()>>().await?;
-                            once.send::<Msg<5, ()>>(&()).await?;
-                            once.recv::<Msg<6, ()>>().await?;
-                            once.send::<Msg<7, ()>>(&()).await?;
-                            Ok::<_, hibana::EndpointError>(())
+            ),
+        )
+        .resolve::<0>()
+        .roll();
+        let (p0, p1, p2) = (
+            project::<0>(&global),
+            project::<1>(&global),
+            project::<2>(&global),
+        );
+        let calls = core::cell::Cell::new(0);
+        let transport = in_memory::InMemoryTransport::new([]);
+        let [mut slab0, mut slab1, mut slab2] =
+            [vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]];
+        let (mut s0, mut s1, mut s2) = (
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+        );
+        let rv0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
+        let rv2 = s2.init().rendezvous(&mut slab2, transport.clone()).unwrap();
+        rv1.set_resolver(
+            &p1,
+            ResolverRef::<0>::decision_state(&calls, |calls| {
+                calls.set(calls.get() + 1);
+                Ok(DecisionArm::Left)
+            }),
+        )
+        .unwrap();
+        let sid = SessionId::new(89);
+        let (mut e0, mut e1, mut e2) = (
+            rv0.enter(sid, &p0).unwrap(),
+            rv1.enter(sid, &p1).unwrap(),
+            rv2.enter(sid, &p2).unwrap(),
+        );
+        let run0 = async {
+            for _ in 0..2 {
+                let branch = e0.offer().await?;
+                assert!([0, 4].contains(&branch.label()));
+                drop(branch);
+                let [mut repeated, mut once] = e0.par()?;
+                async {
+                    async {
+                        for _ in 0..2 {
+                            repeated.recv::<Msg<0, ()>>().await?;
+                            repeated.send::<Msg<1, ()>>(&()).await?;
+                            repeated.recv::<Msg<2, ()>>().await?;
+                            repeated.send::<Msg<3, ()>>(&()).await?;
                         }
-                    )?;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        once.recv::<Msg<4, ()>>().await?;
+                        once.send::<Msg<5, ()>>(&()).await?;
+                        once.recv::<Msg<6, ()>>().await?;
+                        once.send::<Msg<7, ()>>(&()).await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
                 }
-                Ok::<_, hibana::EndpointError>(())
-            };
-            let run1 = async {
-                for visit in 0..2 {
-                    let branch = e1.offer().await?;
-                    let label = branch.label();
-                    assert!([0, 4].contains(&label));
-                    drop(branch);
-                    let branch = e1.offer().await?;
-                    assert_eq!(branch.label(), label);
-                    drop(branch);
-                    assert_eq!(calls.get(), visit + 1);
-                    let [mut repeated, mut once] = e1.par()?;
-                    tokio::try_join!(
-                        async {
-                            for _ in 0..2 {
-                                tokio::task::yield_now().await;
-                                repeated.send::<Msg<0, ()>>(&()).await?;
-                                repeated.recv::<Msg<3, ()>>().await?;
-                            }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        async {
-                            once.send::<Msg<4, ()>>(&()).await?;
-                            once.recv::<Msg<7, ()>>().await?;
-                            Ok::<_, hibana::EndpointError>(())
+                .await?;
+            }
+            Ok::<_, hibana::EndpointError>(())
+        };
+        let run1 = async {
+            for visit in 0..2 {
+                let branch = e1.offer().await?;
+                let label = branch.label();
+                assert!([0, 4].contains(&label));
+                drop(branch);
+                let branch = e1.offer().await?;
+                assert_eq!(branch.label(), label);
+                drop(branch);
+                assert_eq!(calls.get(), visit + 1);
+                let [mut repeated, mut once] = e1.par()?;
+                async {
+                    async {
+                        for _ in 0..2 {
+                            hibana_runtime::yield_now().await;
+                            repeated.send::<Msg<0, ()>>(&()).await?;
+                            repeated.recv::<Msg<3, ()>>().await?;
                         }
-                    )?;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        once.send::<Msg<4, ()>>(&()).await?;
+                        once.recv::<Msg<7, ()>>().await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
                 }
-                Ok::<_, hibana::EndpointError>(())
-            };
-            let run2 = async {
-                for _ in 0..2 {
-                    let branch = e2.offer().await?;
-                    assert!([1, 5].contains(&branch.label()));
-                    drop(branch);
-                    let [mut repeated, mut once] = e2.par()?;
-                    tokio::try_join!(
-                        async {
-                            for _ in 0..2 {
-                                repeated.recv::<Msg<1, ()>>().await?;
-                                repeated.send::<Msg<2, ()>>(&()).await?;
-                            }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        async {
-                            once.recv::<Msg<5, ()>>().await?;
-                            once.send::<Msg<6, ()>>(&()).await?;
-                            Ok::<_, hibana::EndpointError>(())
+                .await?;
+            }
+            Ok::<_, hibana::EndpointError>(())
+        };
+        let run2 = async {
+            for _ in 0..2 {
+                let branch = e2.offer().await?;
+                assert!([1, 5].contains(&branch.label()));
+                drop(branch);
+                let [mut repeated, mut once] = e2.par()?;
+                async {
+                    async {
+                        for _ in 0..2 {
+                            repeated.recv::<Msg<1, ()>>().await?;
+                            repeated.send::<Msg<2, ()>>(&()).await?;
                         }
-                    )?;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        once.recv::<Msg<5, ()>>().await?;
+                        once.send::<Msg<6, ()>>(&()).await?;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
                 }
-                Ok::<_, hibana::EndpointError>(())
-            };
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::try_join!(run0, run1, run2)
-            })
+                .await?;
+            }
+            Ok::<_, hibana::EndpointError>(())
+        };
+        (async {
+            async {
+                async { (run0).await };
+                async { (run1).await };
+                async { (run2).await };
+            }
             .await
-            .expect("a repeated resolved choice stalled")
-            .unwrap();
-            assert_eq!(calls.get(), 2);
-        });
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls.get(), 2);
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_choice_remains_available_after_its_outer_parallel_sibling_finishes() {
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            use hibana::{
-                Endpoint,
-                runtime::{
-                    resolver::{DecisionArm, ResolverRef},
-                    transport::EndpointBinding,
-                },
-            };
+async fn nested_choice_remains_available_after_its_outer_parallel_sibling_finishes()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        use hibana::{
+            Endpoint,
+            runtime::{
+                resolver::{DecisionArm, ResolverRef},
+                transport::EndpointBinding,
+            },
+        };
 
-            type Loan<'r> = Msg<0, Endpoint<'r, 3>>;
-            type Return<'r> = Msg<3, Endpoint<'r, 3>>;
-            let loan = g::seq(
-                g::send::<0, 1, Loan<'_>>(),
+        type Loan<'r> = Msg<0, Endpoint<'r, 3>>;
+        type Return<'r> = Msg<3, Endpoint<'r, 3>>;
+        let loan = g::seq(
+            g::send::<0, 1, Loan<'_>>(),
+            g::seq(
+                g::send::<3, 2, Msg<1, ()>>(),
+                g::seq(g::send::<2, 3, Msg<2, ()>>(), g::send::<1, 0, Return<'_>>()),
+            ),
+        );
+        let choice = g::route(
+            g::seq(
+                g::send::<0, 1, Msg<4, ()>>(),
+                g::seq(g::send::<0, 2, Msg<5, ()>>(), g::send::<1, 2, Msg<6, ()>>()),
+            ),
+            g::seq(
+                g::send::<0, 1, Msg<7, ()>>(),
                 g::seq(
-                    g::send::<3, 2, Msg<1, ()>>(),
-                    g::seq(g::send::<2, 3, Msg<2, ()>>(), g::send::<1, 0, Return<'_>>()),
-                ),
-            );
-            let choice = g::route(
-                g::seq(
-                    g::send::<0, 1, Msg<4, ()>>(),
-                    g::seq(g::send::<0, 2, Msg<5, ()>>(), g::send::<1, 2, Msg<6, ()>>()),
-                ),
-                g::seq(
-                    g::send::<0, 1, Msg<7, ()>>(),
+                    g::send::<1, 2, Msg<8, ()>>(),
                     g::seq(
-                        g::send::<1, 2, Msg<8, ()>>(),
-                        g::seq(
-                            g::send::<2, 1, Msg<9, ()>>(),
-                            g::send::<1, 0, Msg<10, ()>>(),
-                        ),
+                        g::send::<2, 1, Msg<9, ()>>(),
+                        g::send::<1, 0, Msg<10, ()>>(),
                     ),
                 ),
-            );
-            let sibling = g::seq(
-                g::send::<0, 1, Msg<11, ()>>(),
+            ),
+        );
+        let sibling = g::seq(
+            g::send::<0, 1, Msg<11, ()>>(),
+            g::seq(
+                g::send::<1, 2, Msg<12, ()>>(),
                 g::seq(
-                    g::send::<1, 2, Msg<12, ()>>(),
+                    g::send::<2, 1, Msg<13, ()>>(),
+                    g::send::<1, 0, Msg<14, ()>>(),
+                ),
+            ),
+        );
+        let global = g::route(
+            g::par(g::par(loan, choice), sibling),
+            g::seq(
+                g::send::<0, 1, Msg<15, Endpoint<'_, 3>>>(),
+                g::seq(
+                    g::send::<3, 2, Msg<16, ()>>(),
                     g::seq(
-                        g::send::<2, 1, Msg<13, ()>>(),
-                        g::send::<1, 0, Msg<14, ()>>(),
+                        g::send::<2, 3, Msg<17, ()>>(),
+                        g::send::<1, 0, Msg<18, Endpoint<'_, 3>>>(),
                     ),
                 ),
-            );
-            let global = g::route(
-                g::par(g::par(loan, choice), sibling),
-                g::seq(
-                    g::send::<0, 1, Msg<15, Endpoint<'_, 3>>>(),
-                    g::seq(
-                        g::send::<3, 2, Msg<16, ()>>(),
-                        g::seq(
-                            g::send::<2, 3, Msg<17, ()>>(),
-                            g::send::<1, 0, Msg<18, Endpoint<'_, 3>>>(),
-                        ),
-                    ),
-                ),
-            )
-            .resolve::<0>();
-            let (p0, p1, p2, p3) = (
-                project::<0>(&global),
-                project::<1>(&global),
-                project::<2>(&global),
-                project::<3>(&global),
-            );
-            let sid = SessionId::new(87);
-            // SAFETY: this test owns one resource and its sole initial binding.
-            let transport =
-                in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
-            let (mut slab0, mut slab1, mut slab2) =
-                (vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]);
-            let (mut s0, mut s1, mut s2) = (
-                SessionKitStorage::uninit(),
-                SessionKitStorage::uninit(),
-                SessionKitStorage::uninit(),
-            );
-            let r0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
-            let r1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
-            let r2 = s2.init().rendezvous(&mut slab2, transport).unwrap();
-            r0.set_resolver(
-                &p0,
-                ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Left)),
-            )
+            ),
+        )
+        .resolve::<0>();
+        let (p0, p1, p2, p3) = (
+            project::<0>(&global),
+            project::<1>(&global),
+            project::<2>(&global),
+            project::<3>(&global),
+        );
+        let sid = SessionId::new(87);
+        // SAFETY: this test owns one resource and its sole initial binding.
+        let transport =
+            in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+        let (mut slab0, mut slab1, mut slab2) =
+            (vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]);
+        let (mut s0, mut s1, mut s2) = (
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+        );
+        let r0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+        let r1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
+        let r2 = s2.init().rendezvous(&mut slab2, transport).unwrap();
+        r0.set_resolver(
+            &p0,
+            ResolverRef::<0>::decision_state(&(), |_| Ok(DecisionArm::Left)),
+        )
+        .unwrap();
+        let mut owner = r0.enter(sid, &p0).unwrap();
+        let mut worker = r1.enter(sid, &p1).unwrap();
+        let mut service = r2.enter(sid, &p2).unwrap();
+        let db = r0.enter(sid, &p3).unwrap();
+
+        owner.send::<Msg<11, ()>>(&()).await.unwrap();
+        worker
+            .offer()
+            .await
+            .unwrap()
+            .recv::<Msg<11, ()>>()
+            .await
             .unwrap();
-            let mut owner = r0.enter(sid, &p0).unwrap();
-            let mut worker = r1.enter(sid, &p1).unwrap();
-            let mut service = r2.enter(sid, &p2).unwrap();
-            let db = r0.enter(sid, &p3).unwrap();
+        worker.send::<Msg<12, ()>>(&()).await.unwrap();
+        service.recv::<Msg<12, ()>>().await.unwrap();
+        service.send::<Msg<13, ()>>(&()).await.unwrap();
+        worker.recv::<Msg<13, ()>>().await.unwrap();
+        worker.send::<Msg<14, ()>>(&()).await.unwrap();
+        owner.recv::<Msg<14, ()>>().await.unwrap();
 
-            owner.send::<Msg<11, ()>>(&()).await.unwrap();
-            worker
-                .offer()
-                .await
-                .unwrap()
-                .recv::<Msg<11, ()>>()
-                .await
-                .unwrap();
-            worker.send::<Msg<12, ()>>(&()).await.unwrap();
-            service.recv::<Msg<12, ()>>().await.unwrap();
-            service.send::<Msg<13, ()>>(&()).await.unwrap();
-            worker.recv::<Msg<13, ()>>().await.unwrap();
-            worker.send::<Msg<14, ()>>(&()).await.unwrap();
-            owner.recv::<Msg<14, ()>>().await.unwrap();
+        owner.send::<Msg<4, ()>>(&()).await.unwrap();
+        let branch = worker.offer().await.unwrap();
+        assert_eq!(branch.label(), 4);
+        drop(branch);
+        worker
+            .offer()
+            .await
+            .unwrap()
+            .recv::<Msg<4, ()>>()
+            .await
+            .unwrap();
+        owner.send::<Msg<5, ()>>(&()).await.unwrap();
+        service.recv::<Msg<5, ()>>().await.unwrap();
+        worker.send::<Msg<6, ()>>(&()).await.unwrap();
+        service.recv::<Msg<6, ()>>().await.unwrap();
 
-            owner.send::<Msg<4, ()>>(&()).await.unwrap();
-            let branch = worker.offer().await.unwrap();
-            assert_eq!(branch.label(), 4);
-            drop(branch);
-            worker
-                .offer()
-                .await
-                .unwrap()
-                .recv::<Msg<4, ()>>()
-                .await
-                .unwrap();
-            owner.send::<Msg<5, ()>>(&()).await.unwrap();
-            service.recv::<Msg<5, ()>>().await.unwrap();
-            worker.send::<Msg<6, ()>>(&()).await.unwrap();
-            service.recv::<Msg<6, ()>>().await.unwrap();
+        owner.send::<Loan<'_>>(db).await.unwrap();
+        let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+        db.send::<Msg<1, ()>>(&()).await.unwrap();
+        service.recv::<Msg<1, ()>>().await.unwrap();
+        service.send::<Msg<2, ()>>(&()).await.unwrap();
+        db.recv::<Msg<2, ()>>().await.unwrap();
+        worker.send::<Return<'_>>(db).await.unwrap();
+        let _db = owner.recv::<Return<'_>>().await.unwrap();
+    };
 
-            owner.send::<Loan<'_>>(db).await.unwrap();
-            let mut db = worker.recv::<Loan<'_>>().await.unwrap();
-            db.send::<Msg<1, ()>>(&()).await.unwrap();
-            service.recv::<Msg<1, ()>>().await.unwrap();
-            service.send::<Msg<2, ()>>(&()).await.unwrap();
-            db.recv::<Msg<2, ()>>().await.unwrap();
-            worker.send::<Return<'_>>(db).await.unwrap();
-            let _db = owner.recv::<Return<'_>>().await.unwrap();
-        });
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn parallel_choice_is_observable_before_a_sequential_resolver() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            use hibana::{
-                Endpoint,
-                runtime::{
-                    resolver::{DecisionArm, ResolverRef},
-                    transport::EndpointBinding,
-                },
-            };
+async fn parallel_choice_is_observable_before_a_sequential_resolver()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        use hibana::{
+            Endpoint,
+            runtime::{
+                resolver::{DecisionArm, ResolverRef},
+                transport::EndpointBinding,
+            },
+        };
 
-            let choice = g::route(
+        let choice = g::route(
+            g::seq(
+                g::send::<0, 1, Msg<0, ()>>(),
+                g::seq(g::send::<0, 2, Msg<1, ()>>(), g::send::<1, 2, Msg<2, ()>>()),
+            ),
+            g::seq(
+                g::send::<0, 1, Msg<3, ()>>(),
+                g::seq(g::send::<0, 2, Msg<4, ()>>(), g::send::<1, 2, Msg<5, ()>>()),
+            ),
+        );
+        let loan = g::seq(
+            g::send::<0, 1, Msg<6, Endpoint<'_, 3>>>(),
+            g::seq(
+                g::send::<3, 2, Msg<7, ()>>(),
                 g::seq(
-                    g::send::<0, 1, Msg<0, ()>>(),
-                    g::seq(g::send::<0, 2, Msg<1, ()>>(), g::send::<1, 2, Msg<2, ()>>()),
+                    g::send::<2, 3, Msg<8, ()>>(),
+                    g::send::<1, 0, Msg<9, Endpoint<'_, 3>>>(),
                 ),
+            ),
+        );
+        let next = g::route(
+            g::seq(
+                g::send::<0, 1, Msg<10, Endpoint<'_, 3>>>(),
                 g::seq(
-                    g::send::<0, 1, Msg<3, ()>>(),
-                    g::seq(g::send::<0, 2, Msg<4, ()>>(), g::send::<1, 2, Msg<5, ()>>()),
-                ),
-            );
-            let loan = g::seq(
-                g::send::<0, 1, Msg<6, Endpoint<'_, 3>>>(),
-                g::seq(
-                    g::send::<3, 2, Msg<7, ()>>(),
+                    g::send::<3, 2, Msg<11, ()>>(),
                     g::seq(
-                        g::send::<2, 3, Msg<8, ()>>(),
-                        g::send::<1, 0, Msg<9, Endpoint<'_, 3>>>(),
+                        g::send::<2, 3, Msg<12, ()>>(),
+                        g::send::<1, 0, Msg<13, Endpoint<'_, 3>>>(),
                     ),
                 ),
-            );
-            let next = g::route(
+            ),
+            g::seq(
+                g::send::<0, 1, Msg<14, Endpoint<'_, 3>>>(),
                 g::seq(
-                    g::send::<0, 1, Msg<10, Endpoint<'_, 3>>>(),
+                    g::send::<3, 2, Msg<15, ()>>(),
                     g::seq(
-                        g::send::<3, 2, Msg<11, ()>>(),
-                        g::seq(
-                            g::send::<2, 3, Msg<12, ()>>(),
-                            g::send::<1, 0, Msg<13, Endpoint<'_, 3>>>(),
-                        ),
+                        g::send::<2, 3, Msg<16, ()>>(),
+                        g::send::<1, 0, Msg<17, Endpoint<'_, 3>>>(),
                     ),
                 ),
-                g::seq(
-                    g::send::<0, 1, Msg<14, Endpoint<'_, 3>>>(),
-                    g::seq(
-                        g::send::<3, 2, Msg<15, ()>>(),
-                        g::seq(
-                            g::send::<2, 3, Msg<16, ()>>(),
-                            g::send::<1, 0, Msg<17, Endpoint<'_, 3>>>(),
-                        ),
-                    ),
-                ),
-            )
-            .resolve::<0>();
-            let global = g::seq(g::par(choice, loan), next);
-            let (p0, p1, p2, p3) = (
-                project::<0>(&global),
-                project::<1>(&global),
-                project::<2>(&global),
-                project::<3>(&global),
-            );
-            let sid = SessionId::new(88);
-            let calls = core::cell::Cell::new(0);
-            // SAFETY: this test owns one resource and its sole initial binding.
-            let transport =
-                in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
-            let (mut slab0, mut slab1, mut slab2) =
-                (vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]);
-            let (mut s0, mut s1, mut s2) = (
-                SessionKitStorage::uninit(),
-                SessionKitStorage::uninit(),
-                SessionKitStorage::uninit(),
-            );
-            let r0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
-            let r1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
-            let r2 = s2.init().rendezvous(&mut slab2, transport).unwrap();
-            r0.set_resolver(
-                &p0,
-                ResolverRef::<0>::decision_state(&calls, |calls| {
-                    calls.set(calls.get() + 1);
-                    Ok(DecisionArm::Left)
-                }),
-            )
+            ),
+        )
+        .resolve::<0>();
+        let global = g::seq(g::par(choice, loan), next);
+        let (p0, p1, p2, p3) = (
+            project::<0>(&global),
+            project::<1>(&global),
+            project::<2>(&global),
+            project::<3>(&global),
+        );
+        let sid = SessionId::new(88);
+        let calls = core::cell::Cell::new(0);
+        // SAFETY: this test owns one resource and its sole initial binding.
+        let transport =
+            in_memory::InMemoryTransport::new([((sid, 3), unsafe { EndpointBinding::new() })]);
+        let (mut slab0, mut slab1, mut slab2) =
+            (vec![0; 64 * 1024], vec![0; 64 * 1024], vec![0; 64 * 1024]);
+        let (mut s0, mut s1, mut s2) = (
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+            SessionKitStorage::uninit(),
+        );
+        let r0 = s0.init().rendezvous(&mut slab0, transport.clone()).unwrap();
+        let r1 = s1.init().rendezvous(&mut slab1, transport.clone()).unwrap();
+        let r2 = s2.init().rendezvous(&mut slab2, transport).unwrap();
+        r0.set_resolver(
+            &p0,
+            ResolverRef::<0>::decision_state(&calls, |calls| {
+                calls.set(calls.get() + 1);
+                Ok(DecisionArm::Left)
+            }),
+        )
+        .unwrap();
+        let mut owner = r0.enter(sid, &p0).unwrap();
+        let mut worker = r1.enter(sid, &p1).unwrap();
+        let mut service = r2.enter(sid, &p2).unwrap();
+        let db = r0.enter(sid, &p3).unwrap();
+
+        owner.send::<Msg<6, Endpoint<'_, 3>>>(db).await.unwrap();
+        let mut db = worker.recv::<Msg<6, Endpoint<'_, 3>>>().await.unwrap();
+        db.send::<Msg<7, ()>>(&()).await.unwrap();
+        service.recv::<Msg<7, ()>>().await.unwrap();
+        service.send::<Msg<8, ()>>(&()).await.unwrap();
+        db.recv::<Msg<8, ()>>().await.unwrap();
+        worker.send::<Msg<9, Endpoint<'_, 3>>>(db).await.unwrap();
+        let db = owner.recv::<Msg<9, Endpoint<'_, 3>>>().await.unwrap();
+        owner.send::<Msg<0, ()>>(&()).await.unwrap();
+        assert_eq!(calls.get(), 0, "the join has not completed");
+        let branch = (worker.offer()).await.unwrap();
+        assert_eq!(branch.label(), 0);
+        branch.recv::<Msg<0, ()>>().await.unwrap();
+        owner.send::<Msg<1, ()>>(&()).await.unwrap();
+        service.recv::<Msg<1, ()>>().await.unwrap();
+        worker.send::<Msg<2, ()>>(&()).await.unwrap();
+        service.recv::<Msg<2, ()>>().await.unwrap();
+        assert_eq!(calls.get(), 0);
+
+        owner.send::<Msg<10, Endpoint<'_, 3>>>(db).await.unwrap();
+        assert_eq!(calls.get(), 1);
+        let mut db = worker
+            .offer()
+            .await
+            .unwrap()
+            .recv::<Msg<10, Endpoint<'_, 3>>>()
+            .await
             .unwrap();
-            let mut owner = r0.enter(sid, &p0).unwrap();
-            let mut worker = r1.enter(sid, &p1).unwrap();
-            let mut service = r2.enter(sid, &p2).unwrap();
-            let db = r0.enter(sid, &p3).unwrap();
+        db.send::<Msg<11, ()>>(&()).await.unwrap();
+        service.recv::<Msg<11, ()>>().await.unwrap();
+        service.send::<Msg<12, ()>>(&()).await.unwrap();
+        db.recv::<Msg<12, ()>>().await.unwrap();
+        worker.send::<Msg<13, Endpoint<'_, 3>>>(db).await.unwrap();
+        let _db = owner.recv::<Msg<13, Endpoint<'_, 3>>>().await.unwrap();
+    };
 
-            owner.send::<Msg<6, Endpoint<'_, 3>>>(db).await.unwrap();
-            let mut db = worker.recv::<Msg<6, Endpoint<'_, 3>>>().await.unwrap();
-            db.send::<Msg<7, ()>>(&()).await.unwrap();
-            service.recv::<Msg<7, ()>>().await.unwrap();
-            service.send::<Msg<8, ()>>(&()).await.unwrap();
-            db.recv::<Msg<8, ()>>().await.unwrap();
-            worker.send::<Msg<9, Endpoint<'_, 3>>>(db).await.unwrap();
-            let db = owner.recv::<Msg<9, Endpoint<'_, 3>>>().await.unwrap();
-            owner.send::<Msg<0, ()>>(&()).await.unwrap();
-            assert_eq!(calls.get(), 0, "the join has not completed");
-            let branch =
-                tokio::time::timeout(core::time::Duration::from_millis(100), worker.offer())
-                    .await
-                    .expect("the queued parallel choice must be observable")
-                    .unwrap();
-            assert_eq!(branch.label(), 0);
-            branch.recv::<Msg<0, ()>>().await.unwrap();
-            owner.send::<Msg<1, ()>>(&()).await.unwrap();
-            service.recv::<Msg<1, ()>>().await.unwrap();
-            worker.send::<Msg<2, ()>>(&()).await.unwrap();
-            service.recv::<Msg<2, ()>>().await.unwrap();
-            assert_eq!(calls.get(), 0);
-
-            owner.send::<Msg<10, Endpoint<'_, 3>>>(db).await.unwrap();
-            assert_eq!(calls.get(), 1);
-            let mut db = worker
-                .offer()
-                .await
-                .unwrap()
-                .recv::<Msg<10, Endpoint<'_, 3>>>()
-                .await
-                .unwrap();
-            db.send::<Msg<11, ()>>(&()).await.unwrap();
-            service.recv::<Msg<11, ()>>().await.unwrap();
-            service.send::<Msg<12, ()>>(&()).await.unwrap();
-            db.recv::<Msg<12, ()>>().await.unwrap();
-            worker.send::<Msg<13, Endpoint<'_, 3>>>(db).await.unwrap();
-            let _db = owner.recv::<Msg<13, Endpoint<'_, 3>>>().await.unwrap();
-        });
+    Ok(())
 }
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;

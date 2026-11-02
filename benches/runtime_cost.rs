@@ -4,6 +4,8 @@
 mod callgrind;
 #[path = "../examples/support/in_memory.rs"]
 mod in_memory;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 #[path = "support/protocol_repetition.rs"]
 mod protocol_repetition;
 use protocol_repetition::repeated;
@@ -58,10 +60,11 @@ macro_rules! tail {
     };
 }
 
+#[hibana_runtime::scope]
 async fn sequential<const S: usize>(
     a_program: &RoleProgram<0>,
     b_program: &RoleProgram<1>,
-) -> Duration {
+) -> Result<Duration, hibana::EndpointError> {
     let mut slab = [0u8; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
@@ -73,41 +76,46 @@ async fn sequential<const S: usize>(
     let mut b = rv.enter(sid, b_program).unwrap();
     let start = Instant::now();
     callgrind::start();
-    tokio::join!(
+    async {
         async {
             for n in 0..ROUNDS {
-                a.send::<Request>(&black_box(n)).await.unwrap();
-                assert_eq!(a.recv::<Reply>().await.unwrap(), n + 1);
+                a.send::<Request>(&black_box(n)).await?;
+                assert_eq!(a.recv::<Reply>().await?, n + 1);
             }
-        },
+        };
         async {
             for n in 0..ROUNDS {
-                assert_eq!(b.recv::<Request>().await.unwrap(), n);
-                b.send::<Reply>(&black_box(n + 1)).await.unwrap();
+                assert_eq!(b.recv::<Request>().await?, n);
+                b.send::<Reply>(&black_box(n + 1)).await?;
             }
-        },
-    );
+        };
+        Ok(())
+    }
+    .await?;
     callgrind::stop();
     let elapsed = start.elapsed();
-    tokio::join!(
+    async {
         async {
             for _ in 0..S {
-                a.send::<Tail>(&()).await.unwrap();
+                a.send::<Tail>(&()).await?;
             }
-        },
+        };
         async {
             for _ in 0..S {
-                b.recv::<Tail>().await.unwrap();
+                b.recv::<Tail>().await?;
             }
-        },
-    );
-    elapsed
+        };
+        Ok(())
+    }
+    .await?;
+    Ok(elapsed)
 }
 
+#[hibana_runtime::scope]
 async fn parallel<const S: usize>(
     a_program: &RoleProgram<0>,
     b_program: &RoleProgram<1>,
-) -> Duration {
+) -> Result<Duration, hibana::EndpointError> {
     let mut slab = [0u8; 64 * 1024];
     let mut storage = SessionKitStorage::uninit();
     let rv = storage
@@ -123,52 +131,57 @@ async fn parallel<const S: usize>(
         let [mut b_recv, mut b_send] = b.par().unwrap();
         let start = Instant::now();
         callgrind::start();
-        tokio::join!(
+        async {
             async {
                 for n in 0..ROUNDS {
-                    a_send.send::<Request>(&black_box(n)).await.unwrap();
+                    a_send.send::<Request>(&black_box(n)).await?;
                 }
-            },
+            };
             async {
                 for n in 0..ROUNDS {
-                    assert_eq!(a_recv.recv::<Reply>().await.unwrap(), n + 1);
+                    assert_eq!(a_recv.recv::<Reply>().await?, n + 1);
                 }
-            },
+            };
             async {
                 for n in 0..ROUNDS {
-                    assert_eq!(b_recv.recv::<Request>().await.unwrap(), n);
+                    assert_eq!(b_recv.recv::<Request>().await?, n);
                 }
-            },
+            };
             async {
                 for n in 0..ROUNDS {
-                    b_send.send::<Reply>(&black_box(n + 1)).await.unwrap();
+                    b_send.send::<Reply>(&black_box(n + 1)).await?;
                 }
-            },
-        );
+            };
+            Ok(())
+        }
+        .await?;
         callgrind::stop();
         elapsed = start.elapsed();
     }
-    tokio::join!(
+    async {
         async {
             for _ in 0..S {
-                a.send::<Tail>(&()).await.unwrap();
+                a.send::<Tail>(&()).await?;
             }
-        },
+        };
         async {
             for _ in 0..S {
-                b.recv::<Tail>().await.unwrap();
+                b.recv::<Tail>().await?;
             }
-        },
-    );
-    elapsed
+        };
+        Ok(())
+    }
+    .await?;
+    Ok(elapsed)
 }
 
+#[hibana_runtime::scope]
 async fn measure<const S: usize>(
     seq: &(RoleProgram<0>, RoleProgram<1>),
     par: &(RoleProgram<0>, RoleProgram<1>),
     samples: usize,
     filter: &str,
-) {
+) -> core::result::Result<(), hibana::EndpointError> {
     for (name, programs) in [("seq", seq), ("par", par)] {
         if filter != "all" && filter != name {
             continue;
@@ -176,9 +189,9 @@ async fn measure<const S: usize>(
         let mut durations = Vec::with_capacity(samples);
         for sample in 0..samples + 3 {
             let duration = if name == "seq" {
-                sequential::<S>(&programs.0, &programs.1).await
+                sequential::<S>(&programs.0, &programs.1).await?
             } else {
-                parallel::<S>(&programs.0, &programs.1).await
+                parallel::<S>(&programs.0, &programs.1).await?
             };
             if sample >= 3 {
                 durations.push(duration.as_nanos() as f64 / f64::from(OPERATIONS));
@@ -191,9 +204,11 @@ async fn measure<const S: usize>(
             durations[samples / 2]
         );
     }
+    Ok(())
 }
 
-fn main() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+async fn main() -> core::result::Result<(), hibana::EndpointError> {
     let samples = std::env::var("HIBANA_PERF_SAMPLES")
         .map(|s| s.parse::<usize>().unwrap())
         .unwrap_or(30);
@@ -227,16 +242,11 @@ fn main() {
     let par8 = (project(&par8), project(&par8));
     let par256 = (project(&par256), project(&par256));
     println!("case\ttail_events\tendpoint_ops\tsamples\tbest_ns_per_op\tmedian_ns_per_op");
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap()
-        .block_on(async {
-            if size == "all" || size == "8" {
-                measure::<8>(&seq8, &par8, samples, &filter).await;
-            }
-            if size == "all" || size == "256" {
-                measure::<256>(&seq256, &par256, samples, &filter).await;
-            }
-        });
+    if size == "all" || size == "8" {
+        measure::<8>(&seq8, &par8, samples, &filter).await?;
+    }
+    if size == "all" || size == "256" {
+        measure::<256>(&seq256, &par256, samples, &filter).await?;
+    }
+    Ok(())
 }

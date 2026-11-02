@@ -1,4 +1,6 @@
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 #[path = "support/pending_cancel.rs"]
 mod pending_cancel_support;
 #[path = "support/runtime.rs"]
@@ -41,8 +43,10 @@ const DEEP_ROUTE_RESOLVER_4: u16 = 0x9d;
 static LEFT_ARM: DecisionArm = DecisionArm::Left;
 static UNIT: () = ();
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_parallel_borrow_rejects_a_siblings_send_before_calling_any_resolver() {
+async fn a_parallel_borrow_rejects_a_siblings_send_before_calling_any_resolver()
+-> core::result::Result<(), hibana::EndpointError> {
     use core::cell::Cell;
     type A = Msg<210, ()>;
     type B = Msg<211, ()>;
@@ -55,77 +59,75 @@ fn a_parallel_borrow_rejects_a_siblings_send_before_calling_any_resolver() {
     .roll();
     let sender_program = project::<0>(&global);
     let receiver_program = project::<1>(&global);
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            for visit in 0..2 {
-                for borrow_right in [false, true] {
-                    let calls = [Cell::new(0usize), Cell::new(0usize)];
-                    let network = TestTransport::new();
-                    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
-                    let mut s0 = SessionKitStorage::uninit();
-                    let mut s1 = SessionKitStorage::uninit();
-                    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
-                    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
-                    rv0.set_resolver(
-                        &sender_program,
-                        ResolverRef::<0>::decision_state(&calls, |calls| {
-                            calls[0].set(calls[0].get() + 1);
-                            Ok(DecisionArm::Left)
-                        }),
-                    )
-                    .unwrap();
-                    rv0.set_resolver(
-                        &sender_program,
-                        ResolverRef::<1>::decision_state(&calls, |calls| {
-                            calls[1].set(calls[1].get() + 1);
-                            Ok(DecisionArm::Left)
-                        }),
-                    )
-                    .unwrap();
-                    let sid = SessionId::new(9290);
-                    let mut sender = rv0.enter(sid, &sender_program).unwrap();
-                    let mut receiver = rv1.enter(sid, &receiver_program).unwrap();
-                    if visit == 1 {
-                        let [mut a, mut b] = sender.par().unwrap();
-                        let [mut c, mut d] = receiver.par().unwrap();
-                        tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                            tokio::try_join!(
-                                a.send::<A>(&()),
-                                b.send::<C>(&()),
-                                c.recv::<A>(),
-                                d.recv::<C>()
-                            )
-                        })
-                        .await
-                        .expect("independent resolver branches stalled")
-                        .unwrap();
-                    }
-                    assert_eq!([calls[0].get(), calls[1].get()], [visit, visit]);
+    {
+        for visit in 0..2 {
+            for borrow_right in [false, true] {
+                let calls = [Cell::new(0usize), Cell::new(0usize)];
+                let network = TestTransport::new();
+                let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+                let mut s0 = SessionKitStorage::uninit();
+                let mut s1 = SessionKitStorage::uninit();
+                let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+                let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+                rv0.set_resolver(
+                    &sender_program,
+                    ResolverRef::<0>::decision_state(&calls, |calls| {
+                        calls[0].set(calls[0].get() + 1);
+                        Ok(DecisionArm::Left)
+                    }),
+                )
+                .unwrap();
+                rv0.set_resolver(
+                    &sender_program,
+                    ResolverRef::<1>::decision_state(&calls, |calls| {
+                        calls[1].set(calls[1].get() + 1);
+                        Ok(DecisionArm::Left)
+                    }),
+                )
+                .unwrap();
+                let sid = SessionId::new(9290);
+                let mut sender = rv0.enter(sid, &sender_program).unwrap();
+                let mut receiver = rv1.enter(sid, &receiver_program).unwrap();
+                if visit == 1 {
                     let [mut a, mut b] = sender.par().unwrap();
-                    let rejected =
-                        tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                            if borrow_right {
-                                b.send::<A>(&()).await
-                            } else {
-                                a.send::<C>(&()).await
-                            }
-                        })
+                    let [mut c, mut d] = receiver.par().unwrap();
+                    (async {
+                        async {
+                            async { (a.send::<A>(&())).await };
+
+                            async { (b.send::<C>(&())).await };
+
+                            async { (c.recv::<A>()).await };
+
+                            async { (d.recv::<C>()).await };
+                        }
                         .await
-                        .expect("out-of-scope send must be rejected");
-                    assert!(rejected.is_err());
-                    assert_eq!(
-                        [calls[0].get(), calls[1].get()],
-                        [visit, visit],
-                        "an out-of-scope call must not invoke either resolver"
-                    );
-                    assert!(network.queue_is_empty());
+                    })
+                    .await
+                    .unwrap();
                 }
+                assert_eq!([calls[0].get(), calls[1].get()], [visit, visit]);
+                let [mut a, mut b] = sender.par().unwrap();
+                let rejected = (async {
+                    if borrow_right {
+                        b.send::<A>(&()).await
+                    } else {
+                        a.send::<C>(&()).await
+                    }
+                })
+                .await;
+                assert!(rejected.is_err());
+                assert_eq!(
+                    [calls[0].get(), calls[1].get()],
+                    [visit, visit],
+                    "an out-of-scope call must not invoke either resolver"
+                );
+                assert!(network.queue_is_empty());
             }
-        });
+        }
+    };
+
+    Ok(())
 }
 
 std::thread_local! {
@@ -347,8 +349,10 @@ fn dropping_pending_resolved_send_future_does_not_publish_success_evidence() {
     });
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn every_parallel_entry_checks_its_containing_resolver_before_sending() {
+async fn every_parallel_entry_checks_its_containing_resolver_before_sending()
+-> core::result::Result<(), hibana::EndpointError> {
     type LeftFirst = Msg<201, ()>;
     type LeftParallel = Msg<202, ()>;
     type RightFirst = Msg<203, ()>;
@@ -367,71 +371,72 @@ fn every_parallel_entry_checks_its_containing_resolver_before_sending() {
     let owner_program = project::<0>(&global);
     let receiver_program = project::<2>(&global);
     let first_program = project::<1>(&global);
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            for choice in [DecisionArm::Left, DecisionArm::Right] {
-                for requested_right in [false, true] {
-                    for first_entry in [false, true] {
-                        let network = TestTransport::new();
-                        let mut slab = [0; 32 * 1024];
-                        let mut storage = SessionKitStorage::uninit();
-                        let rv = storage
-                            .init()
-                            .rendezvous(&mut slab, network.clone())
-                            .unwrap();
-                        rv.set_resolver(
-                            &owner_program,
-                            ResolverRef::<317>::decision_state(&choice, choose_arm),
-                        )
+    {
+        for choice in [DecisionArm::Left, DecisionArm::Right] {
+            for requested_right in [false, true] {
+                for first_entry in [false, true] {
+                    let network = TestTransport::new();
+                    let mut slab = [0; 32 * 1024];
+                    let mut storage = SessionKitStorage::uninit();
+                    let rv = storage
+                        .init()
+                        .rendezvous(&mut slab, network.clone())
                         .unwrap();
-                        let sid = SessionId::new(9278);
-                        let mut owner = rv.enter(sid, &owner_program).unwrap();
-                        let mut receiver = rv.enter(sid, &receiver_program).unwrap();
-                        let mut first_receiver = rv.enter(sid, &first_program).unwrap();
-                        let result = if first_entry {
-                            if requested_right {
-                                owner.send::<RightFirst>(&()).await
-                            } else {
-                                owner.send::<LeftFirst>(&()).await
-                            }
-                        } else if requested_right {
-                            owner.send::<RightParallel>(&()).await
+                    rv.set_resolver(
+                        &owner_program,
+                        ResolverRef::<317>::decision_state(&choice, choose_arm),
+                    )
+                    .unwrap();
+                    let sid = SessionId::new(9278);
+                    let mut owner = rv.enter(sid, &owner_program).unwrap();
+                    let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+                    let mut first_receiver = rv.enter(sid, &first_program).unwrap();
+                    let result = if first_entry {
+                        if requested_right {
+                            owner.send::<RightFirst>(&()).await
                         } else {
-                            owner.send::<LeftParallel>(&()).await
-                        };
-                        let expected = requested_right == (choice == DecisionArm::Right);
-                        assert_eq!(
-                            result.is_ok(),
-                            expected,
-                            "{choice:?} right={requested_right} first={first_entry}: {result:?}"
-                        );
-                        if expected && first_entry {
-                            if requested_right {
-                                first_receiver.recv::<RightFirst>().await.unwrap();
-                            } else {
-                                first_receiver.recv::<LeftFirst>().await.unwrap();
-                            }
-                        } else if expected {
-                            if requested_right {
-                                receiver.recv::<RightParallel>().await.unwrap();
-                            } else {
-                                receiver.recv::<LeftParallel>().await.unwrap();
-                            }
+                            owner.send::<LeftFirst>(&()).await
                         }
-                        assert!(
-                            network.queue_is_empty(),
-                            "a rejected send must not enqueue a frame"
-                        );
+                    } else if requested_right {
+                        owner.send::<RightParallel>(&()).await
+                    } else {
+                        owner.send::<LeftParallel>(&()).await
+                    };
+                    let expected = requested_right == (choice == DecisionArm::Right);
+                    assert_eq!(
+                        result.is_ok(),
+                        expected,
+                        "{choice:?} right={requested_right} first={first_entry}: {result:?}"
+                    );
+                    if expected && first_entry {
+                        if requested_right {
+                            first_receiver.recv::<RightFirst>().await.unwrap();
+                        } else {
+                            first_receiver.recv::<LeftFirst>().await.unwrap();
+                        }
+                    } else if expected {
+                        if requested_right {
+                            receiver.recv::<RightParallel>().await.unwrap();
+                        } else {
+                            receiver.recv::<LeftParallel>().await.unwrap();
+                        }
                     }
+                    assert!(
+                        network.queue_is_empty(),
+                        "a rejected send must not enqueue a frame"
+                    );
                 }
             }
-        });
+        }
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolved_parents_can_commit_message_selected_children() {
+async fn resolved_parents_can_commit_message_selected_children()
+-> core::result::Result<(), hibana::EndpointError> {
     type A = Msg<211, ()>;
     type B = Msg<212, ()>;
     type C = Msg<213, ()>;
@@ -443,106 +448,106 @@ fn resolved_parents_can_commit_message_selected_children() {
     .resolve::<318>();
     let owner_program = project::<0>(&global);
     let receiver_program = project::<1>(&global);
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            for choice in [DecisionArm::Left, DecisionArm::Right] {
-                for right_child in [false, true] {
-                    let network = TestTransport::new();
-                    let mut slab = [0; 32 * 1024];
-                    let mut storage = SessionKitStorage::uninit();
-                    let rv = storage
-                        .init()
-                        .rendezvous(&mut slab, network.clone())
-                        .unwrap();
-                    rv.set_resolver(
-                        &owner_program,
-                        ResolverRef::<318>::decision_state(&choice, choose_arm),
-                    )
+    {
+        for choice in [DecisionArm::Left, DecisionArm::Right] {
+            for right_child in [false, true] {
+                let network = TestTransport::new();
+                let mut slab = [0; 32 * 1024];
+                let mut storage = SessionKitStorage::uninit();
+                let rv = storage
+                    .init()
+                    .rendezvous(&mut slab, network.clone())
                     .unwrap();
-                    let sid = SessionId::new(9279);
-                    let mut owner = rv.enter(sid, &owner_program).unwrap();
-                    let mut receiver = rv.enter(sid, &receiver_program).unwrap();
-                    match (choice, right_child) {
-                        (DecisionArm::Left, false) => {
-                            owner.send::<A>(&()).await.unwrap();
-                            receiver.recv::<A>().await.unwrap();
-                        }
-                        (DecisionArm::Left, true) => {
-                            owner.send::<B>(&()).await.unwrap();
-                            receiver.recv::<B>().await.unwrap();
-                        }
-                        (DecisionArm::Right, false) => {
-                            owner.send::<C>(&()).await.unwrap();
-                            receiver.recv::<C>().await.unwrap();
-                        }
-                        (DecisionArm::Right, true) => {
-                            owner.send::<D>(&()).await.unwrap();
-                            receiver.recv::<D>().await.unwrap();
-                        }
+                rv.set_resolver(
+                    &owner_program,
+                    ResolverRef::<318>::decision_state(&choice, choose_arm),
+                )
+                .unwrap();
+                let sid = SessionId::new(9279);
+                let mut owner = rv.enter(sid, &owner_program).unwrap();
+                let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+                match (choice, right_child) {
+                    (DecisionArm::Left, false) => {
+                        owner.send::<A>(&()).await.unwrap();
+                        receiver.recv::<A>().await.unwrap();
                     }
-                    assert!(network.queue_is_empty());
-                    let events = rv.tap().collect::<Vec<_>>();
-                    assert_eq!(
-                        resolver_audits(&events).len(),
-                        1,
-                        "only the parent has a resolver"
-                    );
+                    (DecisionArm::Left, true) => {
+                        owner.send::<B>(&()).await.unwrap();
+                        receiver.recv::<B>().await.unwrap();
+                    }
+                    (DecisionArm::Right, false) => {
+                        owner.send::<C>(&()).await.unwrap();
+                        receiver.recv::<C>().await.unwrap();
+                    }
+                    (DecisionArm::Right, true) => {
+                        owner.send::<D>(&()).await.unwrap();
+                        receiver.recv::<D>().await.unwrap();
+                    }
                 }
+                assert!(network.queue_is_empty());
+                let events = rv.tap().collect::<Vec<_>>();
+                assert_eq!(
+                    resolver_audits(&events).len(),
+                    1,
+                    "only the parent has a resolver"
+                );
             }
-        });
+        }
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn an_inner_roll_retains_its_enclosing_choice_until_the_outer_reentry() {
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            use core::cell::Cell;
-            type Again = Msg<221, ()>;
-            type Other = Msg<222, ()>;
-            let global = g::route(g::send::<0, 1, Again>().roll(), g::send::<0, 1, Other>())
-                .resolve::<319>()
-                .roll();
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let calls = Cell::new(0);
-            let network = TestTransport::new();
-            let mut slab = [0; 32 * 1024];
-            let mut storage = SessionKitStorage::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, network.clone())
-                .unwrap();
-            rv.set_resolver(
-                &p0,
-                ResolverRef::<319>::decision_state(&calls, |calls| {
-                    let count = calls.get();
-                    calls.set(count + 1);
-                    Ok(if count == 0 {
-                        DecisionArm::Left
-                    } else {
-                        DecisionArm::Right
-                    })
-                }),
-            )
+async fn an_inner_roll_retains_its_enclosing_choice_until_the_outer_reentry()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        use core::cell::Cell;
+        type Again = Msg<221, ()>;
+        type Other = Msg<222, ()>;
+        let global = g::route(g::send::<0, 1, Again>().roll(), g::send::<0, 1, Other>())
+            .resolve::<319>()
+            .roll();
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let calls = Cell::new(0);
+        let network = TestTransport::new();
+        let mut slab = [0; 32 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
             .unwrap();
-            let sid = SessionId::new(9280);
-            let mut sender = rv.enter(sid, &p0).unwrap();
-            let mut receiver = rv.enter(sid, &p1).unwrap();
-            sender.send::<Again>(&()).await.unwrap();
-            receiver.recv::<Again>().await.unwrap();
-            sender
-                .send::<Again>(&())
-                .await
-                .expect("the inner visit retains the outer decision");
-            receiver.recv::<Again>().await.unwrap();
-            assert_eq!(calls.get(), 1);
-            sender.send::<Other>(&()).await.unwrap();
-            receiver.recv::<Other>().await.unwrap();
-            assert_eq!(calls.get(), 2);
-            assert!(network.queue_is_empty());
-        });
+        rv.set_resolver(
+            &p0,
+            ResolverRef::<319>::decision_state(&calls, |calls| {
+                let count = calls.get();
+                calls.set(count + 1);
+                Ok(if count == 0 {
+                    DecisionArm::Left
+                } else {
+                    DecisionArm::Right
+                })
+            }),
+        )
+        .unwrap();
+        let sid = SessionId::new(9280);
+        let mut sender = rv.enter(sid, &p0).unwrap();
+        let mut receiver = rv.enter(sid, &p1).unwrap();
+        sender.send::<Again>(&()).await.unwrap();
+        receiver.recv::<Again>().await.unwrap();
+        sender
+            .send::<Again>(&())
+            .await
+            .expect("the inner visit retains the outer decision");
+        receiver.recv::<Again>().await.unwrap();
+        assert_eq!(calls.get(), 1);
+        sender.send::<Other>(&()).await.unwrap();
+        receiver.recv::<Other>().await.unwrap();
+        assert_eq!(calls.get(), 2);
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }

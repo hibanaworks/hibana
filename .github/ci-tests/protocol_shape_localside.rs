@@ -287,7 +287,7 @@ impl Emitter<'_> {
                 format!("{endpoint}.send::<M{label}>(&())")
             };
             arms += &format!(
-                "({label},{receive})=>{{let future={call};tokio::pin!(future);future.as_mut().poll(cx)}},"
+                "({label},{receive})=>{{let mut future=core::pin::pin!({call});future.as_mut().poll(cx)}},"
             );
         }
         if arms.is_empty() {
@@ -356,7 +356,7 @@ impl Emitter<'_> {
         let mut causal = String::new();
         if receive {
             let arms = self.causal.iter().filter(|(before, _, receiver)| before == label && *receiver == role).map(|(_, target, _)| {
-                format!("{target}=>{{let future={endpoint}.send::<M{target}>(&());tokio::pin!(future);future.as_mut().poll(cx)}},")
+                format!("{target}=>{{let mut future=core::pin::pin!({endpoint}.send::<M{target}>(&()));future.as_mut().poll(cx)}},")
             }).collect::<String>();
             if !arms.is_empty() {
                 causal = format!(
@@ -365,7 +365,7 @@ impl Emitter<'_> {
             }
         }
         let code =
-            format!("tokio::task::yield_now().await;let observed_role={observe};{causal}{call}");
+            format!("hibana_runtime::yield_now().await;let observed_role={observe};{causal}{call}");
         if resource {
             format!("if let Some(resource)={}.as_mut(){{{code}}}", names[3])
         } else {
@@ -661,13 +661,13 @@ impl Emitter<'_> {
                 .join(",");
             preview_for(view, entry, &format!("&[{allowed}][..]"))
         } else {
-            let mut offers = String::new();
+            let mut offers = Vec::new();
             let mut retake = String::new();
             for (view, entry) in views {
                 let endpoint = self.endpoint(view, names);
-                offers += &format!(
-                    "candidate=async{{let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);Ok::<_,hibana::EndpointError>(label)}}=>candidate?,"
-                );
+                offers.push(format!(
+                    "async{{let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);Ok::<_,hibana::EndpointError>(label)}}"
+                ));
                 let labels = left_entries
                     .iter()
                     .chain(&right_entries)
@@ -682,8 +682,12 @@ impl Emitter<'_> {
                     "{labels}=>{{let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;assert_eq!(branch.label(),label);drop(branch);}},"
                 );
             }
+            let offers = offers
+                .into_iter()
+                .reduce(|left, right| format!("hibana_runtime::race({left},{right})"))
+                .expect("a choice has an incoming view");
             format!(
-                "let label=tokio::select!{{{offers}}};match label{{{retake}_=>panic!(\"unknown incoming view\")}}"
+                "let label={offers}.await?;match label{{{retake}_=>panic!(\"unknown incoming view\")}}"
             )
         };
         let mut branches = String::new();
@@ -837,7 +841,9 @@ impl Emitter<'_> {
                 };
                 (
                     format!(
-                        "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let left={};let right={};let (_a,_b)=if reverse ^ reverse_poll{{let (b,a)=tokio::try_join!(right,left)?;(a,b)}}else{{tokio::try_join!(left,right)?}};{result}}}",
+                        "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let (_a,_b)=if reverse ^ reverse_poll{{let (b,a)=async{{{};{};}}.await?;(a,b)}}else{{async{{{};{};}}.await?}};{result}}}",
+                        bind("_right", &right),
+                        bind("_left", &left),
                         bind("_left", &left),
                         bind("_right", &right)
                     ),
@@ -967,6 +973,7 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
         code += "let _=&rv3;";
     }
     code += "let observed=&PendingCalls::default();";
+    code += "let result=async{";
     for actor in 0..4 {
         let db = if mobile(source) && actor < 3 {
             format!(
@@ -1005,12 +1012,12 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
             )
         };
         let delay = if actor == owner {
-            "tokio::time::sleep(core::time::Duration::from_millis(1)).await;"
+            "hibana_runtime::yield_now().await;"
         } else {
             ""
         };
         code += &format!(
-            "let run{actor}=async{{{db}{delay}{body}{}Ok::<_,hibana::EndpointError>(())}};",
+            "async{{{db}{delay}{body}{}Ok::<_,hibana::EndpointError>(())}};",
             if mobile(source) && actor < 3 {
                 "drop(db);"
             } else {
@@ -1018,7 +1025,7 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
             }
         );
     }
-    code += r#"let result=tokio::time::timeout(core::time::Duration::from_secs(1),async{tokio::try_join!(run0,run1,run2,run3)}).await.expect("generated localside stalled");
+    code += r#"}.await;
     if let Some(probe)=probe{assert!(result.is_err(),"local probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned local probe was not reached");scoped_rejections.push(actual[0].json());continue;}
     result.unwrap();
     if record_script{write!(scope_observations,",\"completed\":[").unwrap();

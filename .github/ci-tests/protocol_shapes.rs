@@ -1891,6 +1891,11 @@ fn emit_cases(
     )?;
     let trace_directory = output.join("traces");
     fs::create_dir_all(&trace_directory)?;
+    let root_manifest = fs::read_to_string(root.join("Cargo.toml"))?;
+    let runtime_dependency = root_manifest
+        .lines()
+        .find(|line| line.starts_with("hibana-runtime = "))
+        .ok_or("the core must select its scoped runtime explicitly")?;
     fs::write(
         output.join("Cargo.toml"),
         format!(
@@ -1903,7 +1908,7 @@ autolib = false
 [workspace]
 [dependencies]
 hibana = {{ path = {root:?} }}
-tokio = {{ version = "=1.48.0", features = ["macros", "rt", "time", "test-util"] }}
+{runtime_dependency}
 [profile.dev]
 opt-level = 1
 debug = 0
@@ -2094,10 +2099,11 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     }
     fs::write(negative_root.join("inventory.tsv"), negative_inventory)?;
     let mut source = format!(
-        "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n#[path={:?}]\nmod probe_data;\n",
+        "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n#[path={:?}]\nmod probe_data;\n#[path={:?}]\npub mod in_process;\n",
         root.join("examples/support/in_memory.rs"),
         root.join(".github/ci-tests/kani_json.rs"),
-        root.join(".github/ci-tests/protocol_shape_probe_data.rs")
+        root.join(".github/ci-tests/protocol_shape_probe_data.rs"),
+        root.join("examples/support/in_process.rs")
     );
     let registers = (0..max_resolvers.max(1))
         .map(|id| format!("register!({id});\n"))
@@ -2221,7 +2227,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         let start = source.len();
         writeln!(
             source,
-            "#[tokio::test(flavor=\"current_thread\",start_paused=true)]\nasync fn shape_{case}() {{"
+            "#[hibana_runtime::main(in_process::InProcess::default())]\n#[test]\nasync fn shape_{case}() -> Result<(),hibana::EndpointError> {{"
         )?;
         for m in &messages {
             let Protocol::Message {
@@ -2338,7 +2344,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         trace_paths.insert(trace_path);
         writeln!(
             source,
-            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},prefix_visits:{},completed_plan_words:&completed_plan_words}}).await;\n}}",
+            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},prefix_visits:{},completed_plan_words:&completed_plan_words}}).await;\nOk(())\n}}",
             traces.len(),
             global.prefix_visits(),
         )?;

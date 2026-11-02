@@ -298,35 +298,46 @@ impl ObservedCall {
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_pending_preview_counts_as_work_but_not_as_a_completed_message() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+#[test]
+async fn a_pending_preview_counts_as_work_but_not_as_a_completed_message()
+-> core::result::Result<(), hibana::EndpointError> {
     let observed = PendingCalls::default();
-    tokio::try_join!(
-        record_pending(
-            async {
-                tokio::task::yield_now().await;
-                Ok(())
-            },
-            &observed,
-            ObservedCall::Preview(0, 1)
-        ),
-        record_pending(
-            async {
-                tokio::task::yield_now().await;
-                Ok(())
-            },
-            &observed,
-            ObservedCall::Message(0, 0, 2, false)
-        ),
-    )
-    .unwrap();
+    async {
+        async {
+            record_pending(
+                async {
+                    hibana_runtime::yield_now().await;
+                    Ok(())
+                },
+                &observed,
+                ObservedCall::Preview(0, 1),
+            )
+            .await
+        };
+        async {
+            record_pending(
+                async {
+                    hibana_runtime::yield_now().await;
+                    Ok(())
+                },
+                &observed,
+                ObservedCall::Message(0, 0, 2, false),
+            )
+            .await
+        };
+    }
+    .await?;
     assert!(observed.overlapped.get());
     assert!(observed.calls.borrow().is_empty());
     assert_eq!(*observed.completed.borrow(), vec![(0, 0, 2, false)]);
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn actual_parallel_receives_can_both_wait_and_then_complete() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+#[test]
+async fn actual_parallel_receives_can_both_wait_and_then_complete()
+-> core::result::Result<(), hibana::EndpointError> {
     type Left = g::Msg<0, u32>;
     type Right = g::Msg<1, u32>;
     let global = g::par(g::send::<0, 1, Left>(), g::send::<2, 1, Right>());
@@ -352,33 +363,37 @@ async fn actual_parallel_receives_can_both_wait_and_then_complete() {
     let observed = &PendingCalls::default();
     let receiving = async {
         let [mut left, mut right] = receiver.par()?;
-        tokio::try_join!(
+        async {
             record_pending(
                 left.recv::<Left>(),
                 observed,
-                ObservedCall::Message(1, 1, 0, true)
-            ),
+                ObservedCall::Message(1, 1, 0, true),
+            )
+            .await
+        };
+        async {
             record_pending(
                 right.recv::<Right>(),
                 observed,
-                ObservedCall::Message(1, 1, 1, true)
-            ),
-        )
+                ObservedCall::Message(1, 1, 1, true),
+            )
+            .await
+        };
     };
     let sending0 = async {
-        tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+        hibana_runtime::yield_now().await;
         sender0.send::<Left>(&7).await
     };
     let sending2 = async {
-        tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+        hibana_runtime::yield_now().await;
         sender2.send::<Right>(&9).await
     };
-    let ((left, right), (), ()) = tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(receiving, sending0, sending2)
-    })
-    .await
-    .expect("parallel receives stalled")
-    .unwrap();
+    let ((left, right), (), ()) = async {
+        async { receiving.await };
+        async { sending0.await };
+        async { sending2.await };
+    }
+    .await?;
     assert_eq!((left, right), (7, 9));
     assert!(
         observed.overlapped.get(),
@@ -386,6 +401,7 @@ async fn actual_parallel_receives_can_both_wait_and_then_complete() {
     );
     assert!(observed.calls.borrow().is_empty());
     assert_eq!(observed.completed.borrow().len(), 2);
+    Ok(())
 }
 
 struct PendingObservation<'a> {
@@ -407,7 +423,7 @@ where
     F: core::future::Future<Output = Result<T, hibana::EndpointError>>,
 {
     let _observation = PendingObservation { observed, caller };
-    tokio::pin!(future);
+    let mut future = core::pin::pin!(future);
     core::future::poll_fn(|cx| match future.as_mut().poll(cx) {
         core::task::Poll::Pending => {
             let mut calls = observed.calls.borrow_mut();

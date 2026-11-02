@@ -160,11 +160,11 @@ and the continuation against the global protocol. The resource integration
 supplies one initial `EndpointBinding`; receivers do not create another one.
 Sending an endpoint does not send its Rust address.
 
-Dropping an unfinished owned-send future, including when a timeout in `tokio::select!` drops
+Dropping an unfinished owned-send future, including when a deadline drops
 it, abandons the endpoint and faults the local run. It does not return the
 endpoint to the sender. Put a recoverable timeout decision in the protocol.
 
-The [complete Tokio example](examples/endpoint_delegation.rs) also uses `g::par`
+The [complete Endpoint delegation example](examples/endpoint_delegation.rs) also uses `g::par`
 and `db.par()` to send an audit record while a query waits for its reply.
 It supplies separate runtimes and a shared in-memory transport. Run it in this
 checkout with `cargo run --locked --example endpoint_delegation`.

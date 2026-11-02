@@ -2,115 +2,116 @@
 //! receiver value and cannot be replenished by attaching the resource again.
 use super::*;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_aborted_accepted_loan_is_fenced_without_a_receipt_or_reissued_authority() {
+async fn an_aborted_accepted_loan_is_fenced_without_a_receipt_or_reissued_authority()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut owner_slab = [0u8; 32 * 1024];
-            let mut worker_slab = [0u8; 32 * 1024];
-            let mut owner_storage = SessionKitStorage::uninit();
-            let mut worker_storage = SessionKitStorage::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let worker_rv = worker_storage
-                .init()
-                .rendezvous(&mut worker_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9061);
-            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-            let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
-            let db = owner_rv.enter(sid, &db_program).unwrap();
-            let owner_tag = view_tag(&owner);
-            // SAFETY: the exact pinned actor/transport stay alive, between polls.
-            let owner_before = unsafe { actor_snapshot(&owner) };
-            let worker_before = unsafe { actor_snapshot(&worker) };
-            let capture = Capture::start();
-            network.pause_send(0);
-            let owner_pending = {
-                let mut future = pin!(owner.send::<Loan>(db));
-                let mut cx = Context::from_waker(Waker::noop());
-                assert!(future.as_mut().poll(&mut cx).is_pending());
-                // SAFETY: the live future retains the pinned actor, between polls.
-                let observed = unsafe { owner_tag.snapshot::<TestTransport>() };
-                network.resume_send();
-                assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
-                observed
-            };
-            let captured = capture.finish();
-            assert!(matches!(
-                captured.as_slice(),
-                [
-                    OwnedFutureBoundary::Seal { .. },
-                    OwnedFutureBoundary::Poll {
-                        result: Poll::Pending,
-                        ..
-                    },
-                    OwnedFutureBoundary::Poll {
-                        result: Poll::Ready(Ok(())),
-                        ..
-                    },
-                    OwnedFutureBoundary::Drop { .. },
-                ]
-            ));
-            // SAFETY: the sender has returned and its future has dropped normally.
-            let owner_sent = unsafe { actor_snapshot(&owner) };
-            let evidence = network.accepted_frame(1, 0);
-            assert!(!network.queue_is_empty());
-            network.abort_port(sid, 1, evidence.header.lane());
-            assert!(network.queue_is_empty());
-            assert!(worker.recv::<Loan>().await.is_err());
-            // SAFETY: the failed call returned without creating a DB Endpoint.
-            let worker_faulted = unsafe { actor_snapshot(&worker) };
-            assert_eq!(
-                worker_faulted.fault,
-                Some(SessionFaultKind::TransportClosed)
-            );
-            assert_eq!(worker_before.steps, worker_faulted.steps);
-            assert_eq!(
-                worker_before.completion_mutations,
-                worker_faulted.completion_mutations
-            );
-            assert_eq!(worker_before.counter, worker_faulted.counter);
-            assert_eq!(worker_before.live_views, worker_faulted.live_views);
-            assert_eq!(
-                worker_before.view_headers().collect::<std::vec::Vec<_>>(),
-                worker_faulted.view_headers().collect::<std::vec::Vec<_>>()
-            );
-            // Acceptance consumed the sender's actual Rust value. Neither closure
-            // nor a failed attachment can create a replacement for it in this run.
-            assert!(owner_rv.enter(sid, &db_program).is_err());
-            // SAFETY: both original actors remain live and idle here.
-            let owner_after = unsafe { actor_snapshot(&owner) };
-            assert_eq!(owner_sent, owner_after);
-            assert_eq!(owner_after.fault, None);
-            #[cfg(not(miri))]
-            write(
-                [
-                    owner_program.role_image_ref(),
-                    worker_program.role_image_ref(),
-                ],
-                sid,
-                &[
-                    ("ownerBefore", &owner_before),
-                    ("ownerPending", &owner_pending),
-                    ("ownerSent", &owner_sent),
-                    ("workerBefore", &worker_before),
-                    ("workerFaulted", &worker_faulted),
-                ],
-                (&captured, &evidence),
-            );
-            #[cfg(miri)]
-            let _ = (owner_before, owner_pending, captured, evidence);
-        });
+    {
+        let network = TestTransport::new();
+        let mut owner_slab = [0u8; 32 * 1024];
+        let mut worker_slab = [0u8; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut worker_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let worker_rv = worker_storage
+            .init()
+            .rendezvous(&mut worker_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9061);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
+        let db = owner_rv.enter(sid, &db_program).unwrap();
+        let owner_tag = view_tag(&owner);
+        // SAFETY: the exact pinned actor/transport stay alive, between polls.
+        let owner_before = unsafe { actor_snapshot(&owner) };
+        let worker_before = unsafe { actor_snapshot(&worker) };
+        let capture = Capture::start();
+        network.pause_send(0);
+        let owner_pending = {
+            let mut future = pin!(owner.send::<Loan>(db));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            // SAFETY: the live future retains the pinned actor, between polls.
+            let observed = unsafe { owner_tag.snapshot::<TestTransport>() };
+            network.resume_send();
+            assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+            observed
+        };
+        let captured = capture.finish();
+        assert!(matches!(
+            captured.as_slice(),
+            [
+                OwnedFutureBoundary::Seal { .. },
+                OwnedFutureBoundary::Poll {
+                    result: Poll::Pending,
+                    ..
+                },
+                OwnedFutureBoundary::Poll {
+                    result: Poll::Ready(Ok(())),
+                    ..
+                },
+                OwnedFutureBoundary::Drop { .. },
+            ]
+        ));
+        // SAFETY: the sender has returned and its future has dropped normally.
+        let owner_sent = unsafe { actor_snapshot(&owner) };
+        let evidence = network.accepted_frame(1, 0);
+        assert!(!network.queue_is_empty());
+        network.abort_port(sid, 1, evidence.header.lane());
+        assert!(network.queue_is_empty());
+        assert!(worker.recv::<Loan>().await.is_err());
+        // SAFETY: the failed call returned without creating a DB Endpoint.
+        let worker_faulted = unsafe { actor_snapshot(&worker) };
+        assert_eq!(
+            worker_faulted.fault,
+            Some(SessionFaultKind::TransportClosed)
+        );
+        assert_eq!(worker_before.steps, worker_faulted.steps);
+        assert_eq!(
+            worker_before.completion_mutations,
+            worker_faulted.completion_mutations
+        );
+        assert_eq!(worker_before.counter, worker_faulted.counter);
+        assert_eq!(worker_before.live_views, worker_faulted.live_views);
+        assert_eq!(
+            worker_before.view_headers().collect::<std::vec::Vec<_>>(),
+            worker_faulted.view_headers().collect::<std::vec::Vec<_>>()
+        );
+        // Acceptance consumed the sender's actual Rust value. Neither closure
+        // nor a failed attachment can create a replacement for it in this run.
+        assert!(owner_rv.enter(sid, &db_program).is_err());
+        // SAFETY: both original actors remain live and idle here.
+        let owner_after = unsafe { actor_snapshot(&owner) };
+        assert_eq!(owner_sent, owner_after);
+        assert_eq!(owner_after.fault, None);
+        #[cfg(not(miri))]
+        write(
+            [
+                owner_program.role_image_ref(),
+                worker_program.role_image_ref(),
+            ],
+            sid,
+            &[
+                ("ownerBefore", &owner_before),
+                ("ownerPending", &owner_pending),
+                ("ownerSent", &owner_sent),
+                ("workerBefore", &worker_before),
+                ("workerFaulted", &worker_faulted),
+            ],
+            (&captured, &evidence),
+        );
+        #[cfg(miri)]
+        let _ = (owner_before, owner_pending, captured, evidence);
+    };
+
+    Ok(())
 }
 
 #[cfg(not(miri))]

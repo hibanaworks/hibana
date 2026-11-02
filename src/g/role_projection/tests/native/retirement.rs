@@ -2,8 +2,10 @@
 use super::*;
 use crate::transport::TransportError;
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_completed_resource_can_retire_without_stranding_a_fresh_peer_visit() {
+#[hibana_runtime::main]
+#[test]
+async fn a_completed_resource_can_retire_without_stranding_a_fresh_peer_visit()
+-> std::io::Result<()> {
     type Steps =
         g::Seq<g::Send<0, 1, Loan>, g::Par<g::Roll<g::Send<10, 2, Read>>, g::Send<1, 3, Value>>>;
     const LANES: usize = g::ProgramProjection::<Steps, 8>::SOURCE_EFF_LIST.len();
@@ -47,8 +49,8 @@ async fn a_completed_resource_can_retire_without_stranding_a_fresh_peer_visit() 
     let mut worker = right.enter(sid, &worker_program).unwrap();
     let mut service = left.enter(sid, &service_program).unwrap();
     let mut observer = right.enter(sid, &observer_program).unwrap();
-    let ((), value, next_visit, ()) = tokio::time::timeout(Duration::from_secs(8), async {
-        tokio::join!(
+    let ((), value, next_visit, ()) = hibana_runtime::race(
+        async {
             async {
                 let mut db = worker.recv::<Loan>().await.unwrap();
                 db.send::<Read>(&7).await.unwrap();
@@ -56,15 +58,21 @@ async fn a_completed_resource_can_retire_without_stranding_a_fresh_peer_visit() 
                 // A successful independent send establishes that retiring the
                 // completed DB visit did not poison the worker's live actor.
                 worker.send::<Value>(&9).await.unwrap();
-            },
-            observer.recv::<Value>(),
+            };
+            async { Ok((observer.recv::<Value>()).await) };
             async {
-                assert_eq!(service.recv::<Read>().await.unwrap(), 7);
-                service.recv::<Read>().await
-            },
-            async { owner.send::<Loan>(db).await.unwrap() },
-        )
-    })
+                Ok(async {
+                    assert_eq!(service.recv::<Read>().await.unwrap(), 7);
+                    service.recv::<Read>().await
+                }
+                .await)
+            };
+            async {
+                owner.send::<Loan>(db).await.unwrap();
+            };
+        },
+        hibana_runtime::host::deadline(Duration::from_secs(8)),
+    )
     .await
     .expect("the native carrier deadline must end the fresh visit");
     assert_eq!(value.unwrap(), 9);
@@ -85,4 +93,6 @@ async fn a_completed_resource_can_retire_without_stranding_a_fresh_peer_visit() 
         left.enter(SessionId::new(9063), &db_program).is_err(),
         "completed retirement must not restore initial issuance"
     );
+
+    Ok(())
 }

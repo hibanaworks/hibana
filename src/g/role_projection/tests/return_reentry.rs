@@ -10,8 +10,10 @@ use core::{
     task::Poll,
 };
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_rolled_head_waits_for_another_view_to_receive_its_resource_back() {
+async fn a_rolled_head_waits_for_another_view_to_receive_its_resource_back()
+-> core::result::Result<(), hibana::EndpointError> {
     type Tick = g::Msg<39, ()>;
     type Steps = g::Seq<
         g::Roll<g::Seq<g::Send<0, 3, Tick>, g::Send<10, 4, Read>>>,
@@ -30,75 +32,85 @@ fn a_rolled_head_waits_for_another_view_to_receive_its_resource_back() {
     let reader_program = crate::runtime::program::project::<4>(&g::Program::<Global>::new());
     let independent_program = crate::runtime::program::project::<12>(&g::Program::<Global>::new());
     let peer_program = crate::runtime::program::project::<8>(&g::Program::<Global>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut slab = [0u8; 64 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9033);
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let mut db = rv.enter(sid, &db_program).unwrap();
-            let mut auth = rv.enter(sid, &auth_program).unwrap();
-            let mut worker = rv.enter(sid, &worker_program).unwrap();
-            let mut ticker = rv.enter(sid, &ticker_program).unwrap();
-            let mut reader = rv.enter(sid, &reader_program).unwrap();
-            let mut independent = rv.enter(sid, &independent_program).unwrap();
-            let mut peer = rv.enter(sid, &peer_program).unwrap();
-            owner.send::<Tick>(&()).await.unwrap();
-            db.send::<Read>(&7).await.unwrap();
-            ticker.recv::<Tick>().await.unwrap();
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
-            auth.send::<Loan>(db).await.unwrap();
-            let db = worker.recv::<Loan>().await.unwrap();
-            assert!(network.queue_is_empty());
+    {
+        let network = TestTransport::new();
+        let mut slab = [0u8; 64 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9033);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let mut auth = rv.enter(sid, &auth_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+        let mut ticker = rv.enter(sid, &ticker_program).unwrap();
+        let mut reader = rv.enter(sid, &reader_program).unwrap();
+        let mut independent = rv.enter(sid, &independent_program).unwrap();
+        let mut peer = rv.enter(sid, &peer_program).unwrap();
+        owner.send::<Tick>(&()).await.unwrap();
+        db.send::<Read>(&7).await.unwrap();
+        ticker.recv::<Tick>().await.unwrap();
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+        auth.send::<Loan>(db).await.unwrap();
+        let db = worker.recv::<Loan>().await.unwrap();
+        assert!(network.queue_is_empty());
 
-            let mut restart = pin!(owner.send::<Tick>(&()));
-            poll_fn(|cx| {
-                let outcome = restart.as_mut().poll(cx);
-                assert!(
-                    outcome.is_pending(),
-                    "AUTH can still receive DB back: {outcome:?}"
-                );
-                Poll::Ready(())
-            })
-            .await;
-            assert!(network.queue_is_empty());
-            for value in [2, 3] {
-                independent.send::<Independent>(&value).await.unwrap();
-                assert_eq!(peer.recv::<Independent>().await.unwrap(), value);
-            }
-            worker.send::<Loan>(db).await.unwrap();
-            let (_, db) = tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                tokio::join!(
-                    async {
+        let mut restart = pin!(owner.send::<Tick>(&()));
+        poll_fn(|cx| {
+            let outcome = restart.as_mut().poll(cx);
+            assert!(
+                outcome.is_pending(),
+                "AUTH can still receive DB back: {outcome:?}"
+            );
+            Poll::Ready(())
+        })
+        .await;
+        assert!(network.queue_is_empty());
+        for value in [2, 3] {
+            independent.send::<Independent>(&value).await.unwrap();
+            assert_eq!(peer.recv::<Independent>().await.unwrap(), value);
+        }
+        worker.send::<Loan>(db).await.unwrap();
+        let (_, db) = (async {
+            async {
+                async {
+                    let _: () = (async {
                         restart.await.unwrap();
                         ticker.recv::<Tick>().await.unwrap();
                         assert_eq!(reader.recv::<Read>().await.unwrap(), 9);
-                    },
-                    async {
-                        let mut db = auth.recv::<Loan>().await.unwrap();
-                        db.send::<Read>(&9).await.unwrap();
-                        db
-                    },
-                )
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
+                            let mut db = auth.recv::<Loan>().await.unwrap();
+                            db.send::<Read>(&9).await.unwrap();
+                            db
+                        })
+                        .await,
+                    )
+                };
+            }
             .await
-            .expect("the independent return wakes the rolled head");
-            assert!(network.queue_is_empty());
-            drop(db);
-        });
+            .expect("all child results are data")
+        })
+        .await;
+        assert!(network.queue_is_empty());
+        drop(db);
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_rolled_head_cannot_wait_for_a_receipt_on_its_own_borrowed_view() {
+async fn a_rolled_head_cannot_wait_for_a_receipt_on_its_own_borrowed_view()
+-> core::result::Result<(), hibana::EndpointError> {
     type Tick = g::Msg<39, ()>;
     type Steps = g::Seq<
         g::Roll<g::Seq<g::Send<0, 3, Tick>, g::Send<10, 4, Read>>>,
@@ -111,82 +123,84 @@ fn a_rolled_head_cannot_wait_for_a_receipt_on_its_own_borrowed_view() {
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let ticker_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut slab = [0u8; 64 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9034);
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let mut db = rv.enter(sid, &db_program).unwrap();
-            let mut auth = rv.enter(sid, &auth_program).unwrap();
-            let mut worker = rv.enter(sid, &worker_program).unwrap();
-            let mut ticker = rv.enter(sid, &ticker_program).unwrap();
-            let mut reader = rv.enter(sid, &reader_program).unwrap();
-            owner.send::<Tick>(&()).await.unwrap();
-            db.send::<Read>(&7).await.unwrap();
-            ticker.recv::<Tick>().await.unwrap();
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
-            auth.send::<Loan>(db).await.unwrap();
-            let db = worker.recv::<Loan>().await.unwrap();
-            worker.send::<Loan>(db).await.unwrap();
-            let result =
-                tokio::time::timeout(core::time::Duration::from_secs(10), owner.send::<Tick>(&()))
-                    .await;
-            assert!(
-                matches!(result, Ok(Err(_))),
-                "the same view must receive first: {result:?}"
-            );
-        });
+    {
+        let network = TestTransport::new();
+        let mut slab = [0u8; 64 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9034);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let mut auth = rv.enter(sid, &auth_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+        let mut ticker = rv.enter(sid, &ticker_program).unwrap();
+        let mut reader = rv.enter(sid, &reader_program).unwrap();
+        owner.send::<Tick>(&()).await.unwrap();
+        db.send::<Read>(&7).await.unwrap();
+        ticker.recv::<Tick>().await.unwrap();
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+        auth.send::<Loan>(db).await.unwrap();
+        let db = worker.recv::<Loan>().await.unwrap();
+        worker.send::<Loan>(db).await.unwrap();
+        let result = crate::test_support::in_process::timeout(
+            core::time::Duration::from_secs(10),
+            owner.send::<Tick>(&()),
+        )
+        .await;
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "the same view must receive first: {result:?}"
+        );
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_operation_cannot_wait_for_an_earlier_transfer_of_its_own_endpoint() {
+async fn an_operation_cannot_wait_for_an_earlier_transfer_of_its_own_endpoint()
+-> core::result::Result<(), hibana::EndpointError> {
     type Body = g::Seq<g::Send<0, 11, Loan>, g::Seq<g::Send<10, 3, Read>, g::Send<11, 0, Loan>>>;
     type Steps = g::Seq<g::Roll<Body>, g::Send<0, 2, OtherLoan>>;
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut slab = [0u8; 64 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9035);
-            let owner = rv.enter(sid, &owner_program).unwrap();
-            let mut db = rv.enter(sid, &db_program).unwrap();
-            let auth = rv.enter(sid, &auth_program).unwrap();
-            let result =
-                tokio::time::timeout(core::time::Duration::from_secs(10), db.send::<Read>(&7))
-                    .await;
-            assert!(
-                matches!(result, Ok(Err(_))),
-                "Read borrows the value required by the earlier Loan: {result:?}"
-            );
-            assert!(network.queue_is_empty());
-            drop((owner, auth));
-        });
+    {
+        let network = TestTransport::new();
+        let mut slab = [0u8; 64 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9035);
+        let owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let auth = rv.enter(sid, &auth_program).unwrap();
+        let result = crate::test_support::in_process::timeout(
+            core::time::Duration::from_secs(10),
+            db.send::<Read>(&7),
+        )
+        .await;
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "Read borrows the value required by the earlier Loan: {result:?}"
+        );
+        assert!(network.queue_is_empty());
+        drop((owner, auth));
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_remote_tick_stays_queued_until_another_view_receives_the_entry_resource() {
+async fn a_remote_tick_stays_queued_until_another_view_receives_the_entry_resource()
+-> core::result::Result<(), hibana::EndpointError> {
     type Tick = g::Msg<39, ()>;
     type Steps = g::Seq<
         g::Roll<g::Seq<g::Send<0, 1, Tick>, g::Send<10, 3, Read>>>,
@@ -199,71 +213,81 @@ fn a_remote_tick_stays_queued_until_another_view_receives_the_entry_resource() {
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut slab = [0u8; 64 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9036);
-            let mut controller = rv.enter(sid, &controller_program).unwrap();
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let mut db = rv.enter(sid, &db_program).unwrap();
-            let mut auth = rv.enter(sid, &auth_program).unwrap();
-            let mut worker = rv.enter(sid, &worker_program).unwrap();
-            let mut reader = rv.enter(sid, &reader_program).unwrap();
-            controller.send::<Tick>(&()).await.unwrap();
-            owner.recv::<Tick>().await.unwrap();
-            db.send::<Read>(&7).await.unwrap();
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
-            auth.send::<Loan>(db).await.unwrap();
-            let db = worker.recv::<Loan>().await.unwrap();
-            assert!(network.queue_is_empty());
-            controller.send::<Tick>(&()).await.unwrap();
-            let mut restart = pin!(owner.recv::<Tick>());
-            poll_fn(|cx| {
-                let outcome = restart.as_mut().poll(cx);
-                assert!(
-                    outcome.is_pending(),
-                    "the resource can return through AUTH: {outcome:?}"
-                );
-                Poll::Ready(())
-            })
-            .await;
+    {
+        let network = TestTransport::new();
+        let mut slab = [0u8; 64 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9036);
+        let mut controller = rv.enter(sid, &controller_program).unwrap();
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let mut auth = rv.enter(sid, &auth_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+        let mut reader = rv.enter(sid, &reader_program).unwrap();
+        controller.send::<Tick>(&()).await.unwrap();
+        owner.recv::<Tick>().await.unwrap();
+        db.send::<Read>(&7).await.unwrap();
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+        auth.send::<Loan>(db).await.unwrap();
+        let db = worker.recv::<Loan>().await.unwrap();
+        assert!(network.queue_is_empty());
+        controller.send::<Tick>(&()).await.unwrap();
+        let mut restart = pin!(owner.recv::<Tick>());
+        poll_fn(|cx| {
+            let outcome = restart.as_mut().poll(cx);
             assert!(
-                !network.queue_is_empty(),
-                "Tick must stay uncommitted in the transport"
+                outcome.is_pending(),
+                "the resource can return through AUTH: {outcome:?}"
             );
-            worker.send::<Loan>(db).await.unwrap();
-            let (_, db) = tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                tokio::join!(
-                    async {
+            Poll::Ready(())
+        })
+        .await;
+        assert!(
+            !network.queue_is_empty(),
+            "Tick must stay uncommitted in the transport"
+        );
+        worker.send::<Loan>(db).await.unwrap();
+        let (_, db) = (async {
+            async {
+                async {
+                    let _: () = (async {
                         restart.await.unwrap();
                         assert_eq!(reader.recv::<Read>().await.unwrap(), 9);
-                    },
-                    async {
-                        let mut db = auth.recv::<Loan>().await.unwrap();
-                        db.send::<Read>(&9).await.unwrap();
-                        db
-                    },
-                )
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
+                            let mut db = auth.recv::<Loan>().await.unwrap();
+                            db.send::<Read>(&9).await.unwrap();
+                            db
+                        })
+                        .await,
+                    )
+                };
+            }
             .await
-            .expect("return and the already accepted Tick can both complete");
-            assert!(network.queue_is_empty());
-            drop(db);
-        });
+            .expect("all child results are data")
+        })
+        .await;
+        assert!(network.queue_is_empty());
+        drop(db);
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_offered_tick_waits_for_another_view_to_receive_the_entry_resource() {
+async fn an_offered_tick_waits_for_another_view_to_receive_the_entry_resource()
+-> core::result::Result<(), hibana::EndpointError> {
     type Tick = g::Msg<39, ()>;
     type Tock = g::Msg<40, ()>;
     type AlternateRead = g::Msg<41, u32>;
@@ -283,74 +307,82 @@ fn an_offered_tick_waits_for_another_view_to_receive_the_entry_resource() {
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut slab = [0u8; 96 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9037);
-            let mut controller = rv.enter(sid, &controller_program).unwrap();
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let mut db = rv.enter(sid, &db_program).unwrap();
-            let mut auth = rv.enter(sid, &auth_program).unwrap();
-            let mut worker = rv.enter(sid, &worker_program).unwrap();
-            let mut reader = rv.enter(sid, &reader_program).unwrap();
-            controller.send::<Tick>(&()).await.unwrap();
-            owner.offer().await.unwrap().recv::<Tick>().await.unwrap();
-            db.send::<Read>(&7).await.unwrap();
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
-            auth.send::<Loan>(db).await.unwrap();
-            let db = worker.recv::<Loan>().await.unwrap();
-            controller.send::<Tick>(&()).await.unwrap();
-            {
-                let preview = owner.offer().await.unwrap();
-                assert_eq!(preview.label(), 39);
-                let mut paused = pin!(preview.recv::<Tick>());
-                poll_fn(|cx| {
-                    assert!(paused.as_mut().poll(cx).is_pending());
-                    Poll::Ready(())
-                })
-                .await;
-                // Dropping the uncommitted wait must preserve the preview's
-                // frame and leave the same branch available to offer again.
-            }
-            let branch = owner.offer().await.unwrap();
-            assert_eq!(branch.label(), 39);
-            let mut restart = pin!(branch.recv::<Tick>());
+    {
+        let network = TestTransport::new();
+        let mut slab = [0u8; 96 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9037);
+        let mut controller = rv.enter(sid, &controller_program).unwrap();
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let mut auth = rv.enter(sid, &auth_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+        let mut reader = rv.enter(sid, &reader_program).unwrap();
+        controller.send::<Tick>(&()).await.unwrap();
+        owner.offer().await.unwrap().recv::<Tick>().await.unwrap();
+        db.send::<Read>(&7).await.unwrap();
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+        auth.send::<Loan>(db).await.unwrap();
+        let db = worker.recv::<Loan>().await.unwrap();
+        controller.send::<Tick>(&()).await.unwrap();
+        {
+            let preview = owner.offer().await.unwrap();
+            assert_eq!(preview.label(), 39);
+            let mut paused = pin!(preview.recv::<Tick>());
             poll_fn(|cx| {
-                let outcome = restart.as_mut().poll(cx);
-                assert!(
-                    outcome.is_pending(),
-                    "the offered branch must wait for AUTH's receipt: {outcome:?}"
-                );
+                assert!(paused.as_mut().poll(cx).is_pending());
                 Poll::Ready(())
             })
             .await;
-            worker.send::<Loan>(db).await.unwrap();
-            let (_, db) = tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                tokio::join!(
-                    async {
+            // Dropping the uncommitted wait must preserve the preview's
+            // frame and leave the same branch available to offer again.
+        }
+        let branch = owner.offer().await.unwrap();
+        assert_eq!(branch.label(), 39);
+        let mut restart = pin!(branch.recv::<Tick>());
+        poll_fn(|cx| {
+            let outcome = restart.as_mut().poll(cx);
+            assert!(
+                outcome.is_pending(),
+                "the offered branch must wait for AUTH's receipt: {outcome:?}"
+            );
+            Poll::Ready(())
+        })
+        .await;
+        worker.send::<Loan>(db).await.unwrap();
+        let (_, db) = (async {
+            async {
+                async {
+                    let _: () = (async {
                         restart.await.unwrap();
                         assert_eq!(reader.recv::<Read>().await.unwrap(), 9);
-                    },
-                    async {
-                        let mut db = auth.recv::<Loan>().await.unwrap();
-                        db.send::<Read>(&9).await.unwrap();
-                        db
-                    },
-                )
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
+                            let mut db = auth.recv::<Loan>().await.unwrap();
+                            db.send::<Read>(&9).await.unwrap();
+                            db
+                        })
+                        .await,
+                    )
+                };
+            }
             .await
-            .expect("a branch preview must not prevent another view's return");
-            assert!(network.queue_is_empty());
-            drop(db);
-        });
+            .expect("all child results are data")
+        })
+        .await;
+        assert!(network.queue_is_empty());
+        drop(db);
+    };
+
+    Ok(())
 }

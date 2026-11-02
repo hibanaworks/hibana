@@ -90,7 +90,7 @@ owner. A parallel transfer must not overlap a use of the same resource.
 The output records the population, range and per-case identities. Completing
 one range does not establish coverage of the whole depth. Finite execution
 tests use two visits per repetition. Every parallel node polls both children
-with Tokio, varying which child is polled first.
+with hibana-runtime, varying which child is declared first.
 
 The constructor-budget checks also include 32 protocols with two parallel
 repeated choices followed by a choice on another direction. They vary resolver
@@ -344,16 +344,16 @@ Each `roll` runs twice, including nested repetition. Choices and parallel-child
 order vary independently between visits. Receivers use `offer`, drop and retake
 the preview before continuing. Prefix probes also consume previews through
 `RouteBranch::recv`.
-Parallel groups run through `Endpoint::par` with concurrently polled Tokio
+Parallel groups run through `Endpoint::par` with concurrently polled scoped
 futures. A separate test delays two senders and checks that two real receives
 on the same endpoint can remain pending together and then complete. Operations
 that finish immediately need not produce a pending I/O observation. Endpoints
 move between separate runtimes through the public API.
 Every case generates direct local Rust code. Every
-nested parallel composition uses public `par()` borrows and Tokio futures.
+nested parallel composition uses public `par()` borrows and scoped futures.
 Each source execution retains its branch choices, parallel-child order and
 two visits of every `roll`. The generated localsides keep the corresponding
-borrows until each visit completes. Both poll orders use concurrent Tokio
+borrows until each visit completes. Both poll orders use concurrent scoped
 futures, including different choices in later visits.
 When a choice transfers an endpoint in only one arm, the continuation uses the
 endpoint value actually received. No separate owner flag selects its operations.
@@ -680,7 +680,7 @@ The source-occurrence model permits the independent receive; the regression
 tests and replay check its correspondence to Rust's lane/frame selection.
 Initial admission and the finite-prefix
 probes are compared with Lean. Complete execution records are also compared
-with Lean, using both parallel-child orders and concurrent Tokio futures.
+with Lean, using both parallel-child orders and concurrent scoped futures.
 These records do not enumerate every interleaving of nested parallel operations
 or split transport acceptance from send completion.
 The binary family allows multiple compound parallel pairs in one tree. Its
@@ -711,7 +711,7 @@ The nested-roll check uses `(Prefix; (Exchange+ | Tick)+)+`, where `|` is
 parallel composition. It enumerates prefixes of at most seven complete exchanges
 or ticks using accepted source unfoldings with at most twenty message occurrences.
 For every permitted next send, it retains every distinct parallel-group boundary
-in those unfoldings and drives public `par`/`send`/`recv` operations with Tokio.
+in those unfoldings and drives public `par`/`send`/`recv` operations with hibana-runtime.
 Forbidden sends are also tried; the parent cannot be used while its children are
 borrowed, as checked separately by compile-fail tests. A flat-call check rejects
 any runtime admission outside the source language. It does not require a call at

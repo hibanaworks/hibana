@@ -32,12 +32,11 @@ pub(super) type Global = g::Seq<
     >,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn service_grants_a_resource_then_observes_choices_in_parallel_rolled_loans() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+async fn service_grants_a_resource_then_observes_choices_in_parallel_rolled_loans()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
         let () = g::ProgramProjection::<Global, 32>::VALIDATION;
         let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
         let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
@@ -91,64 +90,92 @@ fn service_grants_a_resource_then_observes_choices_in_parallel_rolled_loans() {
         let db = service_rv.enter(sid, &db_program).unwrap();
         let mut left = side_rv.enter(sid, &left_program).unwrap();
         let mut right = side_rv.enter(sid, &right_program).unwrap();
-        tokio::join!(
+        async {
             async {
-                service.send::<Loan>(db).await.unwrap();
-                for expected in [44, 40] {
-                    let branch = service.offer().await.unwrap_or_else(|error| {
-                        panic!("service offer before value={expected}: {error:?}")
-                    });
-                    let updated = match branch.label() {
-                        3 => value.get() + branch.recv::<Read>().await.unwrap(),
-                        6 => value.get() - branch.recv::<Subtract>().await.unwrap(),
-                        label => panic!("unexpected choice {label}"),
-                    };
-                    assert_eq!(updated, expected);
-                    value.set(updated);
-                    service.send::<Value>(&updated).await.unwrap();
-                }
-                let updated = value.get() + service.recv::<AfterRead>().await.unwrap();
-                value.set(updated);
-                service.send::<AfterValue>(&updated).await.unwrap();
-                drop(service.recv::<Finished>().await.unwrap());
-            },
-            async {
-                let mut db = owner.recv::<Loan>().await.unwrap();
-                for _ in 0..2 {
-                    owner.send::<Loan>(db).await.unwrap();
-                    db = owner.recv::<Loan>().await.unwrap();
-                }
-                db.send::<AfterRead>(&5).await.unwrap();
-                assert_eq!(db.recv::<AfterValue>().await.unwrap(), 45);
-                owner.send::<Finished>(db).await.unwrap();
-            },
-            async {
-                for (number, expected) in [(3, 44), (4, 40)] {
-                    delta.set(number);
-                    let mut db = worker.recv::<Loan>().await.unwrap();
-                    let branch = db.offer().await.unwrap();
-                    match branch.label() {
-                        3 => branch.send::<Read>(&number).await.unwrap(),
-                        6 => branch.send::<Subtract>(&number).await.unwrap(),
-                        label => panic!("unexpected resolver choice {label}"),
+                let _: () = (async {
+                    service.send::<Loan>(db).await.unwrap();
+                    for expected in [44, 40] {
+                        let branch = service.offer().await.unwrap_or_else(|error| {
+                            panic!("service offer before value={expected}: {error:?}")
+                        });
+                        let updated = match branch.label() {
+                            3 => value.get() + branch.recv::<Read>().await.unwrap(),
+                            6 => value.get() - branch.recv::<Subtract>().await.unwrap(),
+                            label => panic!("unexpected choice {label}"),
+                        };
+                        assert_eq!(updated, expected);
+                        value.set(updated);
+                        service.send::<Value>(&updated).await.unwrap();
                     }
-                    assert_eq!(db.recv::<Value>().await.unwrap(), expected);
-                    worker.send::<Loan>(db).await.unwrap();
-                }
-            },
+                    let updated = value.get() + service.recv::<AfterRead>().await.unwrap();
+                    value.set(updated);
+                    service.send::<AfterValue>(&updated).await.unwrap();
+                    drop(service.recv::<Finished>().await.unwrap());
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for number in [10, 20] {
-                    left.send::<Read>(&number).await.unwrap();
-                    assert_eq!(left.recv::<Value>().await.unwrap(), number + 1);
-                }
-            },
+                let _: () = (async {
+                    let mut db = owner.recv::<Loan>().await.unwrap();
+                    for _ in 0..2 {
+                        owner.send::<Loan>(db).await.unwrap();
+                        db = owner.recv::<Loan>().await.unwrap();
+                    }
+                    db.send::<AfterRead>(&5).await.unwrap();
+                    assert_eq!(db.recv::<AfterValue>().await.unwrap(), 45);
+                    owner.send::<Finished>(db).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for number in [10, 20] {
-                    assert_eq!(right.recv::<Read>().await.unwrap(), number);
-                    right.send::<Value>(&(number + 1)).await.unwrap();
-                }
-            }
-        );
+                let _: () = (async {
+                    for (number, expected) in [(3, 44), (4, 40)] {
+                        delta.set(number);
+                        let mut db = worker.recv::<Loan>().await.unwrap();
+                        let branch = db.offer().await.unwrap();
+                        match branch.label() {
+                            3 => branch.send::<Read>(&number).await.unwrap(),
+                            6 => branch.send::<Subtract>(&number).await.unwrap(),
+                            label => panic!("unexpected resolver choice {label}"),
+                        }
+                        assert_eq!(db.recv::<Value>().await.unwrap(), expected);
+                        worker.send::<Loan>(db).await.unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
+                    for number in [10, 20] {
+                        left.send::<Read>(&number).await.unwrap();
+                        assert_eq!(left.recv::<Value>().await.unwrap(), number + 1);
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
+                    for number in [10, 20] {
+                        assert_eq!(right.recv::<Read>().await.unwrap(), number);
+                        right.send::<Value>(&(number + 1)).await.unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
         assert_eq!(value.get(), 45);
-    });
+    };
+
+    Ok(())
 }

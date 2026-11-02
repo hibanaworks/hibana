@@ -18,189 +18,195 @@ mod ports;
 type Steps =
     g::Seq<g::Roll<g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>, g::Send<10, 2, Read>>;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_accepted_loan_drains_before_eof_and_its_returned_value_remains_usable() {
+async fn an_accepted_loan_drains_before_eof_and_its_returned_value_remains_usable()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut owner_slab = [0u8; 32 * 1024];
-            let mut worker_slab = [0u8; 32 * 1024];
-            let mut service_slab = [0u8; 32 * 1024];
-            let mut owner_storage = SessionKitStorage::uninit();
-            let mut worker_storage = SessionKitStorage::uninit();
-            let mut service_storage = SessionKitStorage::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let worker_rv = worker_storage
-                .init()
-                .rendezvous(&mut worker_slab, network.clone())
-                .unwrap();
-            let service_rv = service_storage
-                .init()
-                .rendezvous(&mut service_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9060);
-            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-            let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
-            let mut service = service_rv.enter(sid, &service_program).unwrap();
-            let db = owner_rv.enter(sid, &db_program).unwrap();
-            let owner_tag = view_tag(&owner);
-            let worker_tag = view_tag(&worker);
-            // SAFETY: each read is between polls, on the original pinned actor,
-            // whose exact transport and slab remain alive throughout this test.
-            let owner_before = unsafe { actor_snapshot(&owner) };
-            let worker_before = unsafe { actor_snapshot(&worker) };
-            let mut cx = Context::from_waker(Waker::noop());
-            let capture = Capture::start();
+    {
+        let network = TestTransport::new();
+        let mut owner_slab = [0u8; 32 * 1024];
+        let mut worker_slab = [0u8; 32 * 1024];
+        let mut service_slab = [0u8; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut worker_storage = SessionKitStorage::uninit();
+        let mut service_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let worker_rv = worker_storage
+            .init()
+            .rendezvous(&mut worker_slab, network.clone())
+            .unwrap();
+        let service_rv = service_storage
+            .init()
+            .rendezvous(&mut service_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9060);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
+        let mut service = service_rv.enter(sid, &service_program).unwrap();
+        let db = owner_rv.enter(sid, &db_program).unwrap();
+        let owner_tag = view_tag(&owner);
+        let worker_tag = view_tag(&worker);
+        // SAFETY: each read is between polls, on the original pinned actor,
+        // whose exact transport and slab remain alive throughout this test.
+        let owner_before = unsafe { actor_snapshot(&owner) };
+        let worker_before = unsafe { actor_snapshot(&worker) };
+        let mut cx = Context::from_waker(Waker::noop());
+        let capture = Capture::start();
 
-            network.pause_send(0);
-            let owner_pending = {
-                let mut loan = pin!(owner.send::<Loan>(db));
-                assert!(loan.as_mut().poll(&mut cx).is_pending());
-                // SAFETY: the future retains the actor and no poll is in progress.
-                let owner_pending = unsafe { owner_tag.snapshot::<TestTransport>() };
-                network.resume_send();
-                assert!(matches!(loan.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
-                owner_pending
-            };
-            // SAFETY: same pinned allocation, between polls.
-            let owner_sent = unsafe { owner_tag.snapshot::<TestTransport>() };
-            let loan_wire = network.queued_frame(1);
-            let loan_evidence = network.accepted_frame(1, 0);
-            assert!(!network.queue_is_empty());
-            network.close_port(sid, 1, loan_wire.0.lane());
-            // Accepted bytes survive EOF; receiving them transfers the actual value.
-            let db = worker.recv::<Loan>().await.unwrap();
-            assert!(network.queue_is_empty());
-            // SAFETY: no operation is active on this separate actor.
-            let worker_received = unsafe { actor_snapshot(&worker) };
+        network.pause_send(0);
+        let owner_pending = {
+            let mut loan = pin!(owner.send::<Loan>(db));
+            assert!(loan.as_mut().poll(&mut cx).is_pending());
+            // SAFETY: the future retains the actor and no poll is in progress.
+            let owner_pending = unsafe { owner_tag.snapshot::<TestTransport>() };
+            network.resume_send();
+            assert!(matches!(loan.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+            owner_pending
+        };
+        // SAFETY: same pinned allocation, between polls.
+        let owner_sent = unsafe { owner_tag.snapshot::<TestTransport>() };
+        let loan_wire = network.queued_frame(1);
+        let loan_evidence = network.accepted_frame(1, 0);
+        assert!(!network.queue_is_empty());
+        network.close_port(sid, 1, loan_wire.0.lane());
+        // Accepted bytes survive EOF; receiving them transfers the actual value.
+        let db = worker.recv::<Loan>().await.unwrap();
+        assert!(network.queue_is_empty());
+        // SAFETY: no operation is active on this separate actor.
+        let worker_received = unsafe { actor_snapshot(&worker) };
 
-            network.pause_send(1);
-            let worker_pending = {
-                let mut give_back = pin!(worker.send::<Loan>(db));
-                assert!(give_back.as_mut().poll(&mut cx).is_pending());
-                // SAFETY: the future retains the actor and no poll is in progress.
-                let worker_pending = unsafe { worker_tag.snapshot::<TestTransport>() };
-                network.resume_send();
-                assert!(matches!(
-                    give_back.as_mut().poll(&mut cx),
-                    Poll::Ready(Ok(()))
-                ));
-                worker_pending
-            };
-            let return_wire = network.queued_frame(0);
-            let return_evidence = network.accepted_frame(0, 0);
-            // SAFETY: same pinned allocation, between polls.
-            let worker_sent = unsafe { worker_tag.snapshot::<TestTransport>() };
-            let mut db = owner.recv::<Loan>().await.unwrap();
-            // SAFETY: all three reads occur between operations.
-            let owner_returned = unsafe { owner_tag.snapshot::<TestTransport>() };
-            let worker_before_eof = unsafe { worker_tag.snapshot::<TestTransport>() };
-            assert_eq!(worker_before_eof.fault, None);
-            assert!(worker.recv::<Loan>().await.is_err());
-            // SAFETY: the failed call has returned and the allocation remains live.
-            let worker_after_eof = unsafe { worker_tag.snapshot::<TestTransport>() };
-            let captured = capture.finish();
+        network.pause_send(1);
+        let worker_pending = {
+            let mut give_back = pin!(worker.send::<Loan>(db));
+            assert!(give_back.as_mut().poll(&mut cx).is_pending());
+            // SAFETY: the future retains the actor and no poll is in progress.
+            let worker_pending = unsafe { worker_tag.snapshot::<TestTransport>() };
+            network.resume_send();
             assert!(matches!(
-                captured.as_slice(),
-                [
-                    OwnedFutureBoundary::Seal { .. },
-                    OwnedFutureBoundary::Poll {
-                        result: Poll::Pending,
-                        ..
-                    },
-                    OwnedFutureBoundary::Poll {
-                        result: Poll::Ready(Ok(())),
-                        ..
-                    },
-                    OwnedFutureBoundary::Drop { .. },
-                    OwnedFutureBoundary::Seal { .. },
-                    OwnedFutureBoundary::Poll {
-                        result: Poll::Pending,
-                        ..
-                    },
-                    OwnedFutureBoundary::Poll {
-                        result: Poll::Ready(Ok(())),
-                        ..
-                    },
-                    OwnedFutureBoundary::Drop { .. },
-                ]
+                give_back.as_mut().poll(&mut cx),
+                Poll::Ready(Ok(()))
             ));
-            assert_eq!(
-                worker_after_eof.fault,
-                Some(SessionFaultKind::TransportClosed)
-            );
-            assert_eq!(
-                worker_after_eof.completion_mutations,
-                worker_before_eof.completion_mutations
-            );
-            assert_eq!(worker_after_eof.steps, worker_before_eof.steps);
-            assert_eq!(worker_after_eof.choices, worker_before_eof.choices);
-            assert_eq!(
-                worker_after_eof
-                    .view_headers()
-                    .collect::<std::vec::Vec<_>>(),
-                worker_before_eof
-                    .view_headers()
-                    .collect::<std::vec::Vec<_>>()
-            );
-            assert_eq!(worker_after_eof.counter, worker_before_eof.counter);
-            assert_eq!(worker_after_eof.live_views, worker_before_eof.live_views);
-            // There is no cross-runtime fault propagation. The unique returned DB
-            // value continues normally after the worker observes the closed lane.
-            let (sent, received) = tokio::join!(db.send::<Read>(&42), service.recv::<Read>());
-            sent.unwrap();
-            assert_eq!(received.unwrap(), 42);
-            assert!(network.queue_is_empty());
-            // SAFETY: the owner is still alive and idle after the DB operation.
-            assert_eq!(unsafe { owner_tag.snapshot::<TestTransport>() }.fault, None);
-            #[cfg(not(miri))]
-            write_observations(
-                [
-                    owner_program.role_image_ref(),
-                    worker_program.role_image_ref(),
-                ],
-                sid,
-                &[
-                    ("ownerBefore", &owner_before),
-                    ("workerBefore", &worker_before),
-                    ("ownerPending", &owner_pending),
-                    ("ownerSent", &owner_sent),
-                    ("workerReceived", &worker_received),
-                    ("workerPending", &worker_pending),
-                    ("workerSent", &worker_sent),
-                    ("ownerReturned", &owner_returned),
-                    ("workerBeforeEof", &worker_before_eof),
-                    ("workerAfterEof", &worker_after_eof),
-                ],
-                &loan_wire,
-                &return_wire,
-                (&captured, [&loan_evidence, &return_evidence]),
-            );
-            #[cfg(miri)]
-            let _ = (
-                owner_before,
-                worker_before,
-                owner_pending,
-                owner_sent,
-                worker_received,
-                worker_pending,
-                worker_sent,
-                owner_returned,
-                return_wire,
-                loan_evidence,
-                return_evidence,
-            );
-        });
+            worker_pending
+        };
+        let return_wire = network.queued_frame(0);
+        let return_evidence = network.accepted_frame(0, 0);
+        // SAFETY: same pinned allocation, between polls.
+        let worker_sent = unsafe { worker_tag.snapshot::<TestTransport>() };
+        let mut db = owner.recv::<Loan>().await.unwrap();
+        // SAFETY: all three reads occur between operations.
+        let owner_returned = unsafe { owner_tag.snapshot::<TestTransport>() };
+        let worker_before_eof = unsafe { worker_tag.snapshot::<TestTransport>() };
+        assert_eq!(worker_before_eof.fault, None);
+        assert!(worker.recv::<Loan>().await.is_err());
+        // SAFETY: the failed call has returned and the allocation remains live.
+        let worker_after_eof = unsafe { worker_tag.snapshot::<TestTransport>() };
+        let captured = capture.finish();
+        assert!(matches!(
+            captured.as_slice(),
+            [
+                OwnedFutureBoundary::Seal { .. },
+                OwnedFutureBoundary::Poll {
+                    result: Poll::Pending,
+                    ..
+                },
+                OwnedFutureBoundary::Poll {
+                    result: Poll::Ready(Ok(())),
+                    ..
+                },
+                OwnedFutureBoundary::Drop { .. },
+                OwnedFutureBoundary::Seal { .. },
+                OwnedFutureBoundary::Poll {
+                    result: Poll::Pending,
+                    ..
+                },
+                OwnedFutureBoundary::Poll {
+                    result: Poll::Ready(Ok(())),
+                    ..
+                },
+                OwnedFutureBoundary::Drop { .. },
+            ]
+        ));
+        assert_eq!(
+            worker_after_eof.fault,
+            Some(SessionFaultKind::TransportClosed)
+        );
+        assert_eq!(
+            worker_after_eof.completion_mutations,
+            worker_before_eof.completion_mutations
+        );
+        assert_eq!(worker_after_eof.steps, worker_before_eof.steps);
+        assert_eq!(worker_after_eof.choices, worker_before_eof.choices);
+        assert_eq!(
+            worker_after_eof
+                .view_headers()
+                .collect::<std::vec::Vec<_>>(),
+            worker_before_eof
+                .view_headers()
+                .collect::<std::vec::Vec<_>>()
+        );
+        assert_eq!(worker_after_eof.counter, worker_before_eof.counter);
+        assert_eq!(worker_after_eof.live_views, worker_before_eof.live_views);
+        // There is no cross-runtime fault propagation. The unique returned DB
+        // value continues normally after the worker observes the closed lane.
+        let (sent, received) = async {
+            async { Ok::<_, hibana::EndpointError>((db.send::<Read>(&42)).await) };
+            async { Ok::<_, hibana::EndpointError>((service.recv::<Read>()).await) };
+        }
+        .await
+        .expect("all child results are data");
+        sent.unwrap();
+        assert_eq!(received.unwrap(), 42);
+        assert!(network.queue_is_empty());
+        // SAFETY: the owner is still alive and idle after the DB operation.
+        assert_eq!(unsafe { owner_tag.snapshot::<TestTransport>() }.fault, None);
+        #[cfg(not(miri))]
+        write_observations(
+            [
+                owner_program.role_image_ref(),
+                worker_program.role_image_ref(),
+            ],
+            sid,
+            &[
+                ("ownerBefore", &owner_before),
+                ("workerBefore", &worker_before),
+                ("ownerPending", &owner_pending),
+                ("ownerSent", &owner_sent),
+                ("workerReceived", &worker_received),
+                ("workerPending", &worker_pending),
+                ("workerSent", &worker_sent),
+                ("ownerReturned", &owner_returned),
+                ("workerBeforeEof", &worker_before_eof),
+                ("workerAfterEof", &worker_after_eof),
+            ],
+            &loan_wire,
+            &return_wire,
+            (&captured, [&loan_evidence, &return_evidence]),
+        );
+        #[cfg(miri)]
+        let _ = (
+            owner_before,
+            worker_before,
+            owner_pending,
+            owner_sent,
+            worker_received,
+            worker_pending,
+            worker_sent,
+            owner_returned,
+            return_wire,
+            loan_evidence,
+            return_evidence,
+        );
+    };
+
+    Ok(())
 }
 
 #[cfg(not(miri))]

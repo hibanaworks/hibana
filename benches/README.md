@@ -14,7 +14,7 @@ projection with `long_running_const_eval` forbidden.
 ## Runtime cost
 
 Run `cargo +stable bench --locked --bench runtime_cost` from the repository root.
-The benchmark uses the current kernel, Tokio's current-thread executor, and the
+The benchmark uses the current kernel, hibana-runtime's scoped executor, and the
 example `InMemoryTransport`.
 
 Two roles execute 64 fixed communications, followed by either 8 or 256 unit
@@ -93,7 +93,7 @@ completing 128, 16, or 4 visits respectively. Request and reply labels are reuse
 at every position in the body, exercising the search among matching messages.
 Projection, attachment and
 destruction are outside the timer. Payload assertions remain enabled, and
-Tokio polls both participants concurrently on its current-thread executor.
+hibana-runtime polls both participants concurrently in one scope.
 
 `HIBANA_PERF_BODY` (`1`, `8`, `32`, or `all`) and `HIBANA_PERF_SAMPLES` select
 inputs. The default is three warmups and 30 measured samples per body size.

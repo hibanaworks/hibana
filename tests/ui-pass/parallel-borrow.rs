@@ -5,16 +5,19 @@ type Reply = g::Msg<2, u32>;
 type Notice = g::Msg<3, u32>;
 type Done = g::Msg<4, ()>;
 
+#[hibana_runtime::scope]
 async fn client(mut endpoint: Endpoint<'_, 0>) -> Result<(), EndpointError> {
     {
         let [mut requests, mut notices] = endpoint.par()?;
-        tokio::try_join!(
+        async {
             async {
                 requests.send::<Request>(&7).await?;
                 requests.recv::<Reply>().await
-            },
-            notices.recv::<Notice>(),
-        )?;
+            };
+
+            async { (notices.recv::<Notice>()).await };
+        }
+        .await?;
     }
     endpoint.send::<Done>(&()).await
 }

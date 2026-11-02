@@ -1,5 +1,7 @@
 //! Check complete-message prefixes against independent finite source unfoldings.
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use hibana::{
     Endpoint, g,
     runtime::{SessionKitStorage, ids::SessionId, program::project},
@@ -55,189 +57,207 @@ fn queries() -> Vec<Query> {
     found
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn ordinary_resumption_matches_every_bounded_complete_exchange_prefix() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let global = g::seq(
-                g::send::<0, 1, Prefix>(),
-                g::seq(
-                    g::seq(g::send::<0, 1, Work>(), g::send::<1, 0, Ack>()).roll(),
-                    g::send::<0, 1, Tail>(),
-                ),
-            )
-            .roll();
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let mut attempts = 0;
-            for query in queries().into_iter().filter(|query| !query.delegated) {
-                let network = common::TestTransport::new();
-                let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
-                let mut storage0 = SessionKitStorage::uninit();
-                let mut storage1 = SessionKitStorage::uninit();
-                let rv0 = storage0
-                    .init()
-                    .rendezvous(&mut slab0, network.clone())
-                    .unwrap();
-                let rv1 = storage1.init().rendezvous(&mut slab1, network).unwrap();
-                let sid = SessionId::new(9310);
-                let mut a = rv0.enter(sid, &p0).unwrap();
-                let mut b = rv1.enter(sid, &p1).unwrap();
-                let execution = async {
-                    for letter in query.prefix {
-                        match letter {
-                            0 => {
-                                tokio::try_join!(a.send::<Prefix>(&()), b.recv::<Prefix>())?;
+async fn ordinary_resumption_matches_every_bounded_complete_exchange_prefix()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        let global = g::seq(
+            g::send::<0, 1, Prefix>(),
+            g::seq(
+                g::seq(g::send::<0, 1, Work>(), g::send::<1, 0, Ack>()).roll(),
+                g::send::<0, 1, Tail>(),
+            ),
+        )
+        .roll();
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let mut attempts = 0;
+        for query in queries().into_iter().filter(|query| !query.delegated) {
+            let network = common::TestTransport::new();
+            let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+            let mut storage0 = SessionKitStorage::uninit();
+            let mut storage1 = SessionKitStorage::uninit();
+            let rv0 = storage0
+                .init()
+                .rendezvous(&mut slab0, network.clone())
+                .unwrap();
+            let rv1 = storage1.init().rendezvous(&mut slab1, network).unwrap();
+            let sid = SessionId::new(9310);
+            let mut a = rv0.enter(sid, &p0).unwrap();
+            let mut b = rv1.enter(sid, &p1).unwrap();
+            let execution = async {
+                for letter in query.prefix {
+                    match letter {
+                        0 => {
+                            async {
+                                async { (a.send::<Prefix>(&())).await };
+                                async { (b.recv::<Prefix>()).await };
                             }
-                            1 => {
-                                tokio::try_join!(
-                                    async {
-                                        a.send::<Work>(&()).await?;
-                                        a.recv::<Ack>().await
-                                    },
-                                    async {
-                                        b.recv::<Work>().await?;
-                                        b.send::<Ack>(&()).await
-                                    },
-                                )?;
-                            }
-                            2 => {
-                                tokio::try_join!(a.send::<Tail>(&()), b.recv::<Tail>())?;
-                            }
-                            _ => unreachable!(),
+                            .await?;
                         }
-                    }
-                    let result = match query.probe {
-                        0 => a.send::<Prefix>(&()).await,
-                        1 => a.send::<Work>(&()).await,
-                        2 => a.send::<Tail>(&()).await,
+                        1 => {
+                            async {
+                                async {
+                                    a.send::<Work>(&()).await?;
+                                    a.recv::<Ack>().await
+                                };
+
+                                async {
+                                    b.recv::<Work>().await?;
+                                    b.send::<Ack>(&()).await
+                                };
+                            }
+                            .await?;
+                        }
+                        2 => {
+                            async {
+                                async { (a.send::<Tail>(&())).await };
+                                async { (b.recv::<Tail>()).await };
+                            }
+                            .await?;
+                        }
                         _ => unreachable!(),
-                    };
-                    Ok::<_, hibana::EndpointError>(result.is_ok())
+                    }
+                }
+                let result = match query.probe {
+                    0 => a.send::<Prefix>(&()).await,
+                    1 => a.send::<Work>(&()).await,
+                    2 => a.send::<Tail>(&()).await,
+                    _ => unreachable!(),
                 };
-                let actual =
-                    tokio::time::timeout(core::time::Duration::from_millis(1), execution).await;
-                assert!(
-                    matches!(actual, Ok(Ok(accepted)) if accepted == query.permitted),
-                    "ordinary prefix={:?} probe={} model={} actual={actual:?}",
-                    query.prefix,
-                    query.probe,
-                    query.permitted
-                );
-                attempts += 1;
-            }
-            println!("Ordinary resumed-roll admission: attempts={attempts} runtime-only=0 model-only=0 unreachable=0");
-        });
+                Ok::<_, hibana::EndpointError>(result.is_ok())
+            };
+            let actual =
+                crate::in_process::timeout(core::time::Duration::from_millis(1), execution).await;
+            assert!(
+                matches!(actual, Ok(Ok(accepted)) if accepted == query.permitted),
+                "ordinary prefix={:?} probe={} model={} actual={actual:?}",
+                query.prefix,
+                query.probe,
+                query.permitted
+            );
+            attempts += 1;
+        }
+        println!(
+            "Ordinary resumed-roll admission: attempts={attempts} runtime-only=0 model-only=0 unreachable=0"
+        );
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn delegated_resumption_matches_every_bounded_complete_exchange_prefix() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let global = g::seq(
-                g::send::<0, 1, Prefix>(),
+async fn delegated_resumption_matches_every_bounded_complete_exchange_prefix()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        let global = g::seq(
+            g::send::<0, 1, Prefix>(),
+            g::seq(
                 g::seq(
+                    g::send::<0, 1, Loan<'_>>(),
                     g::seq(
-                        g::send::<0, 1, Loan<'_>>(),
-                        g::seq(
-                            g::send::<3, 2, Read>(),
-                            g::seq(
-                                g::send::<2, 3, Value>(),
-                                g::send::<1, 0, Returned<'_>>(),
-                            ),
-                        ),
-                    )
-                    .roll(),
-                    g::send::<0, 1, Tail>(),
-                ),
-            )
-            .roll();
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let p2 = project::<2>(&global);
-            let p3 = project::<3>(&global);
-            let mut attempts = 0;
-            for query in queries().into_iter().filter(|query| query.delegated) {
-                let network = common::TestTransport::new();
-                let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
-                let mut storage0 = SessionKitStorage::uninit();
-                let mut storage1 = SessionKitStorage::uninit();
-                let mut storage2 = SessionKitStorage::uninit();
-                let rv0 = storage0
-                    .init()
-                    .rendezvous(&mut slab0, network.clone())
-                    .unwrap();
-                let rv1 = storage1
-                    .init()
-                    .rendezvous(&mut slab1, network.clone())
-                    .unwrap();
-                let rv2 = storage2.init().rendezvous(&mut slab2, network).unwrap();
-                let sid = SessionId::new(9311);
-                let mut owner = rv0.enter(sid, &p0).unwrap();
-                let mut worker = rv1.enter(sid, &p1).unwrap();
-                let mut service = rv2.enter(sid, &p2).unwrap();
-                let mut db = rv0.enter(sid, &p3).unwrap();
-                let execution = async {
-                    for letter in query.prefix {
-                        match letter {
-                            0 => {
-                                tokio::try_join!(
-                                    owner.send::<Prefix>(&()),
-                                    worker.recv::<Prefix>()
-                                )?;
+                        g::send::<3, 2, Read>(),
+                        g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Returned<'_>>()),
+                    ),
+                )
+                .roll(),
+                g::send::<0, 1, Tail>(),
+            ),
+        )
+        .roll();
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let p2 = project::<2>(&global);
+        let p3 = project::<3>(&global);
+        let mut attempts = 0;
+        for query in queries().into_iter().filter(|query| query.delegated) {
+            let network = common::TestTransport::new();
+            let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+            let mut storage0 = SessionKitStorage::uninit();
+            let mut storage1 = SessionKitStorage::uninit();
+            let mut storage2 = SessionKitStorage::uninit();
+            let rv0 = storage0
+                .init()
+                .rendezvous(&mut slab0, network.clone())
+                .unwrap();
+            let rv1 = storage1
+                .init()
+                .rendezvous(&mut slab1, network.clone())
+                .unwrap();
+            let rv2 = storage2.init().rendezvous(&mut slab2, network).unwrap();
+            let sid = SessionId::new(9311);
+            let mut owner = rv0.enter(sid, &p0).unwrap();
+            let mut worker = rv1.enter(sid, &p1).unwrap();
+            let mut service = rv2.enter(sid, &p2).unwrap();
+            let mut db = rv0.enter(sid, &p3).unwrap();
+            let execution = async {
+                for letter in query.prefix {
+                    match letter {
+                        0 => {
+                            async {
+                                async { (owner.send::<Prefix>(&())).await };
+
+                                async { (worker.recv::<Prefix>()).await };
                             }
-                            1 => {
-                                let (returned, (), ()) = tokio::try_join!(
-                                    async {
-                                        owner.send::<Loan<'_>>(db).await?;
-                                        owner.recv::<Returned<'_>>().await
-                                    },
-                                    async {
-                                        let mut db = worker.recv::<Loan<'_>>().await?;
-                                        db.send::<Read>(&41).await?;
-                                        assert_eq!(db.recv::<Value>().await?, 42);
-                                        worker.send::<Returned<'_>>(db).await
-                                    },
-                                    async {
-                                        let number = service.recv::<Read>().await?;
-                                        service.send::<Value>(&(number + 1)).await
-                                    },
-                                )?;
-                                db = returned;
-                            }
-                            2 => {
-                                tokio::try_join!(owner.send::<Tail>(&()), worker.recv::<Tail>())?;
-                            }
-                            _ => unreachable!(),
+                            .await?;
                         }
-                    }
-                    let result = match query.probe {
-                        0 => owner.send::<Prefix>(&()).await,
-                        1 => owner.send::<Loan<'_>>(db).await,
-                        2 => owner.send::<Tail>(&()).await,
+                        1 => {
+                            let (returned, (), ()) = async {
+                                async {
+                                    owner.send::<Loan<'_>>(db).await?;
+                                    owner.recv::<Returned<'_>>().await
+                                };
+
+                                async {
+                                    let mut db = worker.recv::<Loan<'_>>().await?;
+                                    db.send::<Read>(&41).await?;
+                                    assert_eq!(db.recv::<Value>().await?, 42);
+                                    worker.send::<Returned<'_>>(db).await
+                                };
+
+                                async {
+                                    let number = service.recv::<Read>().await?;
+                                    service.send::<Value>(&(number + 1)).await
+                                };
+                            }
+                            .await?;
+                            db = returned;
+                        }
+                        2 => {
+                            async {
+                                async { (owner.send::<Tail>(&())).await };
+                                async { (worker.recv::<Tail>()).await };
+                            }
+                            .await?;
+                        }
                         _ => unreachable!(),
-                    };
-                    Ok::<_, hibana::EndpointError>(result.is_ok())
+                    }
+                }
+                let result = match query.probe {
+                    0 => owner.send::<Prefix>(&()).await,
+                    1 => owner.send::<Loan<'_>>(db).await,
+                    2 => owner.send::<Tail>(&()).await,
+                    _ => unreachable!(),
                 };
-                let actual =
-                    tokio::time::timeout(core::time::Duration::from_millis(1), execution).await;
-                assert!(
-                    matches!(actual, Ok(Ok(accepted)) if accepted == query.permitted),
-                    "delegated prefix={:?} probe={} model={} actual={actual:?}",
-                    query.prefix,
-                    query.probe,
-                    query.permitted
-                );
-                attempts += 1;
-            }
-            println!("Delegated resumed-roll admission: attempts={attempts} runtime-only=0 model-only=0 unreachable=0");
-        });
+                Ok::<_, hibana::EndpointError>(result.is_ok())
+            };
+            let actual =
+                crate::in_process::timeout(core::time::Duration::from_millis(1), execution).await;
+            assert!(
+                matches!(actual, Ok(Ok(accepted)) if accepted == query.permitted),
+                "delegated prefix={:?} probe={} model={} actual={actual:?}",
+                query.prefix,
+                query.probe,
+                query.permitted
+            );
+            attempts += 1;
+        }
+        println!(
+            "Delegated resumed-roll admission: attempts={attempts} runtime-only=0 model-only=0 unreachable=0"
+        );
+    };
+
+    Ok(())
 }

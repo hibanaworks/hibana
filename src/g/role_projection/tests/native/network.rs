@@ -20,27 +20,27 @@ const WORKER: &str = "g::role_projection::tests::native::network::worker_process
 const SERVICE: &str = "g::role_projection::tests::native::network::service_process";
 const BROKER: &str = "g::role_projection::tests::native::network::broker_process";
 
-#[tokio::test(flavor = "current_thread")]
-async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits() {
+#[hibana_runtime::main]
+#[test]
+async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits()
+-> core::result::Result<(), hibana::EndpointError> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let broker = Broker::start(BROKER).await;
-    let mut service_process = Process(
+    let mut service_process = Process::spawn(
         Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", SERVICE, "--nocapture"])
             .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string())
-            .env("HIBANA_NETWORK_PARENT", std::process::id().to_string())
-            .spawn()
-            .unwrap(),
-    );
-    let mut worker_process = Process(
+            .env("HIBANA_NETWORK_PARENT", std::process::id().to_string()),
+    )
+    .unwrap();
+    let mut worker_process = Process::spawn(
         Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", WORKER, "--nocapture"])
             .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string())
-            .env("HIBANA_NETWORK_PARENT", std::process::id().to_string())
-            .spawn()
-            .unwrap(),
-    );
+            .env("HIBANA_NETWORK_PARENT", std::process::id().to_string()),
+    )
+    .unwrap();
     {
         let mut slab = vec![0; 64 * 1024];
         let mut storage = SessionKitStorage::uninit();
@@ -59,24 +59,35 @@ async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits() 
         // Test scheduling only: the returning process must be gone and the
         // ordinary frame must remain unread in the actual TCP inbox before
         // this receiver commits the return. Observations confer no authority.
-        worker_process.wait_success().await;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let journal = broker.journal().await;
-                let queued = journal.iter().find(|(operation, packet)| {
-                    *operation == 1 && packet[6] == 10 && packet[9..] == 123u32.to_be_bytes()
-                });
-                if let Some((_, queued)) = queued {
-                    assert!(
-                        !journal
-                            .iter()
-                            .any(|(operation, packet)| *operation == 2 && packet == queued)
-                    );
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        })
+        assert!((worker_process).wait().await.unwrap().success());
+        hibana_runtime::race(
+            async {
+                let _: () = (async {
+                    loop {
+                        let journal = broker.journal().await;
+                        let queued = journal.iter().find(|(operation, packet)| {
+                            *operation == 1
+                                && packet[6] == 10
+                                && packet[9..] == 123u32.to_be_bytes()
+                        });
+                        if let Some((_, queued)) = queued {
+                            assert!(
+                                !journal
+                                    .iter()
+                                    .any(|(operation, packet)| *operation == 2 && packet == queued)
+                            );
+                            break;
+                        }
+                        hibana_runtime::host::sleep(Duration::from_millis(1))
+                            .await
+                            .unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, std::io::Error>(())
+            },
+            hibana_runtime::host::deadline(Duration::from_secs(5)),
+        )
         .await
         .unwrap();
 
@@ -86,7 +97,7 @@ async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits() 
         assert_eq!(db.recv::<Value>().await.unwrap(), 45);
         owner.send::<Loan>(db).await.unwrap();
     }
-    service_process.wait_success().await;
+    assert!((service_process).wait().await.unwrap().success());
     let journal = broker.journal().await;
     let accepted: std::vec::Vec<_> = journal
         .iter()
@@ -120,11 +131,14 @@ async fn tcp_handoff_preserves_an_unread_frame_after_the_sender_process_exits() 
     drop(worker_process);
     drop(service_process);
     drop(broker);
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate initial issuer and physical service for the network fixture"]
-async fn service_process() {
+async fn service_process() -> core::result::Result<(), hibana::EndpointError> {
     let parent: u32 = std::env::var("HIBANA_NETWORK_PARENT")
         .unwrap()
         .parse()
@@ -159,11 +173,14 @@ async fn service_process() {
     service.send::<Value>(&value).await.unwrap();
     drop(service.recv::<Loan>().await.unwrap());
     assert_eq!(value, 45);
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate process entrypoint exercised by the network parent fixture"]
-async fn worker_process() {
+async fn worker_process() -> core::result::Result<(), hibana::EndpointError> {
     let parent: u32 = std::env::var("HIBANA_NETWORK_PARENT")
         .unwrap()
         .parse()
@@ -187,11 +204,16 @@ async fn worker_process() {
     db.send::<Read>(&3).await.unwrap();
     assert_eq!(db.recv::<Value>().await.unwrap(), 44);
     worker.send::<Loan>(db).await.unwrap();
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate byte-inbox server exercised by the network parent fixture"]
-async fn broker_process() {
+async fn broker_process() -> core::result::Result<(), hibana::EndpointError> {
     assert_eq!(std::env::var("HIBANA_NETWORK_BROKER").unwrap(), "1");
     inbox::serve(|_| Duration::ZERO).await;
+
+    Ok(())
 }

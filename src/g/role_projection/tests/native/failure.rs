@@ -10,8 +10,10 @@ const SID: SessionId = SessionId::new(9061);
 const BEFORE: &str = "g::role_projection::tests::native::failure::worker_exits_before_receipt";
 const AFTER: &str = "g::role_projection::tests::native::failure::worker_exits_after_receipt";
 
-#[tokio::test(flavor = "current_thread")]
-async fn a_remote_holder_loss_is_observable_without_reissuing_its_endpoint() {
+#[hibana_runtime::main]
+#[test]
+async fn a_remote_holder_loss_is_observable_without_reissuing_its_endpoint() -> std::io::Result<()>
+{
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
@@ -67,15 +69,19 @@ async fn a_remote_holder_loss_is_observable_without_reissuing_its_endpoint() {
             let mut service = rv.enter(SID, &service_program).unwrap();
             let db = rv.enter(SID, &db_program).unwrap();
             let began = Instant::now();
-            let (returned, read) = tokio::time::timeout(Duration::from_secs(8), async {
-                tokio::join!(
+            let (returned, read) = hibana_runtime::race(
+                async {
                     async {
-                        owner.send::<Loan>(db).await.unwrap();
-                        owner.recv::<Loan>().await
-                    },
-                    service.recv::<Read>(),
-                )
-            })
+                        Ok(async {
+                            owner.send::<Loan>(db).await.unwrap();
+                            owner.recv::<Loan>().await
+                        }
+                        .await)
+                    };
+                    async { Ok((service.recv::<Read>()).await) };
+                },
+                hibana_runtime::host::deadline(Duration::from_secs(8)),
+            )
             .await
             .expect("the carrier deadline must end the run before the test watchdog");
             assert!(returned.is_err(), "the lost view cannot be returned");
@@ -121,11 +127,17 @@ async fn a_remote_holder_loss_is_observable_without_reissuing_its_endpoint() {
                 rv.enter(SessionId::new(SID.raw() + 1), &db_program)
                     .is_err()
             );
-            tokio::time::timeout(Duration::from_secs(3), async {
-                while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                }
-            })
+            hibana_runtime::race(
+                async {
+                    while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+                        hibana_runtime::host::sleep(Duration::from_millis(1))
+                            .await
+                            .unwrap();
+                    }
+                    Ok::<(), std::io::Error>(())
+                },
+                hibana_runtime::host::deadline(Duration::from_secs(3)),
+            )
             .await
             .expect("the failed worker must exit before its descriptors are fenced");
             let output = child.0.take().unwrap().wait_with_output().unwrap();
@@ -177,15 +189,18 @@ async fn a_remote_holder_loss_is_observable_without_reissuing_its_endpoint() {
         // child are gone; no new run can receive this namespace's old frames.
         drop(mailboxes);
     }
+
+    Ok(())
 }
 
 #[test]
 #[ignore = "separate process failure point exercised by the parent proof"]
 fn worker_exits_before_receipt() {}
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate process failure point exercised by the parent proof"]
-async fn worker_exits_after_receipt() {
+async fn worker_exits_after_receipt() -> std::io::Result<()> {
     let directory = std::path::PathBuf::from(std::env::var_os("HIBANA_NATIVE_DIRECTORY").unwrap());
     let descriptors: Vec<_> = std::env::var("HIBANA_NATIVE_DESCRIPTORS")
         .unwrap()
@@ -212,4 +227,6 @@ async fn worker_exits_after_receipt() {
     let rv = storage.init().rendezvous(&mut slab, io).unwrap();
     let mut worker = rv.enter(SID, &worker_program).unwrap();
     drop(worker.recv::<Loan>().await.unwrap());
+
+    Ok(())
 }

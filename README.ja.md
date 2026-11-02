@@ -154,10 +154,10 @@ move済みの値を使えないことはRustが守ります。Hibanaは、委譲
 メッセージとして送るのはRustのアドレスではありません。
 
 未完了のowned送信futureをdropすると、Endpointを手放してローカルの実行をfaultさせます。
-`tokio::select!`のタイムアウトでdropする場合も同じです。送り手へEndpointは戻りません。
+deadlineに達してdropする場合も同じです。送り手へEndpointは戻りません。
 タイムアウト後も通信を続けたい場合は、その判断をプロトコルの分岐に書きます。
 
-[完全なTokio実行例](examples/endpoint_delegation.rs)では、`g::par`と`db.par()`を使い、
+[完全なEndpoint委譲実行例](examples/endpoint_delegation.rs)では、`g::par`と`db.par()`を使い、
 queryの応答を待つ間に独立したaudit送信を進めます。各runtimeのメモリは別々で、
 この例のcarrierは共有のメモリ内キューです。このcheckoutで
 `cargo run --locked --example endpoint_delegation`を実行できます。

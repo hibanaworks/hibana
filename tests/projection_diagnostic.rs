@@ -2,6 +2,78 @@ use hibana::g::{self, Msg, ProjectionProblem};
 use hibana::runtime::program::{RoleProgram, project};
 
 #[test]
+fn nested_parallel_reentry_needs_the_entry_owner_to_start_the_notice() {
+    use hibana::Endpoint;
+    type Loan = Msg<0, Endpoint<'static, 3>>;
+    type Return = Msg<12, Endpoint<'static, 3>>;
+    type Relend = Msg<15, Endpoint<'static, 3>>;
+    type Finished = Msg<16, Endpoint<'static, 3>>;
+
+    // After Finished, actor 0 must not be able to start another parent visit
+    // while actor 1 has given up the resource needed by that visit. The notice
+    // is parallel to the resource work, so no earlier incoming message guards it.
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::par(
+                g::par(
+                    g::send::<0, 1, Msg<1, ()>>(),
+                    g::send::<1, 0, Msg<2, ()>>().roll(),
+                ),
+                g::seq(
+                    g::send::<3, 2, Msg<3, ()>>(),
+                    g::seq(
+                        g::send::<2, 3, Msg<4, ()>>(),
+                        g::route(
+                            g::seq(
+                                g::send::<3, 2, Msg<5, ()>>(),
+                                g::seq(
+                                    g::send::<3, 0, Msg<6, ()>>(),
+                                    g::seq(
+                                        g::send::<3, 2, Msg<7, ()>>(),
+                                        g::seq(
+                                            g::send::<0, 1, Msg<8, ()>>(),
+                                            g::send::<1, 0, Msg<9, ()>>(),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                            g::seq(
+                                g::send::<3, 2, Msg<10, ()>>(),
+                                g::seq(
+                                    g::send::<3, 0, Msg<11, ()>>(),
+                                    g::seq(
+                                        g::send::<1, 0, Return>(),
+                                        g::seq(
+                                            g::seq(
+                                                g::send::<3, 2, Msg<13, ()>>(),
+                                                g::send::<2, 3, Msg<14, ()>>(),
+                                            ),
+                                            g::send::<0, 1, Relend>(),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        )
+                        .resolve::<0>(),
+                    ),
+                )
+                .roll(),
+            )
+            .roll()
+            .roll(),
+            g::send::<1, 0, Finished>(),
+        ),
+    );
+    assert_eq!(
+        g::diagnose(&global)
+            .expect("a remote origin can outlive the resource loan")
+            .problem,
+        ProjectionProblem::ReentryResourceKnowledge
+    );
+}
+
+#[test]
 fn endpoint_cannot_carry_itself_is_a_diagnostic_value() {
     type Grant = Msg<1, hibana::Endpoint<'static, 0>>;
     let program = g::send::<0, 1, Grant>();

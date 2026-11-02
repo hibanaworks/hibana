@@ -1,4 +1,6 @@
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use common::TestTransport;
 use core::{cell::Cell, future::poll_fn, pin::pin, task::Poll};
@@ -12,8 +14,10 @@ use hibana::{
     },
 };
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn a_selected_branch_can_preview_its_next_receive_without_advancing() {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_selected_branch_can_preview_its_next_receive_without_advancing()
+-> core::result::Result<(), hibana::EndpointError> {
     type First = g::Msg<0, u64>;
     type Second = g::Msg<1, u64>;
     type Other = g::Msg<2, u64>;
@@ -37,7 +41,7 @@ async fn a_selected_branch_can_preview_its_next_receive_without_advancing() {
     let sid = SessionId::new(946);
     let mut sender = rv0.enter(sid, &p0).unwrap();
     let mut receiver = rv1.enter(sid, &p1).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
+    (async {
         sender.send::<First>(&7).await?;
         assert_eq!(receiver.offer().await?.recv::<First>().await?, 7);
         {
@@ -58,12 +62,15 @@ async fn a_selected_branch_can_preview_its_next_receive_without_advancing() {
         Ok::<_, EndpointError>(())
     })
     .await
-    .expect("the selected branch's next receive must be observable")
     .unwrap();
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn the_choosing_role_can_preview_its_later_reply() {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn the_choosing_role_can_preview_its_later_reply()
+-> core::result::Result<(), hibana::EndpointError> {
     type Request = g::Msg<0, u64>;
     type Reply = g::Msg<1, u64>;
     type Other = g::Msg<2, u64>;
@@ -83,26 +90,31 @@ async fn the_choosing_role_can_preview_its_later_reply() {
     let sid = SessionId::new(948);
     let mut client = rv0.enter(sid, &p0).unwrap();
     let mut server = rv1.enter(sid, &p1).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(
+    (async {
+        async {
             async {
                 client.send::<Request>(&7).await?;
                 assert_eq!(client.offer().await?.recv::<Reply>().await?, 8);
                 Ok::<_, EndpointError>(())
-            },
+            };
+
             async {
                 let number = server.offer().await?.recv::<Request>().await?;
                 server.send::<Reply>(&(number + 1)).await
-            }
-        )
+            };
+        }
+        .await
     })
     .await
-    .expect("a selected controller's incoming reply must be observable")
     .unwrap();
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn a_committed_resolver_is_not_called_again_for_a_later_receive() {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_committed_resolver_is_not_called_again_for_a_later_receive()
+-> core::result::Result<(), hibana::EndpointError> {
     type Request = g::Msg<0, u64>;
     type Reply = g::Msg<1, u64>;
     type Other = g::Msg<2, u64>;
@@ -137,28 +149,33 @@ async fn a_committed_resolver_is_not_called_again_for_a_later_receive() {
     let sid = SessionId::new(950);
     let mut client = rv0.enter(sid, &p0).unwrap();
     let mut server = rv1.enter(sid, &p1).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(
+    (async {
+        async {
             async {
                 client.send::<Request>(&7).await?;
                 assert_eq!(calls.get(), 1);
                 assert_eq!(client.offer().await?.recv::<Reply>().await?, 8);
                 Ok::<_, EndpointError>(())
-            },
+            };
+
             async {
                 let number = server.offer().await?.recv::<Request>().await?;
                 server.send::<Reply>(&(number + 1)).await
-            }
-        )
+            };
+        }
+        .await
     })
     .await
-    .expect("the later receive must keep the committed resolver decision")
     .unwrap();
     assert_eq!(calls.get(), 1);
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn a_later_owned_receive_preserves_the_transferred_endpoints_continuation() {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_later_owned_receive_preserves_the_transferred_endpoints_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     type Notice = g::Msg<0, ()>;
     type Loan<'r> = g::Msg<1, Endpoint<'r, 2>>;
     type Other = g::Msg<2, ()>;
@@ -190,12 +207,13 @@ async fn a_later_owned_receive_preserves_the_transferred_endpoints_continuation(
     let db = rv0.enter(sid, &p2).unwrap();
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv3.enter(sid, &p3).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(
+    (async {
+        async {
             async {
                 owner.send::<Notice>(&()).await?;
                 owner.send::<Loan<'_>>(db).await
-            },
+            };
+
             async {
                 worker.offer().await?.recv::<Notice>().await?;
                 let loan = worker.offer().await?;
@@ -205,20 +223,25 @@ async fn a_later_owned_receive_preserves_the_transferred_endpoints_continuation(
                 db.send::<Read>(&41).await?;
                 assert_eq!(db.recv::<Value>().await?, 42);
                 Ok::<_, EndpointError>(())
-            },
+            };
+
             async {
                 let number = service.recv::<Read>().await?;
                 service.send::<Value>(&(number + 1)).await
-            }
-        )
+            };
+        }
+        .await
     })
     .await
-    .expect("the later receive must transfer one usable endpoint")
     .unwrap();
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn an_optional_repetition_can_offer_its_required_end_after_either_reply_arm() {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_optional_repetition_can_offer_its_required_end_after_either_reply_arm()
+-> core::result::Result<(), hibana::EndpointError> {
     type Packet = g::Msg<0, u64>;
     type Stored = g::Msg<1, u64>;
     type Dropped = g::Msg<2, u64>;
@@ -251,8 +274,8 @@ async fn an_optional_repetition_can_offer_its_required_end_after_either_reply_ar
         let sid = SessionId::new(947);
         let mut input = rv0.enter(sid, &p0).unwrap();
         let mut owner = rv1.enter(sid, &p1).unwrap();
-        tokio::time::timeout(core::time::Duration::from_secs(1), async {
-            tokio::try_join!(
+        (async {
+            async {
                 async {
                     for packet in 0..packet_count {
                         input.send::<Packet>(&packet).await?;
@@ -267,7 +290,8 @@ async fn an_optional_repetition_can_offer_its_required_end_after_either_reply_ar
                     input.send::<End>(&7).await?;
                     assert_eq!(input.recv::<Ended>().await?, 7);
                     Ok::<_, EndpointError>(())
-                },
+                };
+
                 async {
                     loop {
                         let next = owner.offer().await?;
@@ -288,11 +312,12 @@ async fn an_optional_repetition_can_offer_its_required_end_after_either_reply_ar
                         }
                     }
                     owner.send::<Ended>(&7).await
-                }
-            )
+                };
+            }
+            .await
         })
         .await
-        .expect("the required end must follow zero or more packet exchanges")
         .unwrap();
     }
+    Ok(())
 }

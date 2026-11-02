@@ -83,8 +83,10 @@ impl Transport for DropOnSend {
     }
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_reentrant_arm_drop_cancels_and_wakes_its_pending_sibling() {
+async fn a_reentrant_arm_drop_cancels_and_wakes_its_pending_sibling()
+-> core::result::Result<(), hibana::EndpointError> {
     type Left = g::Msg<131, u32>;
     type Right = g::Msg<132, u32>;
     let global = g::par(g::send::<0, 1, Left>(), g::send::<0, 1, Right>());
@@ -108,31 +110,32 @@ fn a_reentrant_arm_drop_cancels_and_wakes_its_pending_sibling() {
     let target = RefCell::new(Some(right));
     hook.arm(&target);
     network.pause_send(0);
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let sent =
-                tokio::time::timeout(core::time::Duration::from_secs(10), left.send::<Left>(&7))
-                    .await;
-            assert!(
-                sent.is_ok(),
-                "a drop inside poll_send must not lose cancellation or its wakeup"
-            );
-            assert!(
-                sent.unwrap().is_err(),
-                "the incomplete sibling ended the run"
-            );
-        });
+    {
+        let sent = crate::test_support::in_process::timeout(
+            core::time::Duration::from_secs(10),
+            left.send::<Left>(&7),
+        )
+        .await;
+        assert!(
+            sent.is_ok(),
+            "a drop inside poll_send must not lose cancellation or its wakeup"
+        );
+        assert!(
+            sent.unwrap().is_err(),
+            "the incomplete sibling ended the run"
+        );
+    };
     assert!(target.borrow().is_none());
     assert!(hook.0.get().is_none());
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_reentrant_completed_arm_drop_preserves_its_pending_sibling() {
+async fn a_reentrant_completed_arm_drop_preserves_its_pending_sibling()
+-> core::result::Result<(), hibana::EndpointError> {
     type Request = g::Msg<133, u32>;
     type Notice = g::Msg<134, u32>;
     let global = g::par(g::send::<0, 1, Request>(), g::send::<0, 1, Notice>());
@@ -156,35 +159,43 @@ fn a_reentrant_completed_arm_drop_preserves_its_pending_sibling() {
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
     let [mut request, mut notice] = client.par().unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            notice.send::<Notice>(&9).await.unwrap();
-            assert_eq!(server.recv::<Notice>().await.unwrap(), 9);
-            let target = RefCell::new(Some(notice));
-            hook.arm(&target);
-            network.pause_send(0);
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                let (sent, ()) = tokio::join!(request.send::<Request>(&7), async {
-                    tokio::time::sleep(core::time::Duration::from_secs(1)).await;
-                    network.resume_send();
-                });
-                sent.expect("dropping a completed arm must not cancel another arm");
-                assert_eq!(server.recv::<Request>().await.unwrap(), 7);
-            })
+    {
+        notice.send::<Notice>(&9).await.unwrap();
+        assert_eq!(server.recv::<Notice>().await.unwrap(), 9);
+        let target = RefCell::new(Some(notice));
+        hook.arm(&target);
+        network.pause_send(0);
+        (async {
+            let (sent, ()) = async {
+                async { Ok::<_, hibana::EndpointError>((request.send::<Request>(&7)).await) };
+                async {
+                    let _: () = (async {
+                        crate::test_support::in_process::sleep(core::time::Duration::from_secs(1))
+                            .await;
+                        network.resume_send();
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("the completed arm's destruction must not lose a wakeup");
-            assert!(target.borrow().is_none());
-        });
+            .expect("all child results are data");
+            sent.expect("dropping a completed arm must not cancel another arm");
+            assert_eq!(server.recv::<Request>().await.unwrap(), 7);
+        })
+        .await;
+        assert!(target.borrow().is_none());
+    };
     assert!(hook.0.get().is_none());
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn multiple_reentrant_arm_drops_are_all_drained() {
+async fn multiple_reentrant_arm_drops_are_all_drained()
+-> core::result::Result<(), hibana::EndpointError> {
     type Request = g::Msg<135, u32>;
     type First = g::Msg<136, u32>;
     type Second = g::Msg<137, u32>;
@@ -212,26 +223,20 @@ fn multiple_reentrant_arm_drops_are_all_drained() {
     let target = RefCell::new(Some((first, second)));
     hook.arm(&target);
     network.pause_send(0);
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let sent = tokio::time::timeout(
-                core::time::Duration::from_secs(10),
-                request.send::<Request>(&7),
-            )
-            .await
-            .expect("both queued arm drops must be reconciled");
-            assert!(sent.is_err(), "the incomplete siblings ended the run");
-        });
+    {
+        let sent = (request.send::<Request>(&7)).await;
+        assert!(sent.is_err(), "the incomplete siblings ended the run");
+    };
     assert!(target.borrow().is_none());
     assert!(hook.0.get().is_none());
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_reentrant_future_drop_releases_its_operation_before_reuse() {
+async fn a_reentrant_future_drop_releases_its_operation_before_reuse()
+-> core::result::Result<(), hibana::EndpointError> {
     use core::{future::Future, task::Poll};
     type Request = g::Msg<138, u32>;
     type Notice = g::Msg<139, u32>;
@@ -256,45 +261,53 @@ fn a_reentrant_future_drop_releases_its_operation_before_reuse() {
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
     let [mut request, mut notice] = client.par().unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            network.pause_send(0);
-            let mut pending = Box::pin(notice.send::<Notice>(&3));
-            core::future::poll_fn(|cx| {
-                assert!(pending.as_mut().poll(cx).is_pending());
-                Poll::Ready(())
-            })
-            .await;
-            let target = RefCell::new(Some(pending));
-            hook.arm(&target);
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                let (sent, ()) = tokio::join!(request.send::<Request>(&7), async {
-                    tokio::time::sleep(core::time::Duration::from_secs(1)).await;
-                    network.resume_send();
-                });
-                sent.unwrap();
-                assert_eq!(server.recv::<Request>().await.unwrap(), 7);
-            })
+    {
+        network.pause_send(0);
+        let mut pending = Box::pin(notice.send::<Notice>(&3));
+        core::future::poll_fn(|cx| {
+            assert!(pending.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        let target = RefCell::new(Some(pending));
+        hook.arm(&target);
+        (async {
+            let (sent, ()) = async {
+                async { Ok::<_, hibana::EndpointError>((request.send::<Request>(&7)).await) };
+                async {
+                    let _: () = (async {
+                        crate::test_support::in_process::sleep(core::time::Duration::from_secs(1))
+                            .await;
+                        network.resume_send();
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("the surviving operation should finish");
-            assert!(target.borrow().is_none());
-            drop(target);
-            notice
-                .send::<Notice>(&9)
-                .await
-                .expect("dropping its future must release the operation");
-            assert_eq!(server.recv::<Notice>().await.unwrap(), 9);
-        });
+            .expect("all child results are data");
+            sent.unwrap();
+            assert_eq!(server.recv::<Request>().await.unwrap(), 7);
+        })
+        .await;
+        assert!(target.borrow().is_none());
+        drop(target);
+        notice
+            .send::<Notice>(&9)
+            .await
+            .expect("dropping its future must release the operation");
+        assert_eq!(server.recv::<Notice>().await.unwrap(), 9);
+    };
     assert!(hook.0.get().is_none());
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_reentrant_receive_drop_allows_the_same_step_to_be_received() {
+async fn a_reentrant_receive_drop_allows_the_same_step_to_be_received()
+-> core::result::Result<(), hibana::EndpointError> {
     use core::future::Future;
     type Request = g::Msg<140, u32>;
     type Notice = g::Msg<141, u32>;
@@ -319,37 +332,35 @@ fn a_reentrant_receive_drop_allows_the_same_step_to_be_received() {
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
     let [mut request, mut notice] = client.par().unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                let mut pending = Box::pin(notice.recv::<Notice>());
-                core::future::poll_fn(|cx| {
-                    assert!(pending.as_mut().poll(cx).is_pending());
-                    Poll::Ready(())
-                })
-                .await;
-                let target = RefCell::new(Some(pending));
-                hook.arm(&target);
-                request.send::<Request>(&7).await.unwrap();
-                assert!(target.borrow().is_none());
-                drop(target);
-                assert_eq!(server.recv::<Request>().await.unwrap(), 7);
-                server.send::<Notice>(&9).await.unwrap();
-                assert_eq!(notice.recv::<Notice>().await.unwrap(), 9);
+    {
+        (async {
+            let mut pending = Box::pin(notice.recv::<Notice>());
+            core::future::poll_fn(|cx| {
+                assert!(pending.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
             })
-            .await
-            .expect("dropping the pending receive must release its operation");
-        });
+            .await;
+            let target = RefCell::new(Some(pending));
+            hook.arm(&target);
+            request.send::<Request>(&7).await.unwrap();
+            assert!(target.borrow().is_none());
+            drop(target);
+            assert_eq!(server.recv::<Request>().await.unwrap(), 7);
+            server.send::<Notice>(&9).await.unwrap();
+            assert_eq!(notice.recv::<Notice>().await.unwrap(), 9);
+        })
+        .await;
+    };
     assert!(hook.0.get().is_none());
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_reentrant_branch_drop_preserves_its_selected_frame() {
+async fn a_reentrant_branch_drop_preserves_its_selected_frame()
+-> core::result::Result<(), hibana::EndpointError> {
     type Request = g::Msg<142, u32>;
     type Notice = g::Msg<143, u32>;
     type Other = g::Msg<144, u32>;
@@ -377,32 +388,28 @@ fn a_reentrant_branch_drop_preserves_its_selected_frame() {
     let mut client = rv.enter(sid, &client_program).unwrap();
     let mut server = rv.enter(sid, &server_program).unwrap();
     let [mut request, mut notice] = client.par().unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                server.send::<Notice>(&9).await.unwrap();
-                let branch = notice.offer().await.unwrap();
-                assert_eq!(branch.label(), 143);
-                let target = RefCell::new(Some(branch));
-                hook.arm(&target);
-                request.send::<Request>(&7).await.unwrap();
-                assert!(target.borrow().is_none());
-                drop(target);
-                let branch = notice
-                    .offer()
-                    .await
-                    .expect("the selected branch must be restored");
-                assert_eq!(branch.label(), 143);
-                assert_eq!(branch.recv::<Notice>().await.unwrap(), 9);
-                assert_eq!(server.recv::<Request>().await.unwrap(), 7);
-            })
-            .await
-            .expect("dropping a preview must not consume its selected frame");
-        });
+    {
+        (async {
+            server.send::<Notice>(&9).await.unwrap();
+            let branch = notice.offer().await.unwrap();
+            assert_eq!(branch.label(), 143);
+            let target = RefCell::new(Some(branch));
+            hook.arm(&target);
+            request.send::<Request>(&7).await.unwrap();
+            assert!(target.borrow().is_none());
+            drop(target);
+            let branch = notice
+                .offer()
+                .await
+                .expect("the selected branch must be restored");
+            assert_eq!(branch.label(), 143);
+            assert_eq!(branch.recv::<Notice>().await.unwrap(), 9);
+            assert_eq!(server.recv::<Request>().await.unwrap(), 7);
+        })
+        .await;
+    };
     assert!(hook.0.get().is_none());
     assert!(network.queue_is_empty());
+
+    Ok(())
 }

@@ -20,8 +20,9 @@ const LANES: usize = g::ProgramProjection::<Global, 16>::SOURCE_EFF_LIST.len();
 const SID: SessionId = SessionId::new(9016);
 const WORKER: &str = "g::role_projection::tests::native::preemption::worker_process";
 
-#[tokio::test(flavor = "current_thread")]
-async fn receiver_finishes_before_the_sender_publishes_its_transfer() {
+#[hibana_runtime::main]
+#[test]
+async fn receiver_finishes_before_the_sender_publishes_its_transfer() -> std::io::Result<()> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let mailboxes = Mailboxes::new(&[0, 1, 10], LANES).unwrap();
@@ -146,20 +147,26 @@ async fn receiver_finishes_before_the_sender_publishes_its_transfer() {
     // Issuing the returned continuation cannot resurrect the old tag.
     // SAFETY: the same view record remains pinned and owned by this runtime.
     assert!(!unsafe { old_tag.matches_header() });
-    tokio::join!(
+    async {
         async {
             db.send::<Read>(&42).await.unwrap();
             assert_eq!(db.recv::<Value>().await.unwrap(), 43);
-        },
+        };
         async {
             assert_eq!(owner.recv::<Read>().await.unwrap(), 42);
             owner.send::<Value>(&43).await.unwrap();
-        },
-    );
+        };
+        Ok(())
+    }
+    .await
+    .unwrap();
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn an_accepted_transport_error_releases_only_a_faulted_actor() {
+#[hibana_runtime::main]
+#[test]
+async fn an_accepted_transport_error_releases_only_a_faulted_actor() -> std::io::Result<()> {
     use crate::{rendezvous::SessionFaultKind, runtime::transport::TransportError};
 
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
@@ -223,27 +230,33 @@ async fn an_accepted_transport_error_releases_only_a_faulted_actor() {
     // The datagram really was accepted. A second runtime can receive and use
     // the sole right despite the sender's uncertain-delivery error.
     let mut db = worker.recv::<Loan>().await.unwrap();
-    tokio::join!(
+    async {
         async {
             db.send::<Read>(&41).await.unwrap();
             assert_eq!(db.recv::<Value>().await.unwrap(), 42);
-        },
+        };
         async {
             assert_eq!(worker.recv::<Read>().await.unwrap(), 41);
             worker.send::<Value>(&42).await.unwrap();
-        },
-    );
+        };
+        Ok(())
+    }
+    .await
+    .unwrap();
     worker.send::<Loan>(db).await.unwrap();
     drop(transfer);
     assert!(owner.recv::<Loan>().await.is_err());
     // SAFETY: the owner still retains the same actor after rejecting receipt.
     let cut = unsafe { tag.actor_call_cut::<NativeTransport<'_>>() };
     assert_eq!(cut.fault, Some(SessionFaultKind::TransportClosed));
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate process entrypoint exercised by the preemption proof"]
-async fn worker_process() {
+async fn worker_process() -> std::io::Result<()> {
     let parent: u32 = std::env::var("HIBANA_NATIVE_PARENT")
         .unwrap()
         .parse()
@@ -277,16 +290,21 @@ async fn worker_process() {
     assert!(rv.enter(SID, &db_program).is_err());
     let mut worker = rv.enter(SID, &worker_program).unwrap();
     let mut db = worker.recv::<Loan>().await.unwrap();
-    tokio::join!(
+    async {
         async {
             db.send::<Read>(&41).await.unwrap();
             assert_eq!(db.recv::<Value>().await.unwrap(), 42);
-        },
+        };
         async {
             assert_eq!(worker.recv::<Read>().await.unwrap(), 41);
             worker.send::<Value>(&42).await.unwrap();
-        },
-    );
+        };
+        Ok(())
+    }
+    .await
+    .unwrap();
     worker.send::<Loan>(db).await.unwrap();
     std::println!("pid={} receiver used and returned DB", std::process::id());
+
+    Ok(())
 }

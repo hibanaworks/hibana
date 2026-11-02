@@ -5,57 +5,73 @@ use crate::endpoint::proof_snapshot::actor_snapshot;
 use crate::runtime::{SessionKitStorage, ids::SessionId};
 use crate::test_support::transport::TestTransport;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn actual_reset_and_recommit_cannot_disappear_between_equal_snapshots() {
+async fn actual_reset_and_recommit_cannot_disappear_between_equal_snapshots()
+-> core::result::Result<(), hibana::EndpointError> {
     type Tick = g::Msg<71, ()>;
     type Steps = g::Seq<g::Roll<g::Send<0, 2, Tick>>, g::Send<0, 1, Loan>>;
     let () = g::ProgramProjection::<Steps, 8>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let peer_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let mut slab = [0u8; 48 * 1024];
-            let mut storage = SessionKitStorage::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, TestTransport::new())
-                .unwrap();
-            let sid = SessionId::new(9056);
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let _db = rv.enter(sid, &db_program).unwrap();
-            let mut peer = rv.enter(sid, &peer_program).unwrap();
-            // SAFETY: the pinned actor was attached with TestTransport. Each
-            // snapshot reads the counter and semantic fields under one lease.
-            let initial = unsafe { actor_snapshot(&owner) };
-            owner.send::<Tick>(&()).await.unwrap();
-            // SAFETY: the same actor and its original view remain alive.
-            let first = unsafe { actor_snapshot(&owner) };
-            owner.send::<Tick>(&()).await.unwrap();
-            // SAFETY: the same actor and its original view remain alive.
-            let second = unsafe { actor_snapshot(&owner) };
-            assert_eq!(initial.completion_mutations, 0);
-            assert_eq!(first.completion_mutations, 1);
-            assert_eq!(second.completion_mutations, 4);
-            assert_eq!(
-                (first.actor, first.run, first.counter, first.live_views,
-                    &first.views, &first.steps, &first.choices),
-                (second.actor, second.run, second.counter, second.live_views,
-                    &second.views, &second.steps, &second.choices),
-            );
-            peer.recv::<Tick>().await.unwrap();
-            peer.recv::<Tick>().await.unwrap();
+    {
+        let mut slab = [0u8; 48 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .unwrap();
+        let sid = SessionId::new(9056);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let _db = rv.enter(sid, &db_program).unwrap();
+        let mut peer = rv.enter(sid, &peer_program).unwrap();
+        // SAFETY: the pinned actor was attached with TestTransport. Each
+        // snapshot reads the counter and semantic fields under one lease.
+        let initial = unsafe { actor_snapshot(&owner) };
+        owner.send::<Tick>(&()).await.unwrap();
+        // SAFETY: the same actor and its original view remain alive.
+        let first = unsafe { actor_snapshot(&owner) };
+        owner.send::<Tick>(&()).await.unwrap();
+        // SAFETY: the same actor and its original view remain alive.
+        let second = unsafe { actor_snapshot(&owner) };
+        assert_eq!(initial.completion_mutations, 0);
+        assert_eq!(first.completion_mutations, 1);
+        assert_eq!(second.completion_mutations, 4);
+        assert_eq!(
+            (
+                first.actor,
+                first.run,
+                first.counter,
+                first.live_views,
+                &first.views,
+                &first.steps,
+                &first.choices
+            ),
+            (
+                second.actor,
+                second.run,
+                second.counter,
+                second.live_views,
+                &second.views,
+                &second.steps,
+                &second.choices
+            ),
+        );
+        peer.recv::<Tick>().await.unwrap();
+        peer.recv::<Tick>().await.unwrap();
 
-            #[cfg(not(miri))]
-            {
-                use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
-                let choreo = Steps::lean_source();
-                let image = descriptor_source(RoleDescriptorRef::from_resident(
-                    owner_program.role_image_ref(),
-                ));
-                let source = std::format!(r#"import Hibana.ActorMutationCoverage
+        #[cfg(not(miri))]
+        {
+            use crate::test_support::{
+                lean_choreo::LeanChoreo, lean_descriptor::descriptor_source,
+            };
+            let choreo = Steps::lean_source();
+            let image = descriptor_source(RoleDescriptorRef::from_resident(
+                owner_program.role_image_ref(),
+            ));
+            let source = std::format!(
+                r#"import Hibana.ActorMutationCoverage
 
 set_option maxRecDepth 10000
 def mutationChoreo : Hibana.Choreo := {choreo}
@@ -120,16 +136,23 @@ theorem actualCompletedTickSurvivesAZeroWriteGap :
     (firstMutation := {first_count}) (finalMutation := {first_count})
     (by decide) (by decide)
 "#,
-                    initial_source = super::commit::observation_source(&initial),
-                    first_source = super::commit::observation_source(&first),
-                    second_source = super::commit::observation_source(&second),
-                    initial_count = initial.completion_mutations,
-                    first_count = first.completion_mutations,
-                    second_count = second.completion_mutations,
-                );
-                let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
-                std::fs::create_dir_all(&directory).unwrap();
-                std::fs::write(directory.join("ActorMutationCoverageGenerated.lean"), source).unwrap();
-            }
-        });
+                initial_source = super::commit::observation_source(&initial),
+                first_source = super::commit::observation_source(&first),
+                second_source = super::commit::observation_source(&second),
+                initial_count = initial.completion_mutations,
+                first_count = first.completion_mutations,
+                second_count = second.completion_mutations,
+            );
+            let directory =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                directory.join("ActorMutationCoverageGenerated.lean"),
+                source,
+            )
+            .unwrap();
+        }
+    };
+
+    Ok(())
 }

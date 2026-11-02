@@ -9,34 +9,34 @@ type Accepted = g::Msg<83, ()>;
 type Stopped = g::Msg<84, ()>;
 type Rejected = g::Msg<85, ()>;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn completed_send_choice_keeps_its_receive_continuation() {
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let global = g::seq(
-                g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()),
-                g::route(
-                    g::send::<1, 0, Accepted>(),
-                    g::route(g::send::<1, 0, Stopped>(), g::send::<1, 0, Rejected>()),
-                ),
-            )
-            .roll();
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let mut slab = vec![0; 65536];
-            let mut storage = SessionKitStorage::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, crate::common::TestTransport::new())
-                .unwrap();
-            let mut source = rv.enter(SessionId::new(1), &p0).unwrap();
-            let mut receiver = rv.enter(SessionId::new(1), &p1).unwrap();
-            // The Miri process has an external watchdog. Interpreter speed
-            // must not become a deadline in this in-memory protocol test.
-            tokio::join!(
-                async {
+async fn completed_send_choice_keeps_its_receive_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        let global = g::seq(
+            g::route(g::send::<0, 1, Left>(), g::send::<0, 1, Right>()),
+            g::route(
+                g::send::<1, 0, Accepted>(),
+                g::route(g::send::<1, 0, Stopped>(), g::send::<1, 0, Rejected>()),
+            ),
+        )
+        .roll();
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let mut slab = vec![0; 65536];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, crate::common::TestTransport::new())
+            .unwrap();
+        let mut source = rv.enter(SessionId::new(1), &p0).unwrap();
+        let mut receiver = rv.enter(SessionId::new(1), &p1).unwrap();
+        // The Miri process has an external watchdog. Interpreter speed
+        // must not become a deadline in this in-memory protocol test.
+        async {
+            async {
+                let _: () = (async {
                     source.send::<Left>(&()).await.unwrap();
                     source
                         .offer()
@@ -53,8 +53,13 @@ fn completed_send_choice_keeps_its_receive_continuation() {
                         .recv::<Accepted>()
                         .await
                         .unwrap();
-                },
-                async {
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
                     receiver
                         .offer()
                         .await
@@ -71,7 +76,14 @@ fn completed_send_choice_keeps_its_receive_continuation() {
                         .await
                         .unwrap();
                     receiver.send::<Accepted>(&()).await.unwrap();
-                }
-            );
-        });
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
+    };
+
+    Ok(())
 }

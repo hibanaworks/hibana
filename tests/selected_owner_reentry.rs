@@ -113,11 +113,7 @@ fn an_inner_roll_can_revisit_four_times_before_its_parent_continues() {
     let global = g::seq(
         g::send::<0, 1, Loan>(),
         g::seq(
-            g::par(
-                g::send::<3, 2, Work>(),
-                g::send::<1, 0, Echo>().roll(),
-            )
-            .roll(),
+            g::par(g::send::<3, 2, Work>(), g::send::<1, 0, Echo>().roll()).roll(),
             g::send::<1, 0, Return>(),
         ),
     );

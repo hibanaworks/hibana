@@ -30,18 +30,18 @@ type Global = g::Seq<
     g::Seq<g::Send<10, 3, Value>, g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_send_waits_for_another_views_predecessor_without_sending_early() {
+async fn a_send_waits_for_another_views_predecessor_without_sending_early()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Global, 8>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Global>::new());
     let reader_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Global>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = std::vec![0; 64 * 1024];
         let mut storage = SessionKitStorage::uninit();
         let rv = storage
@@ -87,20 +87,22 @@ fn a_send_waits_for_another_views_predecessor_without_sending_early() {
         let db = worker.recv::<Loan>().await.unwrap();
         worker.send::<Loan>(db).await.unwrap();
         drop(owner.recv::<Loan>().await.unwrap());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view() {
+async fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     let () = g::ProgramProjection::<DbLoan, 8>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<DbLoan>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<DbLoan>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<DbLoan>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = std::vec![0; 64 * 1024];
         let mut storage = SessionKitStorage::uninit();
         let network = TestTransport::new();
@@ -117,47 +119,62 @@ fn an_owned_send_rejects_a_predecessor_that_needs_its_payload_view() {
         // SAFETY: these views retain the same pinned TestTransport actor.
         let before = unsafe { actor_snapshot(&worker) };
         let tag = view_tag(&db);
-        assert_eq!(before.views.iter().find(|view| view.role == 10).unwrap().operation,
-            "Idle");
+        assert_eq!(
+            before
+                .views
+                .iter()
+                .find(|view| view.role == 10)
+                .unwrap()
+                .operation,
+            "Idle"
+        );
         // DB still has Read/Value work. This future owns DB, so that work
         // cannot run elsewhere and waiting would hide a localside mistake.
         {
-        let mut early = pin!(worker.send::<Loan>(db));
-        // SAFETY: the future owns DB and retains the same pinned actor. No
-        // reference to its borrowed carrier or private payload is fabricated.
-        let sealed = unsafe { tag.actor_call_cut::<TestTransport>() };
-        assert!(sealed.lease_available);
-        assert_eq!(sealed.fault, None);
-        assert!(unsafe { tag.matches_header() });
-        let poll = early.as_mut().poll(&mut Context::from_waker(Waker::noop()));
-        assert!(
-            matches!(poll, core::task::Poll::Ready(Err(_))),
-            "an early return must fail: {poll:?}"
-        );
-        // Observe the first fault while the future still owns DB. A later
-        // payload Drop must not be the reason this call appears to have failed.
-        let rejected = unsafe { tag.actor_call_cut::<TestTransport>() };
-        assert!(rejected.lease_available);
-        assert!(rejected.fault.is_some());
-        assert!(network.queue_is_empty());
+            let mut early = pin!(worker.send::<Loan>(db));
+            // SAFETY: the future owns DB and retains the same pinned actor. No
+            // reference to its borrowed carrier or private payload is fabricated.
+            let sealed = unsafe { tag.actor_call_cut::<TestTransport>() };
+            assert!(sealed.lease_available);
+            assert_eq!(sealed.fault, None);
+            assert!(unsafe { tag.matches_header() });
+            let poll = early.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+            assert!(
+                matches!(poll, core::task::Poll::Ready(Err(_))),
+                "an early return must fail: {poll:?}"
+            );
+            // Observe the first fault while the future still owns DB. A later
+            // payload Drop must not be the reason this call appears to have failed.
+            let rejected = unsafe { tag.actor_call_cut::<TestTransport>() };
+            assert!(rejected.lease_available);
+            assert!(rejected.fault.is_some());
+            assert!(network.queue_is_empty());
         }
         // SAFETY: WORKER still retains the original pinned actor after the
         // rejected future and its payload have been dropped.
         let after = unsafe { actor_snapshot(&worker) };
         assert_eq!(before.counter, after.counter);
         assert_eq!(before.completion_mutations, after.completion_mutations);
-        assert!(before.steps.iter().map(|step| step.done)
-            .eq(after.steps.iter().map(|step| step.done)));
+        assert!(
+            before
+                .steps
+                .iter()
+                .map(|step| step.done)
+                .eq(after.steps.iter().map(|step| step.done))
+        );
         assert_eq!(before.choices, after.choices);
 
         #[cfg(not(miri))]
         {
-            use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+            use crate::test_support::{
+                lean_choreo::LeanChoreo, lean_descriptor::descriptor_source,
+            };
             let choreo = DbLoan::lean_source();
             let image = descriptor_source(RoleDescriptorRef::from_resident(
                 worker_program.role_image_ref(),
             ));
-            let source = std::format!(r#"import Hibana.MeasuredResourceAvailability
+            let source = std::format!(
+                r#"import Hibana.MeasuredResourceAvailability
 open Hibana Hibana.EndpointDelegation
 def futureChoreo : Choreo := {choreo}
 def futureImage : RustDescriptorImage := {image}
@@ -193,16 +210,27 @@ theorem actualPendingReturnHasAConcreteRequiredPredecessor :
         some (prior.actionId.event, binding) ∧
       sourceActionRequiresView resource.role binding prior.actionId.side = true :=
   a_source_held_view_wait_has_an_unfinished_required_predecessor actualPendingReturnHasItsHeldPayloadPredecessor
-"#, snapshot = super::commit::observation_source(&before));
-            let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+"#,
+                snapshot = super::commit::observation_source(&before)
+            );
+            let directory =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
             std::fs::create_dir_all(&directory).unwrap();
-            std::fs::write(directory.join("OwnedFuturePredecessorGenerated.lean"), source).unwrap();
+            std::fs::write(
+                directory.join("OwnedFuturePredecessorGenerated.lean"),
+                source,
+            )
+            .unwrap();
         }
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_owned_send_can_wait_for_a_distinct_live_view() {
+async fn an_owned_send_can_wait_for_a_distinct_live_view()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Seq<
         g::Send<11, 3, Read>,
         g::Seq<
@@ -216,10 +244,8 @@ fn an_owned_send_can_wait_for_a_distinct_live_view() {
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = std::vec![0; 64 * 1024];
         let mut storage = SessionKitStorage::uninit();
         let rv = storage
@@ -232,10 +258,25 @@ fn an_owned_send_can_wait_for_a_distinct_live_view() {
         let mut auth = rv.enter(sid, &auth_program).unwrap();
         let mut worker = rv.enter(sid, &worker_program).unwrap();
         let mut service = rv.enter(sid, &service_program).unwrap();
-        tokio::join!(biased;
-            async { owner.send::<Loan>(db).await.unwrap(); },
-            async { auth.send::<Read>(&17).await.unwrap(); },
-        );
+        async {
+            async {
+                let _: () = (async {
+                    owner.send::<Loan>(db).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
+            async {
+                let _: () = (async {
+                    auth.send::<Read>(&17).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
         assert_eq!(service.recv::<Read>().await.unwrap(), 17);
         owner.send::<OtherLoan>(auth).await.unwrap();
         let db = worker.recv::<Loan>().await.unwrap();
@@ -244,11 +285,15 @@ fn an_owned_send_can_wait_for_a_distinct_live_view() {
         worker.send::<OtherLoan>(auth).await.unwrap();
         drop(owner.recv::<Loan>().await.unwrap());
         drop(owner.recv::<OtherLoan>().await.unwrap());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_waiting_send_does_not_run_its_resolver_before_the_predecessor() {
+async fn a_waiting_send_does_not_run_its_resolver_before_the_predecessor()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::runtime::resolver::{DecisionArm, ResolverRef};
     type Other = g::Msg<6, u32>;
     type Steps = g::Seq<
@@ -264,10 +309,8 @@ fn a_waiting_send_does_not_run_its_resolver_before_the_predecessor() {
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let calls = core::cell::Cell::new(0usize);
         let mut slab = std::vec![0; 64 * 1024];
         let mut storage = SessionKitStorage::uninit();
@@ -307,11 +350,15 @@ fn a_waiting_send_does_not_run_its_resolver_before_the_predecessor() {
         let db = worker.recv::<Loan>().await.unwrap();
         worker.send::<Loan>(db).await.unwrap();
         drop(owner.recv::<Loan>().await.unwrap());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
+async fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     use crate::rendezvous::SessionFaultKind;
     type Steps = g::Seq<
@@ -326,10 +373,8 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         #[cfg(not(miri))]
         let mut retirement_observations = std::vec::Vec::new();
         // Test stimuli, not application progress: include a prior actor fault
@@ -338,7 +383,12 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
             ("unpolled", false, false, None),
             ("predecessor", true, false, None),
             ("transport", true, true, None),
-            ("faulted", false, false, Some(SessionFaultKind::ProtocolViolation)),
+            (
+                "faulted",
+                false,
+                false,
+                Some(SessionFaultKind::ProtocolViolation),
+            ),
         ] {
             let network = TestTransport::new();
             let mut slab = std::vec![0; 64 * 1024];
@@ -439,5 +489,7 @@ fn dropping_an_owned_send_cancels_the_run_before_or_during_preparation() {
                 &retirement_observations,
             );
         }
-    });
+    };
+
+    Ok(())
 }

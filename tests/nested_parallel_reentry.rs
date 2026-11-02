@@ -1,5 +1,7 @@
 //! Parallel borrows retain their repeat origin across nested scopes and pending I/O.
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use hibana::{
     g,
     runtime::{SessionKitStorage, ids::SessionId, program::project},
@@ -10,8 +12,10 @@ type Work = g::Msg<232, ()>;
 type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views() {
+async fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::{
         Endpoint, EndpointError,
         runtime::resolver::{DecisionArm, ResolverRef},
@@ -60,16 +64,20 @@ fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views() {
                 let [mut data, mut notice] = owner.par()?;
                 match label {
                     1 | 2 => {
-                        tokio::try_join!(
-                            data.send::<LeftData>(&()),
-                            notice.send::<LeftNotice>(&())
-                        )?;
+                        async {
+                            async { (data.send::<LeftData>(&())).await };
+
+                            async { (notice.send::<LeftNotice>(&())).await };
+                        }
+                        .await?;
                     }
                     3 | 4 => {
-                        tokio::try_join!(
-                            data.send::<RightData>(&()),
-                            notice.send::<RightNotice>(&())
-                        )?;
+                        async {
+                            async { (data.send::<RightData>(&())).await };
+
+                            async { (notice.send::<RightNotice>(&())).await };
+                        }
+                        .await?;
                     }
                     _ => panic!("unexpected controller label"),
                 }
@@ -79,29 +87,52 @@ fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views() {
         };
         let worker_run = async {
             let mut db = worker.recv::<Loan<'_>>().await?;
-            let label = tokio::select! {
-                result = async {
-                    let branch = worker.offer().await?;
-                    let label = branch.label();
-                    drop(branch);
-                    Ok::<_, EndpointError>(label)
-                } => result?,
-                result = async {
-                    let branch = db.offer().await?;
-                    let label = branch.label();
-                    drop(branch);
-                    Ok::<_, EndpointError>(label)
-                } => result?,
+            let label = match hibana_runtime::race(
+                async {
+                    core::ops::ControlFlow::Break(
+                        (async {
+                            let branch = worker.offer().await?;
+                            let label = branch.label();
+                            drop(branch);
+                            Ok::<_, EndpointError>(label)
+                        })
+                        .await,
+                    )
+                },
+                async {
+                    core::ops::ControlFlow::Continue(
+                        (async {
+                            let branch = db.offer().await?;
+                            let label = branch.label();
+                            drop(branch);
+                            Ok::<_, EndpointError>(label)
+                        })
+                        .await,
+                    )
+                },
+            )
+            .await
+            {
+                core::ops::ControlFlow::Break(result) => result?,
+                core::ops::ControlFlow::Continue(result) => result?,
             };
             {
                 let [mut notice] = worker.par()?;
                 let [mut data] = db.par()?;
                 match label {
                     1 | 2 => {
-                        tokio::try_join!(data.recv::<LeftData>(), notice.recv::<LeftNotice>())?;
+                        async {
+                            async { (data.recv::<LeftData>()).await };
+                            async { (notice.recv::<LeftNotice>()).await };
+                        }
+                        .await?;
                     }
                     3 | 4 => {
-                        tokio::try_join!(data.recv::<RightData>(), notice.recv::<RightNotice>())?;
+                        async {
+                            async { (data.recv::<RightData>()).await };
+                            async { (notice.recv::<RightNotice>()).await };
+                        }
+                        .await?;
                     }
                     _ => panic!("unexpected received label"),
                 }
@@ -109,25 +140,26 @@ fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views() {
             worker.send::<Returned<'_>>(db).await?;
             Ok::<_, EndpointError>(())
         };
-        tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .start_paused(true)
-            .build()
-            .unwrap()
-            .block_on(async {
-                tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                    tokio::try_join!(owner_run, worker_run)
-                })
+        {
+            (async {
+                async {
+                    async { (owner_run).await };
+                    async { (worker_run).await };
+                }
                 .await
-                .expect("parallel views stalled")
-                .unwrap();
-            });
+            })
+            .await
+            .unwrap();
+        };
         assert!(network.queue_is_empty());
     }
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_borrow_containing_a_choice_uses_its_other_views_preview() {
+async fn a_borrow_containing_a_choice_uses_its_other_views_preview()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::{
         Endpoint, EndpointError,
         runtime::resolver::{DecisionArm, ResolverRef},
@@ -179,7 +211,7 @@ fn a_borrow_containing_a_choice_uses_its_other_views_preview() {
 
         let owner_run = async {
             let [mut work, mut ticks] = owner.par().expect("owner's outer parallel parts");
-            tokio::try_join!(
+            async {
                 async {
                     work.send::<Loan<'_>>(db).await?;
                     let label = work.offer().await?.label();
@@ -188,29 +220,35 @@ fn a_borrow_containing_a_choice_uses_its_other_views_preview() {
                             work.par().expect("controller's selected parallel parts");
                         match label {
                             1 | 2 => {
-                                tokio::try_join!(
-                                    data.send::<LeftData>(&()),
-                                    notice.send::<LeftNotice>(&())
-                                )?;
+                                async {
+                                    async { (data.send::<LeftData>(&())).await };
+
+                                    async { (notice.send::<LeftNotice>(&())).await };
+                                }
+                                .await?;
                             }
                             3 | 4 => {
-                                tokio::try_join!(
-                                    data.send::<RightData>(&()),
-                                    notice.send::<RightNotice>(&())
-                                )?;
+                                async {
+                                    async { (data.send::<RightData>(&())).await };
+
+                                    async { (notice.send::<RightNotice>(&())).await };
+                                }
+                                .await?;
                             }
                             _ => panic!("unexpected controller label"),
                         }
                     }
                     let _returned = work.recv::<Returned<'_>>().await?;
                     Ok::<_, EndpointError>(())
-                },
+                };
+
                 async {
                     ticks.recv::<Tick>().await?;
                     ticks.send::<Ack>(&()).await?;
                     Ok::<_, EndpointError>(())
-                }
-            )?;
+                };
+            }
+            .await?;
             Ok::<_, EndpointError>(())
         };
         let worker_run = async {
@@ -218,32 +256,53 @@ fn a_borrow_containing_a_choice_uses_its_other_views_preview() {
             let mut db = work.recv::<Loan<'_>>().await?;
             {
                 let [mut db_work] = db.par().expect("resource's outer parallel part");
-                let label = tokio::select! {
-                    result = async {
-                        let branch = work.offer().await?;
-                        let label = branch.label();
-                        drop(branch);
-                        Ok::<_, EndpointError>(label)
-                    } => result?,
-                    result = async {
-                        let branch = db_work.offer().await?;
-                        let label = branch.label();
-                        drop(branch);
-                        Ok::<_, EndpointError>(label)
-                    } => result?,
+                let label = match hibana_runtime::race(
+                    async {
+                        core::ops::ControlFlow::Break(
+                            (async {
+                                let branch = work.offer().await?;
+                                let label = branch.label();
+                                drop(branch);
+                                Ok::<_, EndpointError>(label)
+                            })
+                            .await,
+                        )
+                    },
+                    async {
+                        core::ops::ControlFlow::Continue(
+                            (async {
+                                let branch = db_work.offer().await?;
+                                let label = branch.label();
+                                drop(branch);
+                                Ok::<_, EndpointError>(label)
+                            })
+                            .await,
+                        )
+                    },
+                )
+                .await
+                {
+                    core::ops::ControlFlow::Break(result) => result?,
+                    core::ops::ControlFlow::Continue(result) => result?,
                 };
                 {
                     let [mut notice] = work.par().expect("worker's selected parallel part");
                     let [mut data] = db_work.par().expect("resource's selected parallel part");
                     match label {
                         1 | 2 => {
-                            tokio::try_join!(data.recv::<LeftData>(), notice.recv::<LeftNotice>())?;
+                            async {
+                                async { (data.recv::<LeftData>()).await };
+                                async { (notice.recv::<LeftNotice>()).await };
+                            }
+                            .await?;
                         }
                         3 | 4 => {
-                            tokio::try_join!(
-                                data.recv::<RightData>(),
-                                notice.recv::<RightNotice>()
-                            )?;
+                            async {
+                                async { (data.recv::<RightData>()).await };
+
+                                async { (notice.recv::<RightNotice>()).await };
+                            }
+                            .await?;
                         }
                         _ => panic!("unexpected received label"),
                     }
@@ -258,25 +317,28 @@ fn a_borrow_containing_a_choice_uses_its_other_views_preview() {
             ticks.recv::<Ack>().await?;
             Ok::<_, EndpointError>(())
         };
-        let results = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .start_paused(true)
-            .build()
-            .unwrap()
-            .block_on(async {
-                tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                    tokio::join!(owner_run, worker_run, peer_run)
-                })
+        let results = {
+            (async {
+                async {
+                    async { Ok::<_, hibana::EndpointError>((owner_run).await) };
+                    async { Ok::<_, hibana::EndpointError>((worker_run).await) };
+                    async { Ok::<_, hibana::EndpointError>((peer_run).await) };
+                }
                 .await
-                .expect("borrowed parallel views stalled")
-            });
+                .expect("all child results are data")
+            })
+            .await
+        };
         assert!(matches!(&results, (Ok(()), Ok(()), Ok(()))), "{results:?}");
         assert!(network.queue_is_empty());
     }
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail() {
+async fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::Endpoint;
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
     type LeftRead = g::Msg<1, ()>;
@@ -335,84 +397,87 @@ fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail() {
     let mut owner = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
     let db = rv1.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::try_join!(
-                    async {
-                        let mut db = holder.recv::<Loan<'_>>().await?;
-                        for visit in 0..2 {
-                            {
-                                let [mut notice] = holder.par().unwrap_or_else(|error| {
-                                    panic!("holder par visit {visit}: {error:?}")
-                                });
-                                let [mut left, mut right] = db.par().unwrap_or_else(|error| {
-                                    panic!("resource par visit {visit}: {error:?}")
-                                });
-                                tokio::try_join!(
-                                    async {
-                                        left.send::<LeftRead>(&()).await?;
-                                        notice.send::<LeftNotice>(&()).await?;
-                                        left.recv::<LeftValue>().await?;
-                                        Ok::<_, hibana::EndpointError>(())
-                                    },
-                                    async {
-                                        right.send::<RightRead>(&()).await?;
-                                        right.recv::<RightValue>().await?;
-                                        Ok::<_, hibana::EndpointError>(())
-                                    },
-                                )?;
+    {
+        (async {
+            async {
+                async {
+                    let mut db = holder.recv::<Loan<'_>>().await?;
+                    for visit in 0..2 {
+                        {
+                            let [mut notice] = holder.par().unwrap_or_else(|error| {
+                                panic!("holder par visit {visit}: {error:?}")
+                            });
+                            let [mut left, mut right] = db.par().unwrap_or_else(|error| {
+                                panic!("resource par visit {visit}: {error:?}")
+                            });
+                            async {
+                                async {
+                                    left.send::<LeftRead>(&()).await?;
+                                    notice.send::<LeftNotice>(&()).await?;
+                                    left.recv::<LeftValue>().await?;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
+                                async {
+                                    right.send::<RightRead>(&()).await?;
+                                    right.recv::<RightValue>().await?;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
                             }
-                            db.send::<TailRead>(&()).await?;
-                            holder.send::<TailNotice>(&()).await?;
-                            db.recv::<TailValue>().await?;
+                            .await?;
                         }
-                        holder.send::<Return<'_>>(db).await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        owner.send::<Loan<'_>>(db).await?;
-                        let db = owner.recv::<Return<'_>>().await?;
-                        drop(db);
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        for visit in 0..2 {
-                            {
-                                let [mut left, mut right] = service.par().unwrap_or_else(|error| {
-                                    panic!("service par visit {visit}: {error:?}")
-                                });
-                                tokio::try_join!(
-                                    async {
-                                        left.recv::<LeftRead>().await?;
-                                        left.recv::<LeftNotice>().await?;
-                                        left.send::<LeftValue>(&()).await?;
-                                        Ok::<_, hibana::EndpointError>(())
-                                    },
-                                    async {
-                                        right.recv::<RightRead>().await?;
-                                        right.send::<RightValue>(&()).await?;
-                                        Ok::<_, hibana::EndpointError>(())
-                                    },
-                                )?;
+                        db.send::<TailRead>(&()).await?;
+                        holder.send::<TailNotice>(&()).await?;
+                        db.recv::<TailValue>().await?;
+                    }
+                    holder.send::<Return<'_>>(db).await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    owner.send::<Loan<'_>>(db).await?;
+                    let db = owner.recv::<Return<'_>>().await?;
+                    drop(db);
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    for visit in 0..2 {
+                        {
+                            let [mut left, mut right] = service.par().unwrap_or_else(|error| {
+                                panic!("service par visit {visit}: {error:?}")
+                            });
+                            async {
+                                async {
+                                    left.recv::<LeftRead>().await?;
+                                    left.recv::<LeftNotice>().await?;
+                                    left.send::<LeftValue>(&()).await?;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
+                                async {
+                                    right.recv::<RightRead>().await?;
+                                    right.send::<RightValue>(&()).await?;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
                             }
-                            service.recv::<TailRead>().await?;
-                            service.recv::<TailNotice>().await?;
-                            service.send::<TailValue>(&()).await?;
+                            .await?;
                         }
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                )
-            })
+                        service.recv::<TailRead>().await?;
+                        service.recv::<TailNotice>().await?;
+                        service.send::<TailValue>(&()).await?;
+                    }
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("delegated parallel prefix stalled")
-            .unwrap();
-        });
+        })
+        .await
+        .unwrap();
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
 fn returned_resource_parallel_global() -> impl hibana::runtime::program::Projectable {
@@ -455,8 +520,10 @@ fn returned_resource_parallel_global() -> impl hibana::runtime::program::Project
     )
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_returned_resource_and_its_holder_borrow_both_parallel_arms_on_each_visit() {
+async fn a_returned_resource_and_its_holder_borrow_both_parallel_arms_on_each_visit()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::Endpoint;
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
     type VisitLoan<'r> = g::Msg<1, Endpoint<'r, 3>>;
@@ -496,86 +563,90 @@ fn a_returned_resource_and_its_holder_borrow_both_parallel_arms_on_each_visit() 
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
     let db = rv0.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::try_join!(
-                    async {
-                        assert!(owner.par::<2>().is_err(), "the initial loan is required");
-                        owner.send::<Loan<'_>>(db).await?;
-                        for visit in 0..2 {
-                            let mut db = owner.recv::<VisitLoan<'_>>().await?;
-                            {
-                                let [mut left_notice, mut right_notice] =
-                                    owner.par().unwrap_or_else(|error| {
-                                        panic!("holder par visit={visit}: {error:?}")
-                                    });
-                                let [mut left_db, mut right_db] =
-                                    db.par().unwrap_or_else(|error| {
-                                        panic!("resource par visit={visit}: {error:?}")
-                                    });
-                                let (left, right) = tokio::try_join!(
-                                    async {
-                                        left_db.send::<LeftRead>(&visit).await?;
-                                        left_notice.send::<LeftNotice>(&10).await?;
-                                        left_db.recv::<LeftValue>().await
-                                    },
-                                    async {
-                                        right_db.send::<RightRead>(&visit).await?;
-                                        right_notice.send::<RightNotice>(&20).await?;
-                                        right_db.recv::<RightValue>().await
-                                    },
-                                )?;
-                                assert_eq!((left, right), (visit + 10, visit + 20));
-                            }
-                            owner.send::<VisitReturn<'_>>(db).await?;
-                        }
-                        drop(owner.recv::<FinalReturn<'_>>().await?);
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        let mut db = worker.recv::<Loan<'_>>().await?;
-                        for _ in 0..2 {
-                            worker.send::<VisitLoan<'_>>(db).await?;
-                            db = worker.recv::<VisitReturn<'_>>().await?;
-                        }
-                        worker.send::<FinalReturn<'_>>(db).await
-                    },
-                    async {
-                        for visit in 0..2 {
-                            let [mut left, mut right] = service.par().unwrap_or_else(|error| {
-                                panic!("service par visit={visit}: {error:?}")
+    {
+        (async {
+            async {
+                async {
+                    assert!(owner.par::<2>().is_err(), "the initial loan is required");
+                    owner.send::<Loan<'_>>(db).await?;
+                    for visit in 0..2 {
+                        let mut db = owner.recv::<VisitLoan<'_>>().await?;
+                        {
+                            let [mut left_notice, mut right_notice] =
+                                owner.par().unwrap_or_else(|error| {
+                                    panic!("holder par visit={visit}: {error:?}")
+                                });
+                            let [mut left_db, mut right_db] = db.par().unwrap_or_else(|error| {
+                                panic!("resource par visit={visit}: {error:?}")
                             });
-                            tokio::try_join!(
+                            let (left, right) = async {
                                 async {
-                                    let read = left.recv::<LeftRead>().await?;
-                                    let notice = left.recv::<LeftNotice>().await?;
-                                    left.send::<LeftValue>(&(read + notice)).await
-                                },
+                                    left_db.send::<LeftRead>(&visit).await?;
+                                    left_notice.send::<LeftNotice>(&10).await?;
+                                    left_db.recv::<LeftValue>().await
+                                };
+
                                 async {
-                                    let read = right.recv::<RightRead>().await?;
-                                    let notice = right.recv::<RightNotice>().await?;
-                                    right.send::<RightValue>(&(read + notice)).await
-                                },
-                            )?;
+                                    right_db.send::<RightRead>(&visit).await?;
+                                    right_notice.send::<RightNotice>(&20).await?;
+                                    right_db.recv::<RightValue>().await
+                                };
+                            }
+                            .await?;
+                            assert_eq!((left, right), (visit + 10, visit + 20));
                         }
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                )
-            })
+                        owner.send::<VisitReturn<'_>>(db).await?;
+                    }
+                    drop(owner.recv::<FinalReturn<'_>>().await?);
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let mut db = worker.recv::<Loan<'_>>().await?;
+                    for _ in 0..2 {
+                        worker.send::<VisitLoan<'_>>(db).await?;
+                        db = worker.recv::<VisitReturn<'_>>().await?;
+                    }
+                    worker.send::<FinalReturn<'_>>(db).await
+                };
+
+                async {
+                    for visit in 0..2 {
+                        let [mut left, mut right] = service
+                            .par()
+                            .unwrap_or_else(|error| panic!("service par visit={visit}: {error:?}"));
+                        async {
+                            async {
+                                let read = left.recv::<LeftRead>().await?;
+                                let notice = left.recv::<LeftNotice>().await?;
+                                left.send::<LeftValue>(&(read + notice)).await
+                            };
+
+                            async {
+                                let read = right.recv::<RightRead>().await?;
+                                let notice = right.recv::<RightNotice>().await?;
+                                right.send::<RightValue>(&(read + notice)).await
+                            };
+                        }
+                        .await?;
+                    }
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("parallel work in a returned resource stopped")
-            .unwrap();
-        });
+        })
+        .await
+        .unwrap();
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_retained_completion_cannot_send_before_the_next_visits_own_loan() {
+async fn a_retained_completion_cannot_send_before_the_next_visits_own_loan()
+-> core::result::Result<(), hibana::EndpointError> {
     use core::{future::Future, task::Poll};
     use hibana::Endpoint;
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
@@ -614,70 +685,69 @@ fn a_retained_completion_cannot_send_before_the_next_visits_own_loan() {
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
     let db = rv0.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                owner.send::<Loan<'_>>(db).await.unwrap();
-                let mut db = worker.recv::<Loan<'_>>().await.unwrap();
-                for visit in 0..2 {
-                    worker.send::<VisitLoan<'_>>(db).await.unwrap();
-                    db = owner.recv::<VisitLoan<'_>>().await.unwrap();
-                    {
-                        let [mut left_notice, mut right_notice] = owner.par().unwrap();
-                        let [mut left_db, mut right_db] = db.par().unwrap();
-                        let [mut left_service, mut right_service] = service.par().unwrap();
-                        tokio::try_join!(
-                            async {
-                                left_db.send::<LeftRead>(&visit).await?;
-                                tokio::task::yield_now().await;
-                                let value = left_service.recv::<LeftRead>().await?;
-                                left_notice.send::<LeftNotice>(&10).await?;
-                                let notice = left_service.recv::<LeftNotice>().await?;
-                                left_service.send::<LeftValue>(&(value + notice)).await?;
-                                assert_eq!(left_db.recv::<LeftValue>().await?, visit + 10);
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            async {
-                                right_db.send::<RightRead>(&visit).await?;
-                                tokio::task::yield_now().await;
-                                let value = right_service.recv::<RightRead>().await?;
-                                right_notice.send::<RightNotice>(&20).await?;
-                                let notice = right_service.recv::<RightNotice>().await?;
-                                right_service.send::<RightValue>(&(value + notice)).await?;
-                                assert_eq!(right_db.recv::<RightValue>().await?, visit + 20);
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                        )
-                        .unwrap();
+    {
+        (async {
+            owner.send::<Loan<'_>>(db).await.unwrap();
+            let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+            for visit in 0..2 {
+                worker.send::<VisitLoan<'_>>(db).await.unwrap();
+                db = owner.recv::<VisitLoan<'_>>().await.unwrap();
+                {
+                    let [mut left_notice, mut right_notice] = owner.par().unwrap();
+                    let [mut left_db, mut right_db] = db.par().unwrap();
+                    let [mut left_service, mut right_service] = service.par().unwrap();
+                    async {
+                        async {
+                            left_db.send::<LeftRead>(&visit).await?;
+                            hibana_runtime::yield_now().await;
+                            let value = left_service.recv::<LeftRead>().await?;
+                            left_notice.send::<LeftNotice>(&10).await?;
+                            let notice = left_service.recv::<LeftNotice>().await?;
+                            left_service.send::<LeftValue>(&(value + notice)).await?;
+                            assert_eq!(left_db.recv::<LeftValue>().await?, visit + 10);
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async {
+                            right_db.send::<RightRead>(&visit).await?;
+                            hibana_runtime::yield_now().await;
+                            let value = right_service.recv::<RightRead>().await?;
+                            right_notice.send::<RightNotice>(&20).await?;
+                            let notice = right_service.recv::<RightNotice>().await?;
+                            right_service.send::<RightValue>(&(value + notice)).await?;
+                            assert_eq!(right_db.recv::<RightValue>().await?, visit + 20);
+                            Ok::<_, hibana::EndpointError>(())
+                        };
                     }
-                    owner.send::<VisitReturn<'_>>(db).await.unwrap();
-                    db = worker.recv::<VisitReturn<'_>>().await.unwrap();
+                    .await
+                    .unwrap();
                 }
-                assert!(network.queue_is_empty());
-                let future = owner.send::<LeftNotice>(&99);
-                tokio::pin!(future);
-                let result =
-                    core::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await;
-                assert!(
-                    matches!(result, Poll::Ready(Err(_))),
-                    "next visit skipped its loan: {result:?}"
-                );
-                assert!(
-                    network.queue_is_empty(),
-                    "an out-of-order notice reached the service"
-                );
-            })
-            .await
-            .expect("preparing the retained completion stalled");
-        });
+                owner.send::<VisitReturn<'_>>(db).await.unwrap();
+                db = worker.recv::<VisitReturn<'_>>().await.unwrap();
+            }
+            assert!(network.queue_is_empty());
+            let future = owner.send::<LeftNotice>(&99);
+            let mut future = core::pin::pin!(future);
+            let result = core::future::poll_fn(|cx| Poll::Ready(future.as_mut().poll(cx))).await;
+            assert!(
+                matches!(result, Poll::Ready(Err(_))),
+                "next visit skipped its loan: {result:?}"
+            );
+            assert!(
+                network.queue_is_empty(),
+                "an out-of-order notice reached the service"
+            );
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_parallel_repeat_can_continue_before_an_enclosing_choice_restarts() {
+async fn a_parallel_repeat_can_continue_before_an_enclosing_choice_restarts()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};
     type First = g::Msg<140, ()>;
     type FirstReply = g::Msg<141, ()>;
@@ -711,62 +781,65 @@ fn a_parallel_repeat_can_continue_before_an_enclosing_choice_restarts() {
     let sid = SessionId::new(9392);
     let mut sender = rv0.enter(sid, &p0).unwrap();
     let mut receiver = rv1.enter(sid, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                tokio::try_join!(
-                    biased;
-                    async {
-                        assert_eq!(sender.offer().await?.label(), 140);
-                        for _ in 0..2 {
-                            let [mut first, mut second] = sender.par()?;
-                            tokio::try_join!(
-                                async {
-                                    first.send::<First>(&()).await?;
-                                    first.recv::<FirstReply>().await
-                                },
-                                async {
-                                    second.send::<Second>(&()).await?;
-                                    second.recv::<SecondReply>().await
-                                },
-                            )?;
+    {
+        (async {
+            async {
+                async {
+                    assert_eq!(sender.offer().await?.label(), 140);
+                    for _ in 0..2 {
+                        let [mut first, mut second] = sender.par()?;
+                        async {
+                            async {
+                                first.send::<First>(&()).await?;
+                                first.recv::<FirstReply>().await
+                            };
+
+                            async {
+                                second.send::<Second>(&()).await?;
+                                second.recv::<SecondReply>().await
+                            };
                         }
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        assert_eq!(receiver.offer().await?.label(), 140);
-                        for visit in 0..2 {
-                            let [mut first, mut second] = receiver.par().unwrap_or_else(|error| {
-                                panic!("receiver par visit={visit}: {error:?}")
-                            });
-                            tokio::try_join!(
-                                async {
-                                    first.recv::<First>().await?;
-                                    first.send::<FirstReply>(&()).await
-                                },
-                                async {
-                                    second.recv::<Second>().await?;
-                                    second.send::<SecondReply>(&()).await
-                                },
-                            )?;
+                        .await?;
+                    }
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    assert_eq!(receiver.offer().await?.label(), 140);
+                    for visit in 0..2 {
+                        let [mut first, mut second] = receiver.par().unwrap_or_else(|error| {
+                            panic!("receiver par visit={visit}: {error:?}")
+                        });
+                        async {
+                            async {
+                                first.recv::<First>().await?;
+                                first.send::<FirstReply>(&()).await
+                            };
+
+                            async {
+                                second.recv::<Second>().await?;
+                                second.send::<SecondReply>(&()).await
+                            };
                         }
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                )
-            })
+                        .await?;
+                    }
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("parallel repeat must finish")
-            .unwrap();
-            assert!(network.queue_is_empty());
-        });
+        })
+        .await
+        .unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_rolled_parallel_borrow_can_repeat_before_its_sequential_tail() {
+async fn a_rolled_parallel_borrow_can_repeat_before_its_sequential_tail()
+-> core::result::Result<(), hibana::EndpointError> {
     type RequestA = g::Msg<120, ()>;
     type ReplyA = g::Msg<121, ()>;
     type RequestB = g::Msg<122, ()>;
@@ -803,86 +876,92 @@ fn a_rolled_parallel_borrow_can_repeat_before_its_sequential_tail() {
     let sid = SessionId::new(9391);
     let mut a = rv0.enter(sid, &p0).unwrap();
     let mut b = rv1.enter(sid, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                let [mut flow_a, mut outside_a] = a.par()?;
-                let [mut flow_b, mut outside_b] = b.par()?;
-                tokio::try_join!(
-                    async {
-                        for visit in 0..2 {
-                            let [mut first, mut repeated] = flow_a.par().unwrap_or_else(|error| {
-                                panic!("sender par visit={visit}: {error:?}")
-                            });
-                            tokio::try_join!(
-                                async {
-                                    first.send::<RequestA>(&()).await?;
-                                    first.recv::<ReplyA>().await?;
-                                    Ok::<_, hibana::EndpointError>(())
-                                },
-                                async {
-                                    for _ in 0..2 {
-                                        repeated.send::<RequestB>(&()).await?;
-                                        repeated.recv::<ReplyB>().await?;
-                                    }
-                                    Ok::<_, hibana::EndpointError>(())
-                                },
-                            )?;
+    {
+        (async {
+            let [mut flow_a, mut outside_a] = a.par()?;
+            let [mut flow_b, mut outside_b] = b.par()?;
+            async {
+                async {
+                    for visit in 0..2 {
+                        let [mut first, mut repeated] = flow_a
+                            .par()
+                            .unwrap_or_else(|error| panic!("sender par visit={visit}: {error:?}"));
+                        async {
+                            async {
+                                first.send::<RequestA>(&()).await?;
+                                first.recv::<ReplyA>().await?;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+
+                            async {
+                                for _ in 0..2 {
+                                    repeated.send::<RequestB>(&()).await?;
+                                    repeated.recv::<ReplyB>().await?;
+                                }
+                                Ok::<_, hibana::EndpointError>(())
+                            };
                         }
-                        flow_a.send::<Tail>(&()).await?;
-                        flow_a.recv::<TailReply>().await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        for visit in 0..2 {
-                            let [mut first, mut repeated] = flow_b.par().unwrap_or_else(|error| {
-                                panic!("receiver par visit={visit}: {error:?}")
-                            });
-                            tokio::try_join!(
-                                async {
-                                    first.recv::<RequestA>().await?;
-                                    first.send::<ReplyA>(&()).await?;
-                                    Ok::<_, hibana::EndpointError>(())
-                                },
-                                async {
-                                    for _ in 0..2 {
-                                        repeated.recv::<RequestB>().await?;
-                                        repeated.send::<ReplyB>(&()).await?;
-                                    }
-                                    Ok::<_, hibana::EndpointError>(())
-                                },
-                            )?;
+                        .await?;
+                    }
+                    flow_a.send::<Tail>(&()).await?;
+                    flow_a.recv::<TailReply>().await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    for visit in 0..2 {
+                        let [mut first, mut repeated] = flow_b.par().unwrap_or_else(|error| {
+                            panic!("receiver par visit={visit}: {error:?}")
+                        });
+                        async {
+                            async {
+                                first.recv::<RequestA>().await?;
+                                first.send::<ReplyA>(&()).await?;
+                                Ok::<_, hibana::EndpointError>(())
+                            };
+
+                            async {
+                                for _ in 0..2 {
+                                    repeated.recv::<RequestB>().await?;
+                                    repeated.send::<ReplyB>(&()).await?;
+                                }
+                                Ok::<_, hibana::EndpointError>(())
+                            };
                         }
-                        flow_b.recv::<Tail>().await?;
-                        flow_b.send::<TailReply>(&()).await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        outside_a.send::<Outside>(&()).await?;
-                        outside_a.recv::<OutsideReply>().await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    async {
-                        outside_b.recv::<Outside>().await?;
-                        outside_b.send::<OutsideReply>(&()).await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                )?;
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("nested repeated borrows must finish")
-            .unwrap();
-        });
+                        .await?;
+                    }
+                    flow_b.recv::<Tail>().await?;
+                    flow_b.send::<TailReply>(&()).await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    outside_a.send::<Outside>(&()).await?;
+                    outside_a.recv::<OutsideReply>().await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    outside_b.recv::<Outside>().await?;
+                    outside_b.send::<OutsideReply>(&()).await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
+            .await?;
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_parallel_borrow_rejects_its_own_cross_lane_prefix() {
+async fn a_parallel_borrow_rejects_its_own_cross_lane_prefix()
+-> core::result::Result<(), hibana::EndpointError> {
     type Note = g::Msg<246, ()>;
     let global = g::par(
         g::seq(
@@ -927,274 +1006,280 @@ fn a_parallel_borrow_rejects_its_own_cross_lane_prefix() {
     let mut b = rv1.enter(sid, &p1).unwrap();
     let mut c = rv2.enter(sid, &p2).unwrap();
     let mut d = rv3.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            for _ in 0..2 {
-                let [mut flow, mut note] = a.par().unwrap();
-                tokio::try_join!(
+    {
+        for _ in 0..2 {
+            let [mut flow, mut note] = a.par().unwrap();
+            async {
+                async {
+                    flow.send::<Prefix>(&()).await?;
+                    let [mut work, mut tick] = flow.par()?;
                     async {
-                        flow.send::<Prefix>(&()).await?;
-                        let [mut work, mut tick] = flow.par()?;
-                        tokio::try_join!(
-                            async {
-                                work.send::<Work>(&()).await?;
-                                work.recv::<Ack>().await?;
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            tick.send::<Tick>(&()),
-                        )?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    note.send::<Note>(&()),
-                    async {
-                        b.recv::<Prefix>().await?;
-                        b.recv::<Work>().await?;
-                        b.send::<Ack>(&()).await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    c.recv::<Tick>(),
-                    d.recv::<Note>(),
-                )
-                .unwrap();
-            }
-            assert!(network.queue_is_empty());
-            let [mut flow, _note] = a.par().unwrap();
-            let result =
-                tokio::time::timeout(core::time::Duration::from_millis(1), flow.send::<Tick>(&()))
-                    .await
-                    .expect("the borrow must reject its own prefix instead of waiting for it");
-            assert!(result.is_err());
-            assert!(network.queue_is_empty());
-        });
-}
+                        async {
+                            work.send::<Work>(&()).await?;
+                            work.recv::<Ack>().await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
 
-#[test]
-fn a_child_repeat_keeps_its_prefix_on_another_lane() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            type TailA = g::Msg<244, ()>;
-            type TailB = g::Msg<245, ()>;
-            let global = g::seq(
-                g::send::<0, 1, Prefix>(),
-                g::seq(
-                    g::par(g::send::<0, 1, Work>(), g::send::<0, 2, Tick>()).roll(),
-                    g::par(g::send::<0, 1, TailA>(), g::send::<0, 2, TailB>()),
-                ),
-            )
-            .roll();
-            assert_eq!(g::diagnose(&global), None);
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let p2 = project::<2>(&global);
-            let network = common::TestTransport::new();
-            let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
-            let mut s0 = SessionKitStorage::uninit();
-            let mut s1 = SessionKitStorage::uninit();
-            let mut s2 = SessionKitStorage::uninit();
-            let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
-            let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
-            let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
-            let sid = SessionId::new(9303);
-            let mut a = rv0.enter(sid, &p0).unwrap();
-            let mut b = rv1.enter(sid, &p1).unwrap();
-            let mut c = rv2.enter(sid, &p2).unwrap();
-            a.send::<Prefix>(&()).await.unwrap();
-            b.recv::<Prefix>().await.unwrap();
-            {
-                let [mut work, mut tick] = a.par().unwrap();
-                tokio::try_join!(
-                    work.send::<Work>(&()),
-                    tick.send::<Tick>(&()),
-                    b.recv::<Work>(),
-                    c.recv::<Tick>()
-                )
-                .unwrap();
-            }
-            {
-                let [mut tail_a, mut tail_b] = a.par().unwrap();
-                tokio::try_join!(
-                    tail_a.send::<TailA>(&()),
-                    tail_b.send::<TailB>(&()),
-                    b.recv::<TailA>(),
-                    c.recv::<TailB>()
-                )
-                .unwrap();
-            }
-            // Probe the second lane first, after both continuation lanes completed.
-            a.send::<Tick>(&())
-                .await
-                .expect("the child retains its prefix on another lane");
-            c.recv::<Tick>().await.unwrap();
-            a.send::<Work>(&()).await.unwrap();
-            b.recv::<Work>().await.unwrap();
-            a.send::<Prefix>(&()).await.unwrap();
-            b.recv::<Prefix>().await.unwrap();
-            assert!(network.queue_is_empty());
-        });
-}
+                        async { (tick.send::<Tick>(&())).await };
+                    }
+                    .await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
 
-#[test]
-fn an_inner_repeat_after_a_same_lane_tail_keeps_its_outer_prefix() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let global = g::seq(
-                g::send::<0, 1, Prefix>(),
-                g::seq(
-                    g::seq(g::send::<0, 1, Work>(), g::send::<1, 0, Ack>()).roll(),
-                    g::send::<0, 1, Tick>(),
-                ),
-            )
-            .roll();
-            assert_eq!(g::diagnose(&global), None);
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let network = common::TestTransport::new();
-            let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
-            let mut storage0 = SessionKitStorage::uninit();
-            let mut storage1 = SessionKitStorage::uninit();
-            let rv0 = storage0
-                .init()
-                .rendezvous(&mut slab0, network.clone())
-                .unwrap();
-            let rv1 = storage1
-                .init()
-                .rendezvous(&mut slab1, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9301);
-            let mut a = rv0.enter(sid, &p0).unwrap();
-            let mut b = rv1.enter(sid, &p1).unwrap();
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for _ in 0..2 {
-                    a.send::<Prefix>(&()).await?;
+                async { (note.send::<Note>(&())).await };
+
+                async {
                     b.recv::<Prefix>().await?;
-                    a.send::<Work>(&()).await?;
                     b.recv::<Work>().await?;
                     b.send::<Ack>(&()).await?;
-                    a.recv::<Ack>().await?;
-                    a.send::<Tick>(&()).await?;
-                    b.recv::<Tick>().await?;
-                    // Continue the child within this same enclosing visit.
-                    a.send::<Work>(&())
-                        .await
-                        .expect("continue the old inner send after the tail");
-                    b.recv::<Work>()
-                        .await
-                        .expect("receive the continued inner work");
-                    b.send::<Ack>(&())
-                        .await
-                        .expect("reply in the continued inner visit");
-                    a.recv::<Ack>()
-                        .await
-                        .expect("receive the continued inner reply");
-                }
-                Ok::<_, hibana::EndpointError>(())
-            })
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async { (c.recv::<Tick>()).await };
+
+                async { (d.recv::<Note>()).await };
+            }
             .await
-            .expect("inner continuation must not wait for a fresh outer prefix")
             .unwrap();
-            assert!(network.queue_is_empty());
-        });
+        }
+        assert!(network.queue_is_empty());
+        let [mut flow, _note] = a.par().unwrap();
+        let result = (flow.send::<Tick>(&())).await;
+        assert!(result.is_err());
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_delegated_child_after_a_same_lane_tail_keeps_its_outer_prefix() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            use hibana::Endpoint;
-            type Loan<'a> = g::Msg<238, Endpoint<'a, 3>>;
-            type Read = g::Msg<239, u32>;
-            type Value = g::Msg<240, u32>;
-            let global = g::seq(
-                g::send::<0, 1, Prefix>(),
+async fn a_child_repeat_keeps_its_prefix_on_another_lane()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        type TailA = g::Msg<244, ()>;
+        type TailB = g::Msg<245, ()>;
+        let global = g::seq(
+            g::send::<0, 1, Prefix>(),
+            g::seq(
+                g::par(g::send::<0, 1, Work>(), g::send::<0, 2, Tick>()).roll(),
+                g::par(g::send::<0, 1, TailA>(), g::send::<0, 2, TailB>()),
+            ),
+        )
+        .roll();
+        assert_eq!(g::diagnose(&global), None);
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let p2 = project::<2>(&global);
+        let network = common::TestTransport::new();
+        let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+        let mut s0 = SessionKitStorage::uninit();
+        let mut s1 = SessionKitStorage::uninit();
+        let mut s2 = SessionKitStorage::uninit();
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+        let sid = SessionId::new(9303);
+        let mut a = rv0.enter(sid, &p0).unwrap();
+        let mut b = rv1.enter(sid, &p1).unwrap();
+        let mut c = rv2.enter(sid, &p2).unwrap();
+        a.send::<Prefix>(&()).await.unwrap();
+        b.recv::<Prefix>().await.unwrap();
+        {
+            let [mut work, mut tick] = a.par().unwrap();
+            async {
+                async { (work.send::<Work>(&())).await };
+
+                async { (tick.send::<Tick>(&())).await };
+
+                async { (b.recv::<Work>()).await };
+
+                async { (c.recv::<Tick>()).await };
+            }
+            .await
+            .unwrap();
+        }
+        {
+            let [mut tail_a, mut tail_b] = a.par().unwrap();
+            async {
+                async { (tail_a.send::<TailA>(&())).await };
+
+                async { (tail_b.send::<TailB>(&())).await };
+
+                async { (b.recv::<TailA>()).await };
+
+                async { (c.recv::<TailB>()).await };
+            }
+            .await
+            .unwrap();
+        }
+        // Probe the second lane first, after both continuation lanes completed.
+        a.send::<Tick>(&())
+            .await
+            .expect("the child retains its prefix on another lane");
+        c.recv::<Tick>().await.unwrap();
+        a.send::<Work>(&()).await.unwrap();
+        b.recv::<Work>().await.unwrap();
+        a.send::<Prefix>(&()).await.unwrap();
+        b.recv::<Prefix>().await.unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_inner_repeat_after_a_same_lane_tail_keeps_its_outer_prefix()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        let global = g::seq(
+            g::send::<0, 1, Prefix>(),
+            g::seq(
+                g::seq(g::send::<0, 1, Work>(), g::send::<1, 0, Ack>()).roll(),
+                g::send::<0, 1, Tick>(),
+            ),
+        )
+        .roll();
+        assert_eq!(g::diagnose(&global), None);
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let network = common::TestTransport::new();
+        let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+        let mut storage0 = SessionKitStorage::uninit();
+        let mut storage1 = SessionKitStorage::uninit();
+        let rv0 = storage0
+            .init()
+            .rendezvous(&mut slab0, network.clone())
+            .unwrap();
+        let rv1 = storage1
+            .init()
+            .rendezvous(&mut slab1, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9301);
+        let mut a = rv0.enter(sid, &p0).unwrap();
+        let mut b = rv1.enter(sid, &p1).unwrap();
+        (async {
+            for _ in 0..2 {
+                a.send::<Prefix>(&()).await?;
+                b.recv::<Prefix>().await?;
+                a.send::<Work>(&()).await?;
+                b.recv::<Work>().await?;
+                b.send::<Ack>(&()).await?;
+                a.recv::<Ack>().await?;
+                a.send::<Tick>(&()).await?;
+                b.recv::<Tick>().await?;
+                // Continue the child within this same enclosing visit.
+                a.send::<Work>(&())
+                    .await
+                    .expect("continue the old inner send after the tail");
+                b.recv::<Work>()
+                    .await
+                    .expect("receive the continued inner work");
+                b.send::<Ack>(&())
+                    .await
+                    .expect("reply in the continued inner visit");
+                a.recv::<Ack>()
+                    .await
+                    .expect("receive the continued inner reply");
+            }
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_delegated_child_after_a_same_lane_tail_keeps_its_outer_prefix()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        use hibana::Endpoint;
+        type Loan<'a> = g::Msg<238, Endpoint<'a, 3>>;
+        type Read = g::Msg<239, u32>;
+        type Value = g::Msg<240, u32>;
+        let global = g::seq(
+            g::send::<0, 1, Prefix>(),
+            g::seq(
                 g::seq(
+                    g::send::<0, 1, Loan<'_>>(),
                     g::seq(
-                        g::send::<0, 1, Loan<'_>>(),
-                        g::seq(
-                            g::send::<3, 2, Read>(),
-                            g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Loan<'_>>()),
-                        ),
-                    )
-                    .roll(),
-                    g::send::<0, 1, Tick>(),
-                ),
-            )
-            .roll();
-            assert_eq!(g::diagnose(&global), None);
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let p2 = project::<2>(&global);
-            let p3 = project::<3>(&global);
-            let network = common::TestTransport::new();
-            let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
-            let mut storage0 = SessionKitStorage::uninit();
-            let mut storage1 = SessionKitStorage::uninit();
-            let mut storage2 = SessionKitStorage::uninit();
-            let rv0 = storage0
-                .init()
-                .rendezvous(&mut slab0, network.clone())
-                .unwrap();
-            let rv1 = storage1
-                .init()
-                .rendezvous(&mut slab1, network.clone())
-                .unwrap();
-            let rv2 = storage2
-                .init()
-                .rendezvous(&mut slab2, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9302);
-            let mut owner = rv0.enter(sid, &p0).unwrap();
-            let mut worker = rv1.enter(sid, &p1).unwrap();
-            let mut service = rv2.enter(sid, &p2).unwrap();
-            let mut db = rv0.enter(sid, &p3).unwrap();
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for visit in 0..2 {
-                    owner.send::<Prefix>(&()).await?;
-                    worker.recv::<Prefix>().await?;
-                    for child in 0..2 {
-                        owner
-                            .send::<Loan<'_>>(db)
-                            .await
-                            .expect("loan within the current outer visit");
-                        db = worker.recv::<Loan<'_>>().await?;
-                        db.send::<Read>(&(10 * visit + child)).await?;
-                        let number = service.recv::<Read>().await?;
-                        service.send::<Value>(&(number + 1)).await?;
-                        assert_eq!(db.recv::<Value>().await?, number + 1);
-                        worker.send::<Loan<'_>>(db).await?;
-                        db = owner.recv::<Loan<'_>>().await?;
-                        if child == 0 {
-                            owner.send::<Tick>(&()).await?;
-                            worker.recv::<Tick>().await?;
-                        }
+                        g::send::<3, 2, Read>(),
+                        g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Loan<'_>>()),
+                    ),
+                )
+                .roll(),
+                g::send::<0, 1, Tick>(),
+            ),
+        )
+        .roll();
+        assert_eq!(g::diagnose(&global), None);
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let p2 = project::<2>(&global);
+        let p3 = project::<3>(&global);
+        let network = common::TestTransport::new();
+        let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+        let mut storage0 = SessionKitStorage::uninit();
+        let mut storage1 = SessionKitStorage::uninit();
+        let mut storage2 = SessionKitStorage::uninit();
+        let rv0 = storage0
+            .init()
+            .rendezvous(&mut slab0, network.clone())
+            .unwrap();
+        let rv1 = storage1
+            .init()
+            .rendezvous(&mut slab1, network.clone())
+            .unwrap();
+        let rv2 = storage2
+            .init()
+            .rendezvous(&mut slab2, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9302);
+        let mut owner = rv0.enter(sid, &p0).unwrap();
+        let mut worker = rv1.enter(sid, &p1).unwrap();
+        let mut service = rv2.enter(sid, &p2).unwrap();
+        let mut db = rv0.enter(sid, &p3).unwrap();
+        (async {
+            for visit in 0..2 {
+                owner.send::<Prefix>(&()).await?;
+                worker.recv::<Prefix>().await?;
+                for child in 0..2 {
+                    owner
+                        .send::<Loan<'_>>(db)
+                        .await
+                        .expect("loan within the current outer visit");
+                    db = worker.recv::<Loan<'_>>().await?;
+                    db.send::<Read>(&(10 * visit + child)).await?;
+                    let number = service.recv::<Read>().await?;
+                    service.send::<Value>(&(number + 1)).await?;
+                    assert_eq!(db.recv::<Value>().await?, number + 1);
+                    worker.send::<Loan<'_>>(db).await?;
+                    db = owner.recv::<Loan<'_>>().await?;
+                    if child == 0 {
+                        owner.send::<Tick>(&()).await?;
+                        worker.recv::<Tick>().await?;
                     }
                 }
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("delegated child continuation must keep its enclosing prefix")
-            .unwrap();
-            assert!(network.queue_is_empty());
-        });
+            }
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_single_fragment_still_requires_a_parallel_source() {
+async fn a_single_fragment_still_requires_a_parallel_source()
+-> core::result::Result<(), hibana::EndpointError> {
     let global = g::seq(g::send::<0, 1, Work>(), g::send::<0, 1, Tick>());
     let p0 = project::<0>(&global);
     let p1 = project::<1>(&global);
@@ -1208,23 +1293,22 @@ fn a_single_fragment_still_requires_a_parallel_source() {
     let sid = SessionId::new(9300);
     let mut a = rv.enter(sid, &p0).unwrap();
     let mut b = rv.enter(sid, &p1).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            assert!(a.par::<1>().is_err());
-            a.send::<Work>(&()).await.unwrap();
-            b.recv::<Work>().await.unwrap();
-            a.send::<Tick>(&()).await.unwrap();
-            b.recv::<Tick>().await.unwrap();
-            assert!(network.queue_is_empty());
-        });
+    {
+        assert!(a.par::<1>().is_err());
+        a.send::<Work>(&()).await.unwrap();
+        b.recv::<Work>().await.unwrap();
+        a.send::<Tick>(&()).await.unwrap();
+        b.recv::<Tick>().await.unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn separate_endpoint_views_enter_the_same_parallel_repeat() {
+async fn separate_endpoint_views_enter_the_same_parallel_repeat()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::Endpoint;
     type Loan = g::Msg<235, Endpoint<'static, 3>>;
     type Read = g::Msg<236, u32>;
@@ -1255,59 +1339,58 @@ fn separate_endpoint_views_enter_the_same_parallel_repeat() {
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
     let mut db = rv0.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            owner.send::<Loan>(db).await.unwrap();
-            db = worker.recv::<Loan>().await.unwrap();
-            worker.send::<Loan>(db).await.unwrap();
-            db = owner.recv::<Loan>().await.unwrap();
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for visit in 0..3 {
-                    let [mut reads] = db.par()?;
-                    let [mut sent_tick] = owner.par()?;
-                    let [mut jobs] = service.par()?;
-                    let [mut received_tick] = worker.par()?;
-                    if visit == 1 {
-                        network.pause_send(3);
-                    }
-                    tokio::try_join!(
-                        biased;
-                        async {
-                            for value in [7, 11] {
-                                reads.send::<Read>(&value).await?;
-                                assert_eq!(reads.recv::<Value>().await?, value + 1);
-                            }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        async {
-                            sent_tick.send::<Tick>(&()).await?;
-                            if visit == 1 {
-                                assert!(network.paused_send_is_waiting(3));
-                                network.resume_send();
-                            }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        async {
-                            for _ in 0..2 {
-                                let value = jobs.recv::<Read>().await?;
-                                jobs.send::<Value>(&(value + 1)).await?;
-                            }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        received_tick.recv::<Tick>(),
-                    )?;
+    {
+        owner.send::<Loan>(db).await.unwrap();
+        db = worker.recv::<Loan>().await.unwrap();
+        worker.send::<Loan>(db).await.unwrap();
+        db = owner.recv::<Loan>().await.unwrap();
+        (async {
+            for visit in 0..3 {
+                let [mut reads] = db.par()?;
+                let [mut sent_tick] = owner.par()?;
+                let [mut jobs] = service.par()?;
+                let [mut received_tick] = worker.par()?;
+                if visit == 1 {
+                    network.pause_send(3);
                 }
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("independent endpoint views must not serialize")
-            .unwrap();
-            assert!(network.queue_is_empty());
-        });
+                async {
+                    async {
+                        for value in [7, 11] {
+                            reads.send::<Read>(&value).await?;
+                            assert_eq!(reads.recv::<Value>().await?, value + 1);
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        sent_tick.send::<Tick>(&()).await?;
+                        if visit == 1 {
+                            assert!(network.paused_send_is_waiting(3));
+                            network.resume_send();
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        for _ in 0..2 {
+                            let value = jobs.recv::<Read>().await?;
+                            jobs.send::<Value>(&(value + 1)).await?;
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async { (received_tick.recv::<Tick>()).await };
+                }
+                .await?;
+            }
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
 fn global() -> impl hibana::runtime::program::Projectable {
@@ -1322,8 +1405,10 @@ fn global() -> impl hibana::runtime::program::Projectable {
     .roll()
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_choice_wrapped_parallel_repeat_keeps_its_repeat_origin() {
+async fn a_choice_wrapped_parallel_repeat_keeps_its_repeat_origin()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::runtime::resolver::{DecisionArm, ResolverRef};
     type OtherWork = g::Msg<241, ()>;
     type OtherAck = g::Msg<242, ()>;
@@ -1367,98 +1452,102 @@ fn a_choice_wrapped_parallel_repeat_keeps_its_repeat_origin() {
     let mut a = rv0.enter(sid, &p0).unwrap();
     let mut b = rv1.enter(sid, &p1).unwrap();
     let mut c = rv2.enter(sid, &p2).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for choice in [
-                    DecisionArm::Left,
-                    DecisionArm::Left,
-                    DecisionArm::Right,
-                    DecisionArm::Right,
-                    DecisionArm::Left,
-                ] {
-                    input.0.set(choice);
-                    tokio::try_join!(
-                        biased;
-                        async {
-                            let label = a.offer().await?.label();
-                            match label {
-                                232 => {
-                                    let [mut exchanges, mut tick] = a.par()?;
-                                    tokio::try_join!(
-                                        async {
-                                            for _ in 0..2 {
-                                                exchanges.send::<Work>(&()).await?;
-                                                exchanges.recv::<Ack>().await?;
-                                            }
-                                            Ok::<_, hibana::EndpointError>(())
-                                        },
-                                        tick.send::<Tick>(&()),
-                                    )?;
+    {
+        (async {
+            for choice in [
+                DecisionArm::Left,
+                DecisionArm::Left,
+                DecisionArm::Right,
+                DecisionArm::Right,
+                DecisionArm::Left,
+            ] {
+                input.0.set(choice);
+                async {
+                    async {
+                        let label = a.offer().await?.label();
+                        match label {
+                            232 => {
+                                let [mut exchanges, mut tick] = a.par()?;
+                                async {
+                                    async {
+                                        for _ in 0..2 {
+                                            exchanges.send::<Work>(&()).await?;
+                                            exchanges.recv::<Ack>().await?;
+                                        }
+                                        Ok::<_, hibana::EndpointError>(())
+                                    };
+
+                                    async { (tick.send::<Tick>(&())).await };
                                 }
-                                241 => {
-                                    let [mut exchanges, mut tick] = a.par()?;
-                                    tokio::try_join!(
-                                        async {
-                                            for _ in 0..2 {
-                                                exchanges.send::<OtherWork>(&()).await?;
-                                                exchanges.recv::<OtherAck>().await?;
-                                            }
-                                            Ok::<_, hibana::EndpointError>(())
-                                        },
-                                        tick.send::<OtherTick>(&()),
-                                    )?;
-                                }
-                                label => panic!("unexpected controller branch {label}"),
+                                .await?;
                             }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        async {
-                            let label = b.offer().await?.label();
-                            match label {
-                                232 => {
-                                    for _ in 0..2 {
-                                        b.recv::<Work>().await?;
-                                        b.send::<Ack>(&()).await?;
-                                    }
+                            241 => {
+                                let [mut exchanges, mut tick] = a.par()?;
+                                async {
+                                    async {
+                                        for _ in 0..2 {
+                                            exchanges.send::<OtherWork>(&()).await?;
+                                            exchanges.recv::<OtherAck>().await?;
+                                        }
+                                        Ok::<_, hibana::EndpointError>(())
+                                    };
+
+                                    async { (tick.send::<OtherTick>(&())).await };
                                 }
-                                241 => {
-                                    for _ in 0..2 {
-                                        b.recv::<OtherWork>().await?;
-                                        b.send::<OtherAck>(&()).await?;
-                                    }
+                                .await?;
+                            }
+                            label => panic!("unexpected controller branch {label}"),
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let label = b.offer().await?.label();
+                        match label {
+                            232 => {
+                                for _ in 0..2 {
+                                    b.recv::<Work>().await?;
+                                    b.send::<Ack>(&()).await?;
                                 }
-                                label => panic!("unexpected exchange branch {label}"),
                             }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                        async {
-                            let label = c.offer().await?.label();
-                            match label {
-                                234 => c.recv::<Tick>().await?,
-                                243 => c.recv::<OtherTick>().await?,
-                                label => panic!("unexpected notification branch {label}"),
+                            241 => {
+                                for _ in 0..2 {
+                                    b.recv::<OtherWork>().await?;
+                                    b.send::<OtherAck>(&()).await?;
+                                }
                             }
-                            Ok::<_, hibana::EndpointError>(())
-                        },
-                    )?;
+                            label => panic!("unexpected exchange branch {label}"),
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let label = c.offer().await?.label();
+                        match label {
+                            234 => c.recv::<Tick>().await?,
+                            243 => c.recv::<OtherTick>().await?,
+                            label => panic!("unexpected notification branch {label}"),
+                        }
+                        Ok::<_, hibana::EndpointError>(())
+                    };
                 }
-                assert_eq!(input.1.get(), 5, "one resolver call per outer visit");
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("choice-wrapped parallel repeats must finish")
-            .unwrap();
-            assert!(network.queue_is_empty());
-        });
+                .await?;
+            }
+            assert_eq!(input.1.get(), 5, "one resolver call per outer visit");
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn borrowing_an_old_parallel_continuation_keeps_its_outer_prefix() {
+async fn borrowing_an_old_parallel_continuation_keeps_its_outer_prefix()
+-> core::result::Result<(), hibana::EndpointError> {
     let global = g::seq(
         g::send::<0, 1, Prefix>(),
         g::par(
@@ -1482,60 +1571,64 @@ fn borrowing_an_old_parallel_continuation_keeps_its_outer_prefix() {
     let mut a = rv0.enter(sid, &p0).unwrap();
     let mut b = rv1.enter(sid, &p1).unwrap();
     let mut c = rv2.enter(sid, &p2).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for _ in 0..2 {
-                    a.send::<Prefix>(&()).await?;
-                    b.recv::<Prefix>().await?;
-                    {
-                        let [mut exchanges, mut tick] = a.par()?;
-                        tokio::try_join!(
-                            async {
-                                exchanges.send::<Work>(&()).await?;
-                                exchanges.recv::<Ack>().await?;
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            tick.send::<Tick>(&()),
-                            async {
-                                b.recv::<Work>().await?;
-                                b.send::<Ack>(&()).await?;
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            c.recv::<Tick>(),
-                        )?;
+    {
+        (async {
+            for _ in 0..2 {
+                a.send::<Prefix>(&()).await?;
+                b.recv::<Prefix>().await?;
+                {
+                    let [mut exchanges, mut tick] = a.par()?;
+                    async {
+                        async {
+                            exchanges.send::<Work>(&()).await?;
+                            exchanges.recv::<Ack>().await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async { (tick.send::<Tick>(&())).await };
+
+                        async {
+                            b.recv::<Work>().await?;
+                            b.send::<Ack>(&()).await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async { (c.recv::<Tick>()).await };
                     }
-                    {
-                        let [mut exchanges, _completed_tick] = a.par()?;
-                        tokio::try_join!(
-                            async {
-                                exchanges.send::<Work>(&()).await?;
-                                exchanges.recv::<Ack>().await?;
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            async {
-                                b.recv::<Work>().await?;
-                                b.send::<Ack>(&()).await?;
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                        )?;
-                    }
+                    .await?;
                 }
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("parallel continuation must retain its prefix")
-            .unwrap();
-            assert!(network.queue_is_empty());
-        });
+                {
+                    let [mut exchanges, _completed_tick] = a.par()?;
+                    async {
+                        async {
+                            exchanges.send::<Work>(&()).await?;
+                            exchanges.recv::<Ack>().await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async {
+                            b.recv::<Work>().await?;
+                            b.send::<Ack>(&()).await?;
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+                    }
+                    .await?;
+                }
+            }
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_new_parallel_visit_requires_its_own_sequential_prefix() {
+async fn a_new_parallel_visit_requires_its_own_sequential_prefix()
+-> core::result::Result<(), hibana::EndpointError> {
     let global = g::par(
         g::seq(
             g::send::<0, 1, Prefix>(),
@@ -1568,110 +1661,114 @@ fn a_new_parallel_visit_requires_its_own_sequential_prefix() {
     let mut a = rv0.enter(sid, &p0).unwrap();
     let mut b = rv1.enter(sid, &p1).unwrap();
     let mut c = rv2.enter(sid, &p2).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            for _ in 0..2 {
-                let [mut exchanges, mut tick] = a.par().unwrap();
-                tokio::try_join!(
-                    async {
-                        exchanges.send::<Prefix>(&()).await?;
-                        exchanges.send::<Work>(&()).await?;
-                        exchanges.recv::<Ack>().await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    tick.send::<Tick>(&()),
-                    async {
-                        b.recv::<Prefix>().await?;
-                        b.recv::<Work>().await?;
-                        b.send::<Ack>(&()).await?;
-                        Ok::<_, hibana::EndpointError>(())
-                    },
-                    c.recv::<Tick>(),
-                )
-                .unwrap();
-            }
-            assert!(network.queue_is_empty());
-            let [mut exchanges, _tick] = a.par().unwrap();
-            assert!(exchanges.send::<Work>(&()).await.is_err());
-            assert!(network.queue_is_empty());
-        });
-}
+    {
+        for _ in 0..2 {
+            let [mut exchanges, mut tick] = a.par().unwrap();
+            async {
+                async {
+                    exchanges.send::<Prefix>(&()).await?;
+                    exchanges.send::<Work>(&()).await?;
+                    exchanges.recv::<Ack>().await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
 
-#[test]
-fn nested_parallel_borrows_reenter_the_same_global() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let global = global();
-            let p0 = project::<0>(&global);
-            let p1 = project::<1>(&global);
-            let p2 = project::<2>(&global);
-            let network = common::TestTransport::new();
-            let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
-            let mut storage0 = SessionKitStorage::uninit();
-            let mut storage1 = SessionKitStorage::uninit();
-            let mut storage2 = SessionKitStorage::uninit();
-            let rv0 = storage0
-                .init()
-                .rendezvous(&mut slab0, network.clone())
-                .unwrap();
-            let rv1 = storage1
-                .init()
-                .rendezvous(&mut slab1, network.clone())
-                .unwrap();
-            let rv2 = storage2
-                .init()
-                .rendezvous(&mut slab2, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9283);
-            let mut a = rv0.enter(sid, &p0).unwrap();
-            let mut b = rv1.enter(sid, &p1).unwrap();
-            let mut c = rv2.enter(sid, &p2).unwrap();
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for _ in 0..2 {
-                    a.send::<Prefix>(&()).await?;
+                async { (tick.send::<Tick>(&())).await };
+
+                async {
                     b.recv::<Prefix>().await?;
-                    for _ in 0..2 {
-                        let [mut exchanges, mut ticks] = a.par()?;
-                        tokio::try_join!(
-                            biased;
-                            async {
-                                for _ in 0..2 {
-                                    exchanges.send::<Work>(&()).await?;
-                                    exchanges.recv::<Ack>().await?;
-                                }
-                                Ok::<(),hibana::EndpointError>(())
-                            },
-                            ticks.send::<Tick>(&()),
-                            async {
-                                for _ in 0..2 {
-                                    b.recv::<Work>().await?;
-                                    b.send::<Ack>(&()).await?;
-                                }
-                                Ok::<(),hibana::EndpointError>(())
-                            },
-                            c.recv::<Tick>(),
-                        )?;
-                    }
-                }
-                Ok::<(), hibana::EndpointError>(())
-            })
+                    b.recv::<Work>().await?;
+                    b.send::<Ack>(&()).await?;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async { (c.recv::<Tick>()).await };
+            }
             .await
-            .expect("nested projected fragments stalled")
             .unwrap();
-            assert!(network.queue_is_empty());
-        });
+        }
+        assert!(network.queue_is_empty());
+        let [mut exchanges, _tick] = a.par().unwrap();
+        assert!(exchanges.send::<Work>(&()).await.is_err());
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_parallel_delegation_reenters_while_the_first_send_waits() {
+async fn nested_parallel_borrows_reenter_the_same_global()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        let global = global();
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let p2 = project::<2>(&global);
+        let network = common::TestTransport::new();
+        let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+        let mut storage0 = SessionKitStorage::uninit();
+        let mut storage1 = SessionKitStorage::uninit();
+        let mut storage2 = SessionKitStorage::uninit();
+        let rv0 = storage0
+            .init()
+            .rendezvous(&mut slab0, network.clone())
+            .unwrap();
+        let rv1 = storage1
+            .init()
+            .rendezvous(&mut slab1, network.clone())
+            .unwrap();
+        let rv2 = storage2
+            .init()
+            .rendezvous(&mut slab2, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9283);
+        let mut a = rv0.enter(sid, &p0).unwrap();
+        let mut b = rv1.enter(sid, &p1).unwrap();
+        let mut c = rv2.enter(sid, &p2).unwrap();
+        (async {
+            for _ in 0..2 {
+                a.send::<Prefix>(&()).await?;
+                b.recv::<Prefix>().await?;
+                for _ in 0..2 {
+                    let [mut exchanges, mut ticks] = a.par()?;
+                    async {
+                        async {
+                            for _ in 0..2 {
+                                exchanges.send::<Work>(&()).await?;
+                                exchanges.recv::<Ack>().await?;
+                            }
+                            Ok::<(), hibana::EndpointError>(())
+                        };
+
+                        async { (ticks.send::<Tick>(&())).await };
+
+                        async {
+                            for _ in 0..2 {
+                                b.recv::<Work>().await?;
+                                b.send::<Ack>(&()).await?;
+                            }
+                            Ok::<(), hibana::EndpointError>(())
+                        };
+
+                        async { (c.recv::<Tick>()).await };
+                    }
+                    .await?;
+                }
+            }
+            Ok::<(), hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+        assert!(network.queue_is_empty());
+    };
+
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn nested_parallel_delegation_reenters_while_the_first_send_waits()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::Endpoint;
     type Loan = g::Msg<235, Endpoint<'static, 3>>;
     type Read = g::Msg<236, u32>;
@@ -1718,73 +1815,75 @@ fn nested_parallel_delegation_reenters_while_the_first_send_waits() {
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
     let mut db = rv0.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for _ in 0..2 {
-                    owner.send::<Prefix>(&()).await?;
-                    worker.recv::<Prefix>().await?;
-                    for visit in 0..2 {
-                        let [mut loans, mut received_tick] = owner.par()?;
-                        let [mut jobs, mut sent_tick] = worker.par()?;
-                        if visit == 1 {
-                            // I/O readiness only: the independent incoming Tick
-                            // must complete while this outgoing loan is pending.
-                            network.pause_send(0);
-                        }
-                        let (returned, (), (), (), ()) = tokio::try_join!(
-                            biased;
-                            async {
-                                for _ in 0..2 {
-                                    loans.send::<Loan>(db).await?;
-                                    db = loans.recv::<Loan>().await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(db)
-                            },
-                            async {
-                                received_tick.recv::<Tick>().await?;
-                                if visit == 1 {
-                                    assert!(network.paused_send_is_waiting(0));
-                                    network.resume_send();
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            async {
-                                for _ in 0..2 {
-                                    let mut db = jobs.recv::<Loan>().await?;
-                                    db.send::<Read>(&7).await?;
-                                    assert_eq!(db.recv::<Value>().await?, 8);
-                                    jobs.send::<Loan>(db).await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            sent_tick.send::<Tick>(&()),
-                            async {
-                                for _ in 0..2 {
-                                    let value = service.recv::<Read>().await?;
-                                    service.send::<Value>(&(value + 1)).await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                        )?;
-                        db = returned;
+    {
+        (async {
+            for _ in 0..2 {
+                owner.send::<Prefix>(&()).await?;
+                worker.recv::<Prefix>().await?;
+                for visit in 0..2 {
+                    let [mut loans, mut received_tick] = owner.par()?;
+                    let [mut jobs, mut sent_tick] = worker.par()?;
+                    if visit == 1 {
+                        // I/O readiness only: the independent incoming Tick
+                        // must complete while this outgoing loan is pending.
+                        network.pause_send(0);
                     }
+                    let (returned, (), (), (), ()) = async {
+                        async {
+                            for _ in 0..2 {
+                                loans.send::<Loan>(db).await?;
+                                db = loans.recv::<Loan>().await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(db)
+                        };
+
+                        async {
+                            received_tick.recv::<Tick>().await?;
+                            if visit == 1 {
+                                assert!(network.paused_send_is_waiting(0));
+                                network.resume_send();
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async {
+                            for _ in 0..2 {
+                                let mut db = jobs.recv::<Loan>().await?;
+                                db.send::<Read>(&7).await?;
+                                assert_eq!(db.recv::<Value>().await?, 8);
+                                jobs.send::<Loan>(db).await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async { (sent_tick.send::<Tick>(&())).await };
+
+                        async {
+                            for _ in 0..2 {
+                                let value = service.recv::<Read>().await?;
+                                service.send::<Value>(&(value + 1)).await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+                    }
+                    .await?;
+                    db = returned;
                 }
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("the independent Tick must release a pending loan")
-            .unwrap();
-        });
+            }
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_parallel_children_keep_the_enclosing_reentry_origin() {
+async fn nested_parallel_children_keep_the_enclosing_reentry_origin()
+-> core::result::Result<(), hibana::EndpointError> {
     type Notice = g::Msg<238, ()>;
     type TickAck = g::Msg<239, ()>;
     let global = g::seq(
@@ -1824,77 +1923,80 @@ fn nested_parallel_children_keep_the_enclosing_reentry_origin() {
     let mut a = rv0.enter(sid, &p0).unwrap();
     let mut b = rv1.enter(sid, &p1).unwrap();
     let mut c = rv2.enter(sid, &p2).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            assert!(
-                a.par::<2>().is_err(),
-                "the incoming prefix must complete first"
-            );
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
+    {
+        assert!(
+            a.par::<2>().is_err(),
+            "the incoming prefix must complete first"
+        );
+        (async {
+            for _ in 0..2 {
+                b.send::<Prefix>(&()).await?;
+                a.recv::<Prefix>().await?;
                 for _ in 0..2 {
-                    b.send::<Prefix>(&()).await?;
-                    a.recv::<Prefix>().await?;
-                    for _ in 0..2 {
-                        let [mut a_work, mut a_tick] = a.par()?;
-                        let [mut b_work, mut b_tick] = b.par()?;
-                        tokio::try_join!(
-                            biased;
-                            async {
-                                for _ in 0..2 {
-                                    let [mut exchange, mut notice] = a_work.par()?;
-                                    tokio::try_join!(
-                                        biased;
-                                        async {
-                                            for _ in 0..2 {
-                                                exchange.send::<Work>(&()).await?;
-                                                exchange.recv::<Ack>().await?;
-                                            }
-                                            Ok::<_, hibana::EndpointError>(())
-                                        },
-                                        notice.send::<Notice>(&()),
-                                    )?;
+                    let [mut a_work, mut a_tick] = a.par()?;
+                    let [mut b_work, mut b_tick] = b.par()?;
+                    async {
+                        async {
+                            for _ in 0..2 {
+                                let [mut exchange, mut notice] = a_work.par()?;
+                                async {
+                                    async {
+                                        for _ in 0..2 {
+                                            exchange.send::<Work>(&()).await?;
+                                            exchange.recv::<Ack>().await?;
+                                        }
+                                        Ok::<_, hibana::EndpointError>(())
+                                    };
+
+                                    async { (notice.send::<Notice>(&())).await };
                                 }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            async {
-                                a_tick.recv::<Tick>().await?;
-                                a_tick.send::<TickAck>(&()).await
-                            },
-                            async {
-                                for _ in 0..4 {
-                                    b_work.recv::<Work>().await?;
-                                    b_work.send::<Ack>(&()).await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            async {
-                                b_tick.send::<Tick>(&()).await?;
-                                b_tick.recv::<TickAck>().await
-                            },
-                            async {
-                                for _ in 0..2 {
-                                    c.recv::<Notice>().await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                        )?;
+                                .await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async {
+                            a_tick.recv::<Tick>().await?;
+                            a_tick.send::<TickAck>(&()).await
+                        };
+
+                        async {
+                            for _ in 0..4 {
+                                b_work.recv::<Work>().await?;
+                                b_work.send::<Ack>(&()).await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async {
+                            b_tick.send::<Tick>(&()).await?;
+                            b_tick.recv::<TickAck>().await
+                        };
+
+                        async {
+                            for _ in 0..2 {
+                                c.recv::<Notice>().await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
                     }
+                    .await?;
                 }
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("nested parallel bodies stalled")
-            .unwrap();
-        });
+            }
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_parallel_resolver_keeps_its_pending_delegation_choice() {
+async fn nested_parallel_resolver_keeps_its_pending_delegation_choice()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::{
         Endpoint,
         runtime::resolver::{DecisionArm, ResolverRef},
@@ -1966,82 +2068,84 @@ fn nested_parallel_resolver_keeps_its_pending_delegation_choice() {
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
     let mut db = rv0.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                for _ in 0..2 {
-                    worker.send::<Prefix>(&()).await?;
-                    owner.recv::<Prefix>().await?;
-                    for visit in 0..2 {
-                        let [mut loans, mut received_tick] = owner.par()?;
-                        let [mut jobs, mut sent_tick] = worker.par()?;
-                        if visit == 1 {
-                            network.pause_send(0);
-                        }
-                        let (returned, (), (), (), ()) = tokio::try_join!(
-                            biased;
-                            async {
-                                for _ in 0..2 {
-                                    loans.send::<Loan>(db).await?;
-                                    db = loans.recv::<Loan>().await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(db)
-                            },
-                            async {
-                                received_tick.recv::<Tick>().await?;
-                                if visit == 1 {
-                                    assert!(network.paused_send_is_waiting(0));
-                                    network.resume_send();
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            async {
-                                for _ in 0..2 {
-                                    let branch = jobs.offer().await?;
-                                    assert_eq!(branch.label(),235);
-                                    drop(branch);
-                                    let mut db = jobs.offer().await?.recv::<Loan>().await?;
-                                    db.send::<Read>(&7).await?;
-                                    assert_eq!(db.recv::<Value>().await?,8);
-                                    jobs.send::<Loan>(db).await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                            sent_tick.send::<Tick>(&()),
-                            async {
-                                for _ in 0..2 {
-                                    let branch = service.offer().await?;
-                                    assert_eq!(branch.label(),236);
-                                    drop(branch);
-                                    let value = service.offer().await?.recv::<Read>().await?;
-                                    service.send::<Value>(&(value+1)).await?;
-                                }
-                                Ok::<_, hibana::EndpointError>(())
-                            },
-                        )?;
-                        db = returned;
+    {
+        (async {
+            for _ in 0..2 {
+                worker.send::<Prefix>(&()).await?;
+                owner.recv::<Prefix>().await?;
+                for visit in 0..2 {
+                    let [mut loans, mut received_tick] = owner.par()?;
+                    let [mut jobs, mut sent_tick] = worker.par()?;
+                    if visit == 1 {
+                        network.pause_send(0);
                     }
+                    let (returned, (), (), (), ()) = async {
+                        async {
+                            for _ in 0..2 {
+                                loans.send::<Loan>(db).await?;
+                                db = loans.recv::<Loan>().await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(db)
+                        };
+
+                        async {
+                            received_tick.recv::<Tick>().await?;
+                            if visit == 1 {
+                                assert!(network.paused_send_is_waiting(0));
+                                network.resume_send();
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async {
+                            for _ in 0..2 {
+                                let branch = jobs.offer().await?;
+                                assert_eq!(branch.label(), 235);
+                                drop(branch);
+                                let mut db = jobs.offer().await?.recv::<Loan>().await?;
+                                db.send::<Read>(&7).await?;
+                                assert_eq!(db.recv::<Value>().await?, 8);
+                                jobs.send::<Loan>(db).await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+
+                        async { (sent_tick.send::<Tick>(&())).await };
+
+                        async {
+                            for _ in 0..2 {
+                                let branch = service.offer().await?;
+                                assert_eq!(branch.label(), 236);
+                                drop(branch);
+                                let value = service.offer().await?.recv::<Read>().await?;
+                                service.send::<Value>(&(value + 1)).await?;
+                            }
+                            Ok::<_, hibana::EndpointError>(())
+                        };
+                    }
+                    .await?;
+                    db = returned;
                 }
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("a pending loan cannot rerun its choice or block Tick")
-            .unwrap();
-        });
+            }
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+    };
     assert_eq!(
         calls.get(),
         8,
         "one decision per loan, including pending sends"
     );
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_received_endpoint_keeps_two_parallel_visits_distinct() {
+async fn a_received_endpoint_keeps_two_parallel_visits_distinct()
+-> core::result::Result<(), hibana::EndpointError> {
     use hibana::Endpoint;
     type Loan = g::Msg<118, Endpoint<'static, 3>>;
     type Returned = g::Msg<119, Endpoint<'static, 3>>;
@@ -2087,71 +2191,91 @@ fn a_received_endpoint_keeps_two_parallel_visits_distinct() {
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
     let db = rv0.enter(sid, &p3).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                owner.send::<Loan>(db).await?;
-                let mut db = worker.recv::<Loan>().await?;
-                {
-                    let [mut flow, mut outside] = db.par()?;
-                    let [mut peer_flow, mut peer_outside] = service.par()?;
-                    // The second visit completes its other arm first. Keeping
-                    // the borrows distinguishes this cut from four repetitions
-                    // of that arm in the first visit.
-                    for order in [[0, 1, 1], [1, 1, 0]] {
-                        let [mut first, mut repeated] = flow.par()?;
-                        let [mut peer_first, mut peer_repeated] = peer_flow.par()?;
-                        for part in order {
-                            match part {
-                                0 => {
-                                    tokio::try_join!(
-                                        first.send::<RequestA>(&()),
-                                        peer_first.recv::<RequestA>()
-                                    )?;
-                                    tokio::try_join!(
-                                        peer_first.send::<ReplyA>(&()),
-                                        first.recv::<ReplyA>()
-                                    )?;
+    {
+        (async {
+            owner.send::<Loan>(db).await?;
+            let mut db = worker.recv::<Loan>().await?;
+            {
+                let [mut flow, mut outside] = db.par()?;
+                let [mut peer_flow, mut peer_outside] = service.par()?;
+                // The second visit completes its other arm first. Keeping
+                // the borrows distinguishes this cut from four repetitions
+                // of that arm in the first visit.
+                for order in [[0, 1, 1], [1, 1, 0]] {
+                    let [mut first, mut repeated] = flow.par()?;
+                    let [mut peer_first, mut peer_repeated] = peer_flow.par()?;
+                    for part in order {
+                        match part {
+                            0 => {
+                                async {
+                                    async { (first.send::<RequestA>(&())).await };
+
+                                    async { (peer_first.recv::<RequestA>()).await };
                                 }
-                                1 => {
-                                    tokio::try_join!(
-                                        repeated.send::<RequestB>(&()),
-                                        peer_repeated.recv::<RequestB>()
-                                    )?;
-                                    tokio::try_join!(
-                                        peer_repeated.send::<ReplyB>(&()),
-                                        repeated.recv::<ReplyB>()
-                                    )?;
+                                .await?;
+                                async {
+                                    async { (peer_first.send::<ReplyA>(&())).await };
+
+                                    async { (first.recv::<ReplyA>()).await };
                                 }
-                                _ => unreachable!(),
+                                .await?;
                             }
+                            1 => {
+                                async {
+                                    async { (repeated.send::<RequestB>(&())).await };
+
+                                    async { (peer_repeated.recv::<RequestB>()).await };
+                                }
+                                .await?;
+                                async {
+                                    async { (peer_repeated.send::<ReplyB>(&())).await };
+
+                                    async { (repeated.recv::<ReplyB>()).await };
+                                }
+                                .await?;
+                            }
+                            _ => unreachable!(),
                         }
                     }
-                    tokio::try_join!(flow.send::<Tail>(&()), peer_flow.recv::<Tail>())?;
-                    tokio::try_join!(peer_flow.send::<TailReply>(&()), flow.recv::<TailReply>())?;
-                    tokio::try_join!(outside.send::<Outside>(&()), peer_outside.recv::<Outside>())?;
-                    tokio::try_join!(
-                        peer_outside.send::<OutsideReply>(&()),
-                        outside.recv::<OutsideReply>()
-                    )?;
                 }
-                worker.send::<Returned>(db).await?;
-                let _returned = owner.recv::<Returned>().await?;
-                Ok::<_, hibana::EndpointError>(())
-            })
-            .await
-            .expect("the scoped source visit must finish")
-            .unwrap();
-        });
+                async {
+                    async { (flow.send::<Tail>(&())).await };
+                    async { (peer_flow.recv::<Tail>()).await };
+                }
+                .await?;
+                async {
+                    async { (peer_flow.send::<TailReply>(&())).await };
+                    async { (flow.recv::<TailReply>()).await };
+                }
+                .await?;
+                async {
+                    async { (outside.send::<Outside>(&())).await };
+                    async { (peer_outside.recv::<Outside>()).await };
+                }
+                .await?;
+                async {
+                    async { (peer_outside.send::<OutsideReply>(&())).await };
+
+                    async { (outside.recv::<OutsideReply>()).await };
+                }
+                .await?;
+            }
+            worker.send::<Returned>(db).await?;
+            let _returned = owner.recv::<Returned>().await?;
+            Ok::<_, hibana::EndpointError>(())
+        })
+        .await
+        .unwrap();
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() {
+async fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late()
+-> core::result::Result<(), hibana::EndpointError> {
     use core::cell::Cell;
     use hibana::{
         Endpoint, EndpointError,
@@ -2177,11 +2301,14 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
 
     #[cfg(miri)]
     std::eprintln!("parallel-credit setup");
+    // The worker holds role 3 at each parent entry. Its notice authorizes
+    // the owner's participation; a notice sent by the owner could restart
+    // that participant after Finished has permanently returned role 3.
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::par(
-                g::par(g::send::<0, 1, Notice>(), g::send::<1, 0, Pulse>().roll()),
+                g::par(g::send::<1, 0, Notice>(), g::send::<1, 0, Pulse>().roll()),
                 g::seq(
                     g::send::<3, 2, Read>(),
                     g::seq(
@@ -2205,13 +2332,13 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
                                 g::seq(
                                     g::send::<3, 0, RightNotice>(),
                                     g::seq(
-                                        g::send::<1, 0, Return<'_>>(),
+                                        g::send::<1, 0, Return>(),
                                         g::seq(
                                             g::seq(
                                                 g::send::<3, 2, OwnerRead>(),
                                                 g::send::<2, 3, OwnerValue>(),
                                             ),
-                                            g::send::<0, 1, Relend<'_>>(),
+                                            g::send::<0, 1, Relend>(),
                                         ),
                                     ),
                                 ),
@@ -2224,9 +2351,10 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
             )
             .roll()
             .roll(),
-            g::send::<1, 0, Finished<'_>>(),
+            g::send::<1, 0, Finished>(),
         ),
     );
+    assert_eq!(g::diagnose(&global), None);
     let p0 = project::<0>(&global);
     let p1 = project::<1>(&global);
     let p2 = project::<2>(&global);
@@ -2270,22 +2398,22 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
             let mut worker = rv1.enter(sid, &p1).unwrap();
             let mut service = rv2.enter(sid, &p2).unwrap();
             let owner_run = async {
-                owner.send::<Loan<'_>>(db).await?;
+                owner.send::<Loan>(db).await?;
                 for _ in 0..2 {
                     let [mut notice, mut pulses, mut coordination] = owner.par()?;
                     for _ in 0..2 {
-                        tokio::try_join!(
+                        async {
                             async {
-                                tokio::task::yield_now().await;
-                                tokio::task::yield_now().await;
-                                notice.send::<Notice>(&()).await
-                            },
+                                hibana_runtime::yield_now().await;
+                                hibana_runtime::yield_now().await;
+                                notice.recv::<Notice>().await
+                            };
                             async {
                                 for _ in 0..2 {
                                     pulses.recv::<Pulse>().await?;
                                 }
                                 Ok::<_, EndpointError>(())
-                            },
+                            };
                             async {
                                 for _ in 0..2 {
                                     let branch = coordination.offer().await?;
@@ -2297,36 +2425,38 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
                                         }
                                         11 => {
                                             branch.recv::<RightNotice>().await?;
-                                            let mut db = coordination.recv::<Return<'_>>().await?;
+                                            let mut db = coordination.recv::<Return>().await?;
                                             db.send::<OwnerRead>(&()).await?;
                                             db.recv::<OwnerValue>().await?;
-                                            coordination.send::<Relend<'_>>(db).await?;
+                                            coordination.send::<Relend>(db).await?;
                                         }
                                         label => panic!("unexpected owner branch {label}"),
                                     }
                                 }
                                 Ok::<_, EndpointError>(())
-                            },
-                        )?;
+                            };
+                            Ok(())
+                        }
+                        .await?;
                     }
                 }
-                let _db = owner.recv::<Finished<'_>>().await?;
+                let _db = owner.recv::<Finished>().await?;
                 Ok::<_, EndpointError>(())
             };
             let worker_run = async {
-                let mut db = worker.recv::<Loan<'_>>().await?;
+                let mut db = worker.recv::<Loan>().await?;
                 for outer in 0..2 {
                     let [mut notice, mut pulses, mut coordination] = worker.par()?;
                     for inner in 0..2 {
-                        let (_, _, returned) = tokio::try_join!(
-                            notice.recv::<Notice>(),
+                        let (_, _, returned) = async {
+                            async { notice.send::<Notice>(&()).await };
                             async {
                                 for _ in 0..2 {
-                                    tokio::task::yield_now().await;
+                                    hibana_runtime::yield_now().await;
                                     pulses.send::<Pulse>(&()).await?;
                                 }
                                 Ok::<_, EndpointError>(())
-                            },
+                            };
                             async {
                                 let mut db = db;
                                 for visit in 0..2 {
@@ -2349,19 +2479,20 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
                                         10 => {
                                             branch.send::<Right>(&()).await?;
                                             db.send::<RightNotice>(&()).await?;
-                                            coordination.send::<Return<'_>>(db).await?;
-                                            db = coordination.recv::<Relend<'_>>().await?;
+                                            coordination.send::<Return>(db).await?;
+                                            db = coordination.recv::<Relend>().await?;
                                         }
                                         label => panic!("unexpected worker branch {label}"),
                                     }
                                 }
                                 Ok::<_, EndpointError>(db)
-                            },
-                        )?;
+                            };
+                        }
+                        .await?;
                         db = returned;
                     }
                 }
-                worker.send::<Finished<'_>>(db).await?;
+                worker.send::<Finished>(db).await?;
                 Ok::<_, EndpointError>(())
             };
             let service_run = async {
@@ -2384,27 +2515,27 @@ fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late() 
                 }
                 Ok::<_, EndpointError>(())
             };
-            tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .start_paused(true)
-                .build()
-                .unwrap()
-                .block_on(async {
-                    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                        if reverse {
-                            tokio::try_join!(service_run, worker_run, owner_run)?;
-                        } else {
-                            tokio::try_join!(owner_run, worker_run, service_run)?;
-                        }
-                        Ok::<_, EndpointError>(())
-                    })
-                    .await
-                    .expect("independent repeated fragments stalled")
-                    .unwrap();
-                });
+            if reverse {
+                async {
+                    async { service_run.await };
+                    async { worker_run.await };
+                    async { owner_run.await };
+                    Ok(())
+                }
+                .await?;
+            } else {
+                async {
+                    async { owner_run.await };
+                    async { worker_run.await };
+                    async { service_run.await };
+                    Ok(())
+                }
+                .await?;
+            }
             assert!(network.queue_is_empty());
             #[cfg(miri)]
             std::eprintln!("parallel-credit complete: right_visit={right_visit} reverse={reverse}");
         }
     }
+    Ok(())
 }

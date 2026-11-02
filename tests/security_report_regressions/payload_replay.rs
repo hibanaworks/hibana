@@ -1,8 +1,10 @@
 //! A duplicate retains the identity of its original message.
 use super::*;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_replayed_bool_frame_cannot_impersonate_the_following_u8() {
+async fn a_replayed_bool_frame_cannot_impersonate_the_following_u8()
+-> core::result::Result<(), hibana::EndpointError> {
     let global = g::seq(
         g::send::<0, 1, Msg<1, bool>>(),
         g::send::<0, 1, Msg<2, u8>>(),
@@ -21,13 +23,11 @@ fn a_replayed_bool_frame_cannot_impersonate_the_following_u8() {
         )
         .unwrap();
     let mut sender = rv.enter(SessionId::new(1), &project::<0>(&global)).unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         sender.send::<Msg<1, bool>>(&true).await.unwrap();
         sender.send::<Msg<2, u8>>(&99).await.unwrap();
-    });
+    };
     let frames = captured.borrow().clone();
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0].lane, frames[1].lane);
@@ -47,11 +47,13 @@ fn a_replayed_bool_frame_cannot_impersonate_the_following_u8() {
         .unwrap();
     inject(&carrier, 0, &frames[0]);
     inject(&carrier, 0, &frames[0]);
-    runtime.block_on(async {
+    {
         assert!(receiver.recv::<Msg<1, bool>>().await.unwrap());
         // The bytes are a canonical u8, but the frame identifies the earlier
         // bool message. Payload compatibility must not advance the next step.
         assert!(receiver.recv::<Msg<2, u8>>().await.is_err());
-    });
+    };
     assert!(carrier.queue_is_empty());
+
+    Ok(())
 }

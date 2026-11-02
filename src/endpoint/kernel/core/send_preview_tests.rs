@@ -4,8 +4,10 @@ use crate::{
     test_support::transport::TestTransport,
 };
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_send_before_its_remaining_receive_does_not_invoke_the_resolver() {
+async fn a_send_before_its_remaining_receive_does_not_invoke_the_resolver()
+-> core::result::Result<(), hibana::EndpointError> {
     type Start = g::Msg<10, ()>;
     type Need = g::Msg<11, ()>;
     type Left = g::Msg<12, ()>;
@@ -40,28 +42,25 @@ fn a_send_before_its_remaining_receive_does_not_invoke_the_resolver() {
     let session = SessionId::new(1700);
     let mut owner = owner_runtime.enter(session, &owner_program).unwrap();
     let mut worker = worker_runtime.enter(session, &worker_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            owner.send::<Start>(&()).await.unwrap();
-            worker.recv::<Start>().await.unwrap();
-            let result =
-                tokio::time::timeout(core::time::Duration::from_secs(1), worker.send::<Left>(&()))
-                    .await
-                    .expect("out-of-order send must not wait for its own receive");
-            assert!(
-                result.is_err(),
-                "send before the required receive was accepted"
-            );
-        });
+    async {
+        owner.send::<Start>(&()).await.unwrap();
+        worker.recv::<Start>().await.unwrap();
+        let result = (worker.send::<Left>(&())).await;
+        assert!(
+            result.is_err(),
+            "send before the required receive was accepted"
+        );
+    }
+    .await;
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_received_endpoint_does_not_enable_the_later_resolver_before_its_receive() {
+async fn a_received_endpoint_does_not_enable_the_later_resolver_before_its_receive()
+-> core::result::Result<(), hibana::EndpointError> {
     type Loan<'r> = g::Msg<10, Endpoint<'r, 3>>;
     type Need = g::Msg<11, ()>;
     type Left = g::Msg<12, ()>;
@@ -98,22 +97,17 @@ fn a_received_endpoint_does_not_enable_the_later_resolver_before_its_receive() {
     let mut owner = owner_runtime.enter(session, &owner_program).unwrap();
     let mut worker = worker_runtime.enter(session, &worker_program).unwrap();
     let resource = owner_runtime.enter(session, &resource_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            owner.send::<Loan<'_>>(resource).await.unwrap();
-            let _resource = worker.recv::<Loan<'_>>().await.unwrap();
-            let result =
-                tokio::time::timeout(core::time::Duration::from_secs(1), worker.send::<Left>(&()))
-                    .await
-                    .expect("out-of-order send must not wait for its own receive");
-            assert!(
-                result.is_err(),
-                "send before the required receive was accepted"
-            );
-        });
+    async {
+        owner.send::<Loan<'_>>(resource).await.unwrap();
+        let _resource = worker.recv::<Loan<'_>>().await.unwrap();
+        let result = (worker.send::<Left>(&())).await;
+        assert!(
+            result.is_err(),
+            "send before the required receive was accepted"
+        );
+    }
+    .await;
     assert!(network.queue_is_empty());
+
+    Ok(())
 }

@@ -9,8 +9,10 @@ const LANES: usize = g::ProgramProjection::<Global, 32>::SOURCE_EFF_LIST.len();
 const SID: SessionId = SessionId::new(9015);
 const WORKER: &str = "g::role_projection::tests::native::composed::worker_process";
 
-#[tokio::test(flavor = "current_thread")]
-async fn process_handoff_preserves_resolved_choices_in_parallel_rolled_loans() {
+#[hibana_runtime::main]
+#[test]
+async fn process_handoff_preserves_resolved_choices_in_parallel_rolled_loans() -> std::io::Result<()>
+{
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
@@ -103,7 +105,7 @@ async fn process_handoff_preserves_resolved_choices_in_parallel_rolled_loans() {
         let db = service_rv.enter(SID, &db_program).unwrap();
         let mut left = side_rv.enter(SID, &left_program).unwrap();
         let mut right = side_rv.enter(SID, &right_program).unwrap();
-        tokio::join!(
+        async {
             async {
                 service.send::<Loan>(db).await.unwrap();
                 for expected in [44, 40] {
@@ -131,7 +133,7 @@ async fn process_handoff_preserves_resolved_choices_in_parallel_rolled_loans() {
                 resource.write_all(&value.to_be_bytes()).unwrap();
                 service.send::<AfterValue>(&value).await.unwrap();
                 drop(service.recv::<Finished>().await.unwrap());
-            },
+            };
             async {
                 let mut db = owner.recv::<Loan>().await.unwrap();
                 for _ in 0..2 {
@@ -141,11 +143,17 @@ async fn process_handoff_preserves_resolved_choices_in_parallel_rolled_loans() {
                 // Only the final borrowed continuation is used after exec's
                 // address space has exited. This wait observes the test child;
                 // it does not decide a protocol branch or advance an Endpoint.
-                tokio::time::timeout(Duration::from_secs(3), async {
-                    while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
-                        tokio::time::sleep(Duration::from_millis(1)).await;
-                    }
-                })
+                hibana_runtime::race(
+                    async {
+                        while child.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+                            hibana_runtime::host::sleep(Duration::from_millis(1))
+                                .await
+                                .unwrap();
+                        }
+                        Ok::<(), std::io::Error>(())
+                    },
+                    hibana_runtime::host::deadline(Duration::from_secs(3)),
+                )
                 .await
                 .unwrap();
                 let output = child.0.take().unwrap().wait_with_output().unwrap();
@@ -160,31 +168,37 @@ async fn process_handoff_preserves_resolved_choices_in_parallel_rolled_loans() {
                 db.send::<AfterRead>(&5).await.unwrap();
                 assert_eq!(db.recv::<AfterValue>().await.unwrap(), 45);
                 owner.send::<Finished>(db).await.unwrap();
-            },
+            };
             async {
                 for number in [10, 20] {
                     left.send::<Read>(&number).await.unwrap();
                     assert_eq!(left.recv::<Value>().await.unwrap(), number + 1);
                 }
-            },
+            };
             async {
                 for number in [10, 20] {
                     assert_eq!(right.recv::<Read>().await.unwrap(), number);
                     right.send::<Value>(&(number + 1)).await.unwrap();
                 }
-            }
-        );
+            };
+            Ok(())
+        }
+        .await
+        .unwrap();
         let mut bytes = [0; 4];
         resource.seek(SeekFrom::Start(0)).unwrap();
         resource.read_exact(&mut bytes).unwrap();
         assert_eq!(u32::from_be_bytes(bytes), 45);
     }
     drop(mailboxes);
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate process entrypoint exercised by the composed parent proof"]
-async fn worker_process() {
+async fn worker_process() -> std::io::Result<()> {
     let parent: u32 = std::env::var("HIBANA_NATIVE_PARENT")
         .unwrap()
         .parse()
@@ -241,4 +255,6 @@ async fn worker_process() {
         assert_eq!(db.recv::<Value>().await.unwrap(), expected);
         worker.send::<Loan>(db).await.unwrap();
     }
+
+    Ok(())
 }

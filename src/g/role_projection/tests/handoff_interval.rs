@@ -7,8 +7,10 @@ use crate::{
     test_support::transport::TestTransport,
 };
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work() {
+async fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Seq<
         g::Send<0, 1, Loan>,
         g::Seq<
@@ -28,149 +30,170 @@ fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work()
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let peer_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut owner_slab = [0; 32 * 1024];
-            let mut worker_slab = [0; 32 * 1024];
-            let mut owner_storage = SessionKitStorage::uninit();
-            let mut worker_storage = SessionKitStorage::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let worker_rv = worker_storage
-                .init()
-                .rendezvous(&mut worker_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9057);
-            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-            let db = owner_rv.enter(sid, &db_program).unwrap();
-            let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
-            let mut reader = worker_rv.enter(sid, &reader_program).unwrap();
-            let mut peer = worker_rv.enter(sid, &peer_program).unwrap();
-            // SAFETY: these attached Endpoints retain their TestTransport actors.
-            let owner_initial = unsafe { actor_snapshot(&owner) };
-            // SAFETY: WORKER retains this pinned actor throughout the fixture.
-            let initial = unsafe { actor_snapshot(&worker) };
-            assert_eq!(owner_initial.completion_mutations, 0);
-            owner.send::<Loan>(db).await.unwrap();
-            #[cfg(not(miri))]
-            let first_wire = network.queued_frame(1);
-            let db = worker.recv::<Loan>().await.unwrap();
-            // SAFETY: the same actor remains pinned after the completed call.
-            let first_received = unsafe { actor_snapshot(&worker) };
-            worker.send::<Loan>(db).await.unwrap();
-            #[cfg(not(miri))]
-            let old_return_wire = network.queued_frame(0);
-            // SAFETY: WORKER's own view keeps this actor alive after moving DB.
-            let first_sent = unsafe { actor_snapshot(&worker) };
-            let db = owner.recv::<Loan>().await.unwrap();
-            owner.send::<Loan>(db).await.unwrap();
-            #[cfg(not(miri))]
-            let current_wire = network.queued_frame(1);
-            let mut db = worker.recv::<Loan>().await.unwrap();
-            // SAFETY: the same actor has just committed its second receipt.
-            let current = unsafe { actor_snapshot(&worker) };
-            assert!(current.steps[1].done);
-            assert!(current.steps[2].done);
-            assert!(!current.steps[3].done);
-            assert!(!current.steps[4].done);
-            assert!(!current.steps[5].done);
+    {
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 32 * 1024];
+        let mut worker_slab = [0; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut worker_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let worker_rv = worker_storage
+            .init()
+            .rendezvous(&mut worker_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9057);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let db = owner_rv.enter(sid, &db_program).unwrap();
+        let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
+        let mut reader = worker_rv.enter(sid, &reader_program).unwrap();
+        let mut peer = worker_rv.enter(sid, &peer_program).unwrap();
+        // SAFETY: these attached Endpoints retain their TestTransport actors.
+        let owner_initial = unsafe { actor_snapshot(&owner) };
+        // SAFETY: WORKER retains this pinned actor throughout the fixture.
+        let initial = unsafe { actor_snapshot(&worker) };
+        assert_eq!(owner_initial.completion_mutations, 0);
+        owner.send::<Loan>(db).await.unwrap();
+        #[cfg(not(miri))]
+        let first_wire = network.queued_frame(1);
+        let db = worker.recv::<Loan>().await.unwrap();
+        // SAFETY: the same actor remains pinned after the completed call.
+        let first_received = unsafe { actor_snapshot(&worker) };
+        worker.send::<Loan>(db).await.unwrap();
+        #[cfg(not(miri))]
+        let old_return_wire = network.queued_frame(0);
+        // SAFETY: WORKER's own view keeps this actor alive after moving DB.
+        let first_sent = unsafe { actor_snapshot(&worker) };
+        let db = owner.recv::<Loan>().await.unwrap();
+        owner.send::<Loan>(db).await.unwrap();
+        #[cfg(not(miri))]
+        let current_wire = network.queued_frame(1);
+        let mut db = worker.recv::<Loan>().await.unwrap();
+        // SAFETY: the same actor has just committed its second receipt.
+        let current = unsafe { actor_snapshot(&worker) };
+        assert!(current.steps[1].done);
+        assert!(current.steps[2].done);
+        assert!(!current.steps[3].done);
+        assert!(!current.steps[4].done);
+        assert!(!current.steps[5].done);
 
-            // This pauses only carrier readiness. The two Endpoint operations
-            // remain in the same projected par; no application flag or owner
-            // table decides which operation is permitted.
-            network.pause_send(10);
-            let (read_done, value_done) = tokio::join!(biased;
-                async {
-                    db.send::<Read>(&23).await.unwrap();
-                    // SAFETY: DB retains this actor after releasing its poll lease.
-                    unsafe { actor_snapshot(&db) }
-                },
-                async {
-                    assert!(network.queue_is_empty());
-                    worker.send::<Value>(&29).await.unwrap();
-                    // SAFETY: the independent send has released the actor lease;
-                    // DB's send is still pending and cannot have committed.
-                    let cut = unsafe { actor_snapshot(&worker) };
-                    assert!(!cut.steps[3].done);
-                    assert!(cut.steps[4].done);
-                    network.resume_send();
-                    cut
-                },
-            );
-            #[cfg(not(miri))]
-            let read_wire = network.queued_frame(3);
-            #[cfg(not(miri))]
-            let value_wire = network.queued_frame(4);
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 23);
-            assert_eq!(peer.recv::<Value>().await.unwrap(), 29);
-            db.send::<Read>(&31).await.unwrap();
-            // SAFETY: this view retains the same actor after the post-join read.
-            let second_done = unsafe { actor_snapshot(&db) };
-            #[cfg(not(miri))]
-            let second_read_wire = network.queued_frame(3);
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 31);
-            worker.send::<Loan>(db).await.unwrap();
-            #[cfg(not(miri))]
-            let return_wire = network.queued_frame(0);
-            // SAFETY: WORKER remains attached after DB was moved out.
-            let returned = unsafe { actor_snapshot(&worker) };
-            let _db = owner.recv::<Loan>().await.unwrap();
-            assert!(network.queue_is_empty());
-            assert_eq!(initial.completion_mutations, 0);
-            assert_eq!(first_received.completion_mutations, 1);
-            assert_eq!(first_sent.completion_mutations, 2);
-            assert_eq!(current.completion_mutations, 3);
-            assert_eq!(value_done.completion_mutations, 4);
-            assert_eq!(read_done.completion_mutations, 5);
-            assert_eq!(second_done.completion_mutations, 6);
-            assert_eq!(returned.completion_mutations, 7);
+        // This pauses only carrier readiness. The two Endpoint operations
+        // remain in the same projected par; no application flag or owner
+        // table decides which operation is permitted.
+        network.pause_send(10);
+        let (read_done, value_done) = async {
+            async {
+                Ok::<_, hibana::EndpointError>(
+                    (async {
+                        db.send::<Read>(&23).await.unwrap();
+                        // SAFETY: DB retains this actor after releasing its poll lease.
+                        unsafe { actor_snapshot(&db) }
+                    })
+                    .await,
+                )
+            };
 
-            #[cfg(not(miri))]
-            {
-                use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
-                let choreo = Steps::lean_source();
-                let image = descriptor_source(RoleDescriptorRef::from_resident(
-                    worker_program.role_image_ref(),
-                ));
-                let owner_image = descriptor_source(RoleDescriptorRef::from_resident(
-                    owner_program.role_image_ref(),
-                ));
-                let mut source = std::format!(
-                    "import Hibana.MeasuredResourceAvailability\n\nset_option maxRecDepth 10000\n\
+            async {
+                Ok::<_, hibana::EndpointError>(
+                    (async {
+                        assert!(network.queue_is_empty());
+                        worker.send::<Value>(&29).await.unwrap();
+                        // SAFETY: the independent send has released the actor lease;
+                        // DB's send is still pending and cannot have committed.
+                        let cut = unsafe { actor_snapshot(&worker) };
+                        assert!(!cut.steps[3].done);
+                        assert!(cut.steps[4].done);
+                        network.resume_send();
+                        cut
+                    })
+                    .await,
+                )
+            };
+        }
+        .await
+        .expect("all child results are data");
+        #[cfg(not(miri))]
+        let read_wire = network.queued_frame(3);
+        #[cfg(not(miri))]
+        let value_wire = network.queued_frame(4);
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 23);
+        assert_eq!(peer.recv::<Value>().await.unwrap(), 29);
+        db.send::<Read>(&31).await.unwrap();
+        // SAFETY: this view retains the same actor after the post-join read.
+        let second_done = unsafe { actor_snapshot(&db) };
+        #[cfg(not(miri))]
+        let second_read_wire = network.queued_frame(3);
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 31);
+        worker.send::<Loan>(db).await.unwrap();
+        #[cfg(not(miri))]
+        let return_wire = network.queued_frame(0);
+        // SAFETY: WORKER remains attached after DB was moved out.
+        let returned = unsafe { actor_snapshot(&worker) };
+        let _db = owner.recv::<Loan>().await.unwrap();
+        assert!(network.queue_is_empty());
+        assert_eq!(initial.completion_mutations, 0);
+        assert_eq!(first_received.completion_mutations, 1);
+        assert_eq!(first_sent.completion_mutations, 2);
+        assert_eq!(current.completion_mutations, 3);
+        assert_eq!(value_done.completion_mutations, 4);
+        assert_eq!(read_done.completion_mutations, 5);
+        assert_eq!(second_done.completion_mutations, 6);
+        assert_eq!(returned.completion_mutations, 7);
+
+        #[cfg(not(miri))]
+        {
+            use crate::test_support::{
+                lean_choreo::LeanChoreo, lean_descriptor::descriptor_source,
+            };
+            let choreo = Steps::lean_source();
+            let image = descriptor_source(RoleDescriptorRef::from_resident(
+                worker_program.role_image_ref(),
+            ));
+            let owner_image = descriptor_source(RoleDescriptorRef::from_resident(
+                owner_program.role_image_ref(),
+            ));
+            let mut source = std::format!(
+                "import Hibana.MeasuredResourceAvailability\n\nset_option maxRecDepth 10000\n\
                      def intervalChoreo : Hibana.Choreo := {choreo}\n\
                      def intervalImage : Hibana.RustDescriptorImage := {image}\n\
                      def intervalOwnerImage : Hibana.RustDescriptorImage := {owner_image}\n"
-                );
-                for (name, snapshot) in [
-                    ("initial", &initial), ("firstReceived", &first_received),
-                    ("firstSent", &first_sent), ("current", &current),
-                    ("cut", &value_done), ("joined", &read_done), ("afterRead", &second_done),
-                    ("returned", &returned), ("ownerInitial", &owner_initial),
-                ] {
-                    source.push_str(&std::format!(
-                        "def {name} : Hibana.ActorProgressObservation := {}\n\
+            );
+            for (name, snapshot) in [
+                ("initial", &initial),
+                ("firstReceived", &first_received),
+                ("firstSent", &first_sent),
+                ("current", &current),
+                ("cut", &value_done),
+                ("joined", &read_done),
+                ("afterRead", &second_done),
+                ("returned", &returned),
+                ("ownerInitial", &owner_initial),
+            ] {
+                source.push_str(&std::format!(
+                    "def {name} : Hibana.ActorProgressObservation := {}\n\
                          def {name}Count : Nat := {}\n",
-                        super::commit::observation_source(snapshot), snapshot.completion_mutations,
-                    ));
-                }
-                // The Read future started before Value, but its commit happens
-                // after Value. Its actual before cut is the copied Value cut,
-                // not the snapshot taken before the asynchronous call began.
-                for (index, (event, view, before, after, (header, payload))) in [
-                    (0, 1, &initial, &first_received, first_wire),
-                    (1, 1, &first_received, &first_sent, old_return_wire),
-                    (2, 1, &first_sent, &current, current_wire),
-                    (4, 1, &current, &value_done, value_wire),
-                    (3, 10, &value_done, &read_done, read_wire),
-                    (5, 10, &read_done, &second_done, second_read_wire),
-                    (6, 1, &second_done, &returned, return_wire),
-                ].into_iter().enumerate() {
-                    source.push_str(&std::format!(
+                    super::commit::observation_source(snapshot),
+                    snapshot.completion_mutations,
+                ));
+            }
+            // The Read future started before Value, but its commit happens
+            // after Value. Its actual before cut is the copied Value cut,
+            // not the snapshot taken before the asynchronous call began.
+            for (index, (event, view, before, after, (header, payload))) in [
+                (0, 1, &initial, &first_received, first_wire),
+                (1, 1, &first_received, &first_sent, old_return_wire),
+                (2, 1, &first_sent, &current, current_wire),
+                (4, 1, &current, &value_done, value_wire),
+                (3, 10, &value_done, &read_done, read_wire),
+                (5, 10, &read_done, &second_done, second_read_wire),
+                (6, 1, &second_done, &returned, return_wire),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                source.push_str(&std::format!(
                         "def actual{index} : Hibana.ActorCommitMutationRecord := {{\n\
                          commit := {{ step := {{ pathIndex := 0, event := {event}, view := {view}, \
                          before := {}, after := {} }}, wire := {{ session := {}, lane := {}, \
@@ -180,8 +203,8 @@ fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work()
                         header.session().raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(),
                         before.completion_mutations, after.completion_mutations,
                     ));
-                }
-                source.push_str(r#"
+            }
+            source.push_str(r#"
 open Hibana Hibana.EndpointDelegation
 def intervalData : DecodedActorOrder := (intervalImage.decodeActorOrder? intervalChoreo).get (by decide)
 def intervalPath : NormalizedPath := (intervalData.normalized.paths[0]?).get (by decide)
@@ -389,9 +412,16 @@ theorem actualInitialOwnerExcludesTheLaterLoan : sourceRowReady initialData init
       (initialOwners initialData.source.resources) initialPath.selections initialData.source 0) (by decide)).symm)
     (by decide) (by decide) (by decide) (by simp) (by decide) (by decide)
 "#);
-                let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
-                std::fs::create_dir_all(&directory).unwrap();
-                std::fs::write(directory.join("SourceHandoffIntervalGenerated.lean"), source).unwrap();
-            }
-        });
+            let directory =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                directory.join("SourceHandoffIntervalGenerated.lean"),
+                source,
+            )
+            .unwrap();
+        }
+    };
+
+    Ok(())
 }

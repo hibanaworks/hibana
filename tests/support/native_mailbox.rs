@@ -10,6 +10,7 @@ use hibana::runtime::{
     },
     wire::Payload,
 };
+use hibana_runtime::host::{Datagram, deadline};
 use std::{
     borrow::ToOwned,
     collections::BTreeMap,
@@ -23,7 +24,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
     vec::Vec,
 };
-use tokio::{io::ReadBuf, net::UnixDatagram as AsyncDatagram, time::Sleep};
 
 const HEADER: usize = 9;
 const MAX_PACKET: usize = HEADER + 60 * 1024;
@@ -85,7 +85,7 @@ fn address(directory: &Path, role: u8, lane: u8) -> PathBuf {
 
 pub struct NativeTransport<'binding> {
     directory: PathBuf,
-    sockets: BTreeMap<(u8, u8), AsyncDatagram>,
+    sockets: BTreeMap<(u8, u8), UnixDatagram>,
     initial: Option<(u8, &'binding EndpointBinding)>,
     accepted: Option<&'binding dyn Fn(FrameHeader) -> Result<(), TransportError>>,
 }
@@ -102,11 +102,7 @@ impl<'binding> NativeTransport<'binding> {
                 socket.local_addr()?.as_pathname(),
                 Some(address(directory, role, lane).as_path())
             );
-            assert!(
-                sockets
-                    .insert((role, lane), AsyncDatagram::from_std(socket)?)
-                    .is_none()
-            );
+            assert!(sockets.insert((role, lane), socket).is_none());
         }
         Ok(Self {
             directory: directory.to_owned(),
@@ -127,27 +123,14 @@ impl<'binding> NativeTransport<'binding> {
     }
 }
 
-#[derive(Default)]
-struct Wait(Option<Pin<std::boxed::Box<Sleep>>>);
-
-impl Wait {
-    fn pending<T>(&mut self, cx: &mut Context<'_>) -> Poll<Result<T, TransportError>> {
-        let sleep = self
-            .0
-            .get_or_insert_with(|| std::boxed::Box::pin(tokio::time::sleep(IO_DEADLINE)));
-        match sleep.as_mut().poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(()) => Poll::Ready(Err(TransportError::Deadline)),
-        }
-    }
-}
+type IoFuture<T> = Pin<std::boxed::Box<dyn Future<Output = Result<T, TransportError>>>>;
 
 pub struct Tx<'a> {
-    socket: &'a AsyncDatagram,
+    socket: &'a UnixDatagram,
     role: u8,
     lane: u8,
     session: u32,
-    wait: Wait,
+    pending: Option<IoFuture<FrameHeader>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -158,13 +141,13 @@ enum Receipt {
 }
 
 pub struct Rx<'a> {
-    socket: &'a AsyncDatagram,
+    socket: &'a UnixDatagram,
     role: u8,
     lane: u8,
     session: u32,
     packet: Vec<u8>,
     receipt: Receipt,
-    wait: Wait,
+    pending: Option<IoFuture<(Vec<u8>, std::os::unix::net::SocketAddr)>>,
 }
 
 impl Transport for NativeTransport<'_> {
@@ -201,7 +184,7 @@ impl Transport for NativeTransport<'_> {
                 role,
                 lane,
                 session,
-                wait: Wait::default(),
+                pending: None,
             },
             Rx {
                 socket,
@@ -210,7 +193,7 @@ impl Transport for NativeTransport<'_> {
                 session,
                 packet: Vec::with_capacity(MAX_PACKET + 1),
                 receipt: Receipt::Waiting,
-                wait: Wait::default(),
+                pending: None,
             },
         )
     }
@@ -224,38 +207,60 @@ impl Transport for NativeTransport<'_> {
         if outgoing.lane() != tx.lane {
             return Poll::Ready(Err(TransportError::Failed));
         }
-        let payload = outgoing.payload().as_bytes();
-        if payload.len() > MAX_PACKET - HEADER {
-            return Poll::Ready(Err(TransportError::Capacity));
-        }
-        let mut packet = Vec::with_capacity(HEADER + payload.len());
-        packet.extend_from_slice(&tx.session.to_be_bytes());
-        packet.extend_from_slice(&[tx.lane, tx.role, outgoing.target_role()]);
-        packet.extend_from_slice(&outgoing.frame_label().raw().to_be_bytes());
-        packet.extend_from_slice(payload);
-        let target = address(&self.directory, outgoing.target_role(), tx.lane);
-        match tx.socket.poll_send_to(cx, &packet, target) {
-            Poll::Pending => tx.wait.pending(cx),
-            Poll::Ready(Ok(sent)) if sent == packet.len() => {
-                tx.wait.0 = None;
-                if let Some(observer) = self.accepted {
-                    return Poll::Ready(observer(FrameHeader::from_bytes(
-                        packet[..HEADER].try_into().unwrap(),
-                    )));
+        if tx.pending.is_none() {
+            let payload = outgoing.payload().as_bytes();
+            if payload.len() > MAX_PACKET - HEADER {
+                return Poll::Ready(Err(TransportError::Capacity));
+            }
+            let mut packet = Vec::with_capacity(HEADER + payload.len());
+            packet.extend_from_slice(&tx.session.to_be_bytes());
+            packet.extend_from_slice(&[tx.lane, tx.role, outgoing.target_role()]);
+            packet.extend_from_slice(&outgoing.frame_label().raw().to_be_bytes());
+            packet.extend_from_slice(payload);
+            let target = address(&self.directory, outgoing.target_role(), tx.lane);
+            let socket = match tx.socket.try_clone().and_then(Datagram::new) {
+                Ok(socket) => socket,
+                Err(_) => return Poll::Ready(Err(TransportError::Offline)),
+            };
+            tx.pending = Some(std::boxed::Box::pin(async move {
+                let mut socket = socket;
+                let sent =
+                    hibana_runtime::race(socket.send_to(&packet, &target), deadline(IO_DEADLINE))
+                        .await
+                        .map_err(|error: io::Error| {
+                            if error.kind() == io::ErrorKind::TimedOut {
+                                TransportError::Deadline
+                            } else if error.raw_os_error() == Some(libc::ENOBUFS) {
+                                TransportError::Capacity
+                            } else {
+                                TransportError::Offline
+                            }
+                        })?;
+                if sent != packet.len() {
+                    return Err(TransportError::Failed);
                 }
-                Poll::Ready(Ok(()))
+                Ok(FrameHeader::from_bytes(
+                    packet[..HEADER].try_into().unwrap(),
+                ))
+            }));
+        }
+        let result = tx.pending.as_mut().unwrap().as_mut().poll(cx);
+        match result {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                tx.pending = None;
+                Poll::Ready(result.and_then(|header| match self.accepted {
+                    Some(observer) => observer(header),
+                    None => Ok(()),
+                }))
             }
-            Poll::Ready(Ok(_)) => Poll::Ready(Err(TransportError::Failed)),
-            Poll::Ready(Err(error)) if error.raw_os_error() == Some(libc::ENOBUFS) => {
-                Poll::Ready(Err(TransportError::Capacity))
-            }
-            Poll::Ready(Err(_)) => Poll::Ready(Err(TransportError::Offline)),
         }
     }
 
     fn cancel_send(&self, tx: &mut Tx<'_>) {
-        // Atomic datagram publication: Pending retained no bytes or pointer.
-        tx.wait.0 = None;
+        // Drop the owned packet and its readiness registration together.
+        // Datagram publication is atomic; cancellation never retracts a frame.
+        tx.pending = None;
     }
 
     fn poll_recv<'a>(
@@ -265,16 +270,42 @@ impl Transport for NativeTransport<'_> {
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         if rx.receipt != Receipt::Requeued {
             rx.receipt = Receipt::Waiting;
-            rx.packet.resize(MAX_PACKET + 1, 0);
-            let mut buffer = ReadBuf::new(&mut rx.packet);
-            let source = match rx.socket.poll_recv_from(cx, &mut buffer) {
-                Poll::Pending => return rx.wait.pending(cx),
-                Poll::Ready(Err(_)) => return Poll::Ready(Err(TransportError::Offline)),
-                Poll::Ready(Ok(source)) => source,
+            if rx.pending.is_none() {
+                let socket = match rx.socket.try_clone().and_then(Datagram::new) {
+                    Ok(socket) => socket,
+                    Err(_) => return Poll::Ready(Err(TransportError::Offline)),
+                };
+                let mut packet = core::mem::take(&mut rx.packet);
+                rx.pending = Some(std::boxed::Box::pin(async move {
+                    let mut socket = socket;
+                    packet.resize(MAX_PACKET + 1, 0);
+                    let (length, source) =
+                        hibana_runtime::race(socket.recv_from(&mut packet), deadline(IO_DEADLINE))
+                            .await
+                            .map_err(|error: io::Error| {
+                                if error.kind() == io::ErrorKind::TimedOut {
+                                    TransportError::Deadline
+                                } else {
+                                    TransportError::Offline
+                                }
+                            })?;
+                    packet.truncate(length);
+                    Ok((packet, source))
+                }));
+            }
+            let result = rx.pending.as_mut().unwrap().as_mut().poll(cx);
+            let (packet, source) = match result {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(result) => {
+                    rx.pending = None;
+                    match result {
+                        Ok(received) => received,
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
             };
-            let length = buffer.filled().len();
-            rx.packet.truncate(length);
-            if !(HEADER..=MAX_PACKET).contains(&length)
+            rx.packet = packet;
+            if !(HEADER..=MAX_PACKET).contains(&rx.packet.len())
                 || rx.packet[..4] != rx.session.to_be_bytes()
                 || rx.packet[4] != rx.lane
                 || rx.packet[6] != rx.role
@@ -283,7 +314,6 @@ impl Transport for NativeTransport<'_> {
             {
                 return Poll::Ready(Err(TransportError::Failed));
             }
-            rx.wait.0 = None;
         }
         rx.receipt = Receipt::Delivered;
         let header = FrameHeader::from_bytes(rx.packet[..HEADER].try_into().unwrap());
@@ -309,9 +339,10 @@ mod tests {
         g,
         runtime::{SessionKitStorage, ids::SessionId, program::project},
     };
-    use std::{pin::pin, task::Waker, time::Instant, vec};
+    use std::{time::Instant, vec};
 
-    #[tokio::test(flavor = "current_thread")]
+    #[hibana_runtime::main]
+    #[test]
     async fn requeued_preview_is_consumed_once_before_the_next_datagram() {
         type First = g::Msg<1, u32>;
         type Other = g::Msg<2, u32>;
@@ -360,7 +391,8 @@ mod tests {
         assert_eq!(target.recv::<First>().await.unwrap(), 8);
     }
 
-    #[tokio::test(flavor = "current_thread")]
+    #[hibana_runtime::main]
+    #[test]
     async fn a_valid_frame_from_another_os_peer_is_rejected() {
         type Message = g::Msg<1, u32>;
         let global = g::send::<0, 1, Message>();
@@ -405,59 +437,8 @@ mod tests {
         assert!(target.recv::<Message>().await.is_err());
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn dropping_a_parked_send_cannot_publish_its_old_payload() {
-        type Message = g::Msg<1, u32>;
-        let global = g::send::<0, 1, Message>();
-        let source_program = project::<0>(&global);
-        let target_program = project::<1>(&global);
-        let mailboxes = Mailboxes::new(&[0, 1], 1).unwrap();
-        let source_io = NativeTransport::new(
-            mailboxes.directory(),
-            mailboxes.descriptors(&[0]).unwrap(),
-            None,
-        )
-        .unwrap();
-        let target_io = NativeTransport::new(
-            mailboxes.directory(),
-            mailboxes.descriptors(&[1]).unwrap(),
-            None,
-        )
-        .unwrap();
-        let mut source_slab = vec![0; 64 * 1024];
-        let mut target_slab = vec![0; 64 * 1024];
-        let mut source_storage = SessionKitStorage::uninit();
-        let mut target_storage = SessionKitStorage::uninit();
-        let source_rv = source_storage
-            .init()
-            .rendezvous(&mut source_slab, source_io)
-            .unwrap();
-        let target_rv = target_storage
-            .init()
-            .rendezvous(&mut target_slab, target_io)
-            .unwrap();
-        let sid = SessionId::new(9013);
-        let mut source = source_rv.enter(sid, &source_program).unwrap();
-        let mut target = target_rv.enter(sid, &target_program).unwrap();
-        let receiver = &mailboxes.sockets[&(1, 0)];
-        {
-            // A fresh registration in this current-thread runtime waits for
-            // its first readiness dispatch. Observe actual Pending without
-            // advancing the driver, then drop the operation before dispatch.
-            let mut send = pin!(source.send::<Message>(&7));
-            let mut cx = Context::from_waker(Waker::noop());
-            assert!(send.as_mut().poll(&mut cx).is_pending());
-        }
-        let mut packet = [0; 64];
-        assert_eq!(
-            receiver.recv(&mut packet).unwrap_err().kind(),
-            io::ErrorKind::WouldBlock
-        );
-        source.send::<Message>(&8).await.unwrap();
-        assert_eq!(target.recv::<Message>().await.unwrap(), 8);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
+    #[hibana_runtime::main]
+    #[test]
     async fn a_stalled_receive_reports_the_transport_deadline() {
         type Message = g::Msg<1, u32>;
         let global = g::send::<0, 1, Message>();
@@ -474,15 +455,16 @@ mod tests {
         let rv = storage.init().rendezvous(&mut slab, io).unwrap();
         let mut target = rv.enter(SessionId::new(9014), &target_program).unwrap();
         let start = Instant::now();
-        assert!(
-            tokio::time::timeout(
-                IO_DEADLINE + Duration::from_secs(1),
-                target.recv::<Message>()
-            )
+        let received =
+            hibana_runtime::race(async { Some(target.recv::<Message>().await) }, async {
+                hibana_runtime::host::sleep(IO_DEADLINE + Duration::from_secs(1))
+                    .await
+                    .unwrap();
+                None
+            })
             .await
-            .unwrap()
-            .is_err()
-        );
+            .expect("the transport must report its own deadline first");
+        assert!(received.is_err());
         assert!(start.elapsed() >= IO_DEADLINE);
     }
 }

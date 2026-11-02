@@ -14,90 +14,15 @@ pub(super) type Steps = g::Seq<
     g::Seq<g::Send<0, 1, Tail>, g::Send<1, 0, Done>>,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_inner_route_cannot_repeat_before_its_rolled_body_finishes() {
+async fn an_inner_route_cannot_repeat_before_its_rolled_body_finishes()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::runtime::program::project;
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(Duration::from_secs(240), async {
-                for attempted in [41, 42] {
-                    type Prefix = g::Msg<40, ()>;
-                    type Left = g::Msg<41, ()>;
-                    type Right = g::Msg<42, ()>;
-                    type Reply = g::Msg<43, ()>;
-                    type Suffix = g::Msg<44, ()>;
-                    let global = g::seq(
-                        g::send::<0, 1, Prefix>(),
-                        g::seq(
-                            g::route(
-                                g::seq(g::send::<0, 1, Left>(), g::send::<1, 0, Reply>()),
-                                g::seq(g::send::<0, 1, Right>(), g::send::<1, 0, Reply>()),
-                            ),
-                            g::send::<0, 1, Suffix>(),
-                        ),
-                    )
-                    .roll();
-                    let sender_program = project::<0>(&global);
-                    let receiver_program = project::<1>(&global);
-                    let mut slab = [0; 32 * 1024];
-                    let mut storage = SessionKitStorage::uninit();
-                    let rv = storage
-                        .init()
-                        .rendezvous(&mut slab, TestTransport::new())
-                        .unwrap();
-                    let sid = SessionId::new(876);
-                    let mut sender = rv.enter(sid, &sender_program).unwrap();
-                    let mut receiver = rv.enter(sid, &receiver_program).unwrap();
-                    tokio::join!(
-                        async {
-                            sender.send::<Prefix>(&()).await.unwrap();
-                            sender.send::<Left>(&()).await.unwrap();
-                            sender.recv::<Reply>().await.unwrap();
-                        },
-                        async {
-                            receiver.recv::<Prefix>().await.unwrap();
-                            receiver
-                                .offer()
-                                .await
-                                .unwrap()
-                                .recv::<Left>()
-                                .await
-                                .unwrap();
-                            receiver.send::<Reply>(&()).await.unwrap();
-                        },
-                    );
-                    let rejected = match attempted {
-                        41 => sender.send::<Left>(&()).await,
-                        42 => sender.send::<Right>(&()).await,
-                        _ => unreachable!(),
-                    };
-                    assert!(
-                        rejected.is_err(),
-                        "unrolled child message {attempted} repeated before the parent suffix"
-                    );
-                }
-            })
-            .await
-            .expect("unrolled child boundary stopped progressing");
-        });
-}
-
-#[test]
-fn an_explicit_inner_roll_repeats_without_restarting_its_parent() {
-    use crate::runtime::program::project;
-
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(Duration::from_secs(240), async {
+    {
+        (async {
+            for attempted in [41, 42] {
                 type Prefix = g::Msg<40, ()>;
                 type Left = g::Msg<41, ()>;
                 type Right = g::Msg<42, ()>;
@@ -109,8 +34,7 @@ fn an_explicit_inner_roll_repeats_without_restarting_its_parent() {
                         g::route(
                             g::seq(g::send::<0, 1, Left>(), g::send::<1, 0, Reply>()),
                             g::seq(g::send::<0, 1, Right>(), g::send::<1, 0, Reply>()),
-                        )
-                        .roll(),
+                        ),
                         g::send::<0, 1, Suffix>(),
                     ),
                 )
@@ -123,11 +47,94 @@ fn an_explicit_inner_roll_repeats_without_restarting_its_parent() {
                     .init()
                     .rendezvous(&mut slab, TestTransport::new())
                     .unwrap();
-                let sid = SessionId::new(877);
+                let sid = SessionId::new(876);
                 let mut sender = rv.enter(sid, &sender_program).unwrap();
                 let mut receiver = rv.enter(sid, &receiver_program).unwrap();
-                tokio::join!(
+                async {
                     async {
+                        let _: () = (async {
+                            sender.send::<Prefix>(&()).await.unwrap();
+                            sender.send::<Left>(&()).await.unwrap();
+                            sender.recv::<Reply>().await.unwrap();
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
+                            receiver.recv::<Prefix>().await.unwrap();
+                            receiver
+                                .offer()
+                                .await
+                                .unwrap()
+                                .recv::<Left>()
+                                .await
+                                .unwrap();
+                            receiver.send::<Reply>(&()).await.unwrap();
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+                }
+                .await
+                .expect("all child results are data");
+                let rejected = match attempted {
+                    41 => sender.send::<Left>(&()).await,
+                    42 => sender.send::<Right>(&()).await,
+                    _ => unreachable!(),
+                };
+                assert!(
+                    rejected.is_err(),
+                    "unrolled child message {attempted} repeated before the parent suffix"
+                );
+            }
+        })
+        .await;
+    };
+
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn an_explicit_inner_roll_repeats_without_restarting_its_parent()
+-> core::result::Result<(), hibana::EndpointError> {
+    use crate::runtime::program::project;
+
+    {
+        (async {
+            type Prefix = g::Msg<40, ()>;
+            type Left = g::Msg<41, ()>;
+            type Right = g::Msg<42, ()>;
+            type Reply = g::Msg<43, ()>;
+            type Suffix = g::Msg<44, ()>;
+            let global = g::seq(
+                g::send::<0, 1, Prefix>(),
+                g::seq(
+                    g::route(
+                        g::seq(g::send::<0, 1, Left>(), g::send::<1, 0, Reply>()),
+                        g::seq(g::send::<0, 1, Right>(), g::send::<1, 0, Reply>()),
+                    )
+                    .roll(),
+                    g::send::<0, 1, Suffix>(),
+                ),
+            )
+            .roll();
+            let sender_program = project::<0>(&global);
+            let receiver_program = project::<1>(&global);
+            let mut slab = [0; 32 * 1024];
+            let mut storage = SessionKitStorage::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut slab, TestTransport::new())
+                .unwrap();
+            let sid = SessionId::new(877);
+            let mut sender = rv.enter(sid, &sender_program).unwrap();
+            let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+            async {
+                async {
+                    let _: () = (async {
                         for _ in 0..2 {
                             sender.send::<Prefix>(&()).await.unwrap();
                             for label in [41, 42, 42] {
@@ -140,8 +147,13 @@ fn an_explicit_inner_roll_repeats_without_restarting_its_parent() {
                             }
                             sender.send::<Suffix>(&()).await.unwrap();
                         }
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         for _ in 0..2 {
                             receiver.recv::<Prefix>().await.unwrap();
                             for label in [41, 42, 42] {
@@ -156,47 +168,56 @@ fn an_explicit_inner_roll_repeats_without_restarting_its_parent() {
                             }
                             receiver.recv::<Suffix>().await.unwrap();
                         }
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("explicit nested rolls stopped progressing");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_loan_reenters_after_its_sequential_continuation_without_reusing_old_work() {
+async fn a_loan_reenters_after_its_sequential_continuation_without_reusing_old_work()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let mut slab = [0u8; 64 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, TestTransport::new())
-                .unwrap();
-            let sid = SessionId::new(865);
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let db = rv.enter(sid, &db_program).unwrap();
-            let mut worker = rv.enter(sid, &worker_program).unwrap();
-            let exchange = async {
-                tokio::join!(
-                    async {
+    {
+        let mut slab = [0u8; 64 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .unwrap();
+        let sid = SessionId::new(865);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let db = rv.enter(sid, &db_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+        let exchange = async {
+            async {
+                async {
+                    let _: () = (async {
                         owner.send::<Loan>(db).await.unwrap();
                         let db = owner.recv::<Loan>().await.unwrap();
                         owner.send::<Tail>(&()).await.unwrap();
                         owner.recv::<Done>().await.unwrap();
                         owner.send::<Loan>(db).await.unwrap();
                         drop(owner.recv::<Loan>().await.unwrap());
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         let mut db = worker.recv::<Loan>().await.unwrap();
                         db.send::<Request>(&41).await.unwrap();
                         assert_eq!(worker.recv::<Request>().await.unwrap(), 41);
@@ -207,27 +228,58 @@ fn a_loan_reenters_after_its_sequential_continuation_without_reusing_old_work() 
                         let mut db = worker.recv::<Loan>().await.unwrap();
                         {
                             let request = worker.recv::<Request>();
-                            tokio::pin!(request);
-                            tokio::select! {
-                                biased;
-                                result = &mut request => panic!("old visit released a fresh receive: {result:?}"),
-                                () = tokio::task::yield_now() => {},
+                            let mut request = core::pin::pin!(request);
+                            match hibana_runtime::race(
+                                async { core::ops::ControlFlow::Break((&mut request).await) },
+                                async {
+                                    let _: () = (hibana_runtime::yield_now()).await;
+                                    core::ops::ControlFlow::Continue(())
+                                },
+                            )
+                            .await
+                            {
+                                core::ops::ControlFlow::Break(result) => {
+                                    panic!("old visit released a fresh receive: {result:?}")
+                                }
+                                core::ops::ControlFlow::Continue(()) => {}
                             }
-                            let (sent, received) = tokio::join!(
-                                db.send::<Request>(&42),
-                                &mut request,
-                            );
+                            let (sent, received) = async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>((db.send::<Request>(&42)).await)
+                                };
+
+                                async { Ok::<_, hibana::EndpointError>((&mut request).await) };
+                            }
+                            .await
+                            .expect("all child results are data");
                             sent.unwrap();
                             assert_eq!(received.unwrap(), 42);
                         }
                         worker.send::<Loan>(db).await.unwrap();
-                    },
-                );
-            };
-            tokio::select! {
-                biased;
-                () = tokio::time::sleep(Duration::from_secs(30)) => panic!("fresh loan visit stopped progressing"),
-                () = exchange => {},
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
             }
-        });
+            .await
+            .expect("all child results are data");
+        };
+        match hibana_runtime::race(
+            async {
+                let _: () = (crate::test_support::in_process::sleep(Duration::from_secs(30))).await;
+                core::ops::ControlFlow::Break(())
+            },
+            async {
+                let _: () = (exchange).await;
+                core::ops::ControlFlow::Continue(())
+            },
+        )
+        .await
+        {
+            core::ops::ControlFlow::Break(()) => panic!("fresh loan visit stopped progressing"),
+            core::ops::ControlFlow::Continue(()) => {}
+        }
+    };
+
+    Ok(())
 }

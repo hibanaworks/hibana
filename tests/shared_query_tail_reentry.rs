@@ -8,6 +8,8 @@ use hibana::{
     },
 };
 
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let queries = g::seq(
         g::route(

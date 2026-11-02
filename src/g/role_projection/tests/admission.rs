@@ -6,8 +6,10 @@ use crate::{
     test_support::transport::TestTransport,
 };
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
+async fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Seq<
         g::Send<0, 1, Loan>,
         g::Seq<g::Par<g::Send<10, 3, Read>, g::Send<1, 4, Value>>, g::Send<1, 0, Loan>>,
@@ -18,162 +20,173 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let peer_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut owner_slab = [0; 32 * 1024];
-            let mut peer_slab = [0; 32 * 1024];
-            let mut owner_storage = SessionKitStorage::<TestTransport>::uninit();
-            let mut peer_storage = SessionKitStorage::<TestTransport>::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let peer_rv = peer_storage
-                .init()
-                .rendezvous(&mut peer_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9053);
-            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-            let db = owner_rv.enter(sid, &db_program).unwrap();
-            let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
-            let mut reader = peer_rv.enter(sid, &reader_program).unwrap();
-            let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
-            let initial_db_tag = view_tag(&db);
-            // SAFETY: OWNER retains this pinned TestTransport actor.
-            #[cfg(not(miri))]
-            let owner_initial = unsafe { actor_snapshot(&owner) };
+    {
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 32 * 1024];
+        let mut peer_slab = [0; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::<TestTransport>::uninit();
+        let mut peer_storage = SessionKitStorage::<TestTransport>::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let peer_rv = peer_storage
+            .init()
+            .rendezvous(&mut peer_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9053);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let db = owner_rv.enter(sid, &db_program).unwrap();
+        let mut worker = peer_rv.enter(sid, &worker_program).unwrap();
+        let mut reader = peer_rv.enter(sid, &reader_program).unwrap();
+        let mut peer = peer_rv.enter(sid, &peer_program).unwrap();
+        let initial_db_tag = view_tag(&db);
+        // SAFETY: OWNER retains this pinned TestTransport actor.
+        #[cfg(not(miri))]
+        let owner_initial = unsafe { actor_snapshot(&owner) };
 
-            // Append-only qualification evidence. Endpoint operations never
-            // inspect this log or use it to decide what may run next.
-            #[cfg(not(miri))]
-            let commits = std::cell::RefCell::new(std::vec::Vec::new());
+        // Append-only qualification evidence. Endpoint operations never
+        // inspect this log or use it to decide what may run next.
+        #[cfg(not(miri))]
+        let commits = std::cell::RefCell::new(std::vec::Vec::new());
 
-            // SAFETY: every observation retains this pinned TestTransport actor.
-            let initial = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
-            assert_eq!(initial.1, [true, false, false, false]);
-            owner.send::<Loan>(db).await.unwrap();
-            // SAFETY: OWNER keeps the original resident DB header pinned.
-            assert!(!unsafe { initial_db_tag.matches_header() });
-            // SAFETY: the completed send has released its kernel borrow.
-            #[cfg(not(miri))]
-            let owner_sent = unsafe { actor_snapshot(&owner) };
-            #[cfg(not(miri))]
-            let received_wire = network.queued_frame(1);
-            let mut db = worker.recv::<Loan>().await.unwrap();
-            let received_db_tag = view_tag(&db);
-            // SAFETY: DB's actual received value retains this issued header.
-            assert!(unsafe { received_db_tag.matches_header() });
-            // SAFETY: the same actor remains pinned and has no active kernel call.
-            let received = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
-            assert_eq!(received.1, [false, true, true, false]);
-            #[cfg(not(miri))]
-            commits
-                .borrow_mut()
-                .push((0, 1, initial.0.clone(), received.0.clone(), received_wire));
+        // SAFETY: every observation retains this pinned TestTransport actor.
+        let initial = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
+        assert_eq!(initial.1, [true, false, false, false]);
+        owner.send::<Loan>(db).await.unwrap();
+        // SAFETY: OWNER keeps the original resident DB header pinned.
+        assert!(!unsafe { initial_db_tag.matches_header() });
+        // SAFETY: the completed send has released its kernel borrow.
+        #[cfg(not(miri))]
+        let owner_sent = unsafe { actor_snapshot(&owner) };
+        #[cfg(not(miri))]
+        let received_wire = network.queued_frame(1);
+        let mut db = worker.recv::<Loan>().await.unwrap();
+        let received_db_tag = view_tag(&db);
+        // SAFETY: DB's actual received value retains this issued header.
+        assert!(unsafe { received_db_tag.matches_header() });
+        // SAFETY: the same actor remains pinned and has no active kernel call.
+        let received = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
+        assert_eq!(received.1, [false, true, true, false]);
+        #[cfg(not(miri))]
+        commits
+            .borrow_mut()
+            .push((0, 1, initial.0.clone(), received.0.clone(), received_wire));
 
-            let (db_done, worker_done) = tokio::join!(
-                async {
-                    // SAFETY: read before borrowing this live actor's DB view.
-                    #[cfg(not(miri))]
-                    let before = unsafe { actor_snapshot(&db) };
-                    db.send::<Read>(&17).await.unwrap();
-                    // SAFETY: this distinct view retains the same actor.
-                    let observation = unsafe { (actor_snapshot(&db), actor_admissions(&db)) };
-                    #[cfg(not(miri))]
-                    commits.borrow_mut().push((
-                        1,
-                        10,
-                        before,
-                        observation.0.clone(),
-                        network.queued_frame(3),
-                    ));
-                    observation
-                },
-                async {
-                    // SAFETY: read before borrowing WORKER's live view.
-                    #[cfg(not(miri))]
-                    let before = unsafe { actor_snapshot(&worker) };
-                    worker.send::<Value>(&19).await.unwrap();
-                    // SAFETY: the shared actor lease was released by send.
-                    let observation = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
-                    #[cfg(not(miri))]
-                    commits.borrow_mut().push((
-                        2,
-                        1,
-                        before,
-                        observation.0.clone(),
-                        network.queued_frame(4),
-                    ));
-                    observation
-                },
-            );
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 17);
-            assert_eq!(peer.recv::<Value>().await.unwrap(), 19);
-            // One par side can finish without consuming the other's step.
-            assert!(
-                db_done.1 == [false, false, true, false]
-                    || worker_done.1 == [false, true, false, false]
-            );
-            // SAFETY: both futures have finished; the worker view is still live.
-            let joined = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
-            assert_eq!(joined.1, [false, false, false, true]);
-            worker.send::<Loan>(db).await.unwrap();
-            // SAFETY: WORKER retains the same actor after moving DB.
-            assert!(!unsafe { received_db_tag.matches_header() });
-            // SAFETY: returning DB leaves WORKER's own view alive.
-            let returned = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
-            assert_eq!(returned.1, [false, false, false, false]);
-            #[cfg(not(miri))]
-            commits.borrow_mut().push((
-                3,
-                1,
-                joined.0.clone(),
-                returned.0.clone(),
-                network.queued_frame(0),
+        let (db_done, worker_done) = async {
+            async {
+                Ok::<_, hibana::EndpointError>(
+                    (async {
+                        // SAFETY: read before borrowing this live actor's DB view.
+                        #[cfg(not(miri))]
+                        let before = unsafe { actor_snapshot(&db) };
+                        db.send::<Read>(&17).await.unwrap();
+                        // SAFETY: this distinct view retains the same actor.
+                        let observation = unsafe { (actor_snapshot(&db), actor_admissions(&db)) };
+                        #[cfg(not(miri))]
+                        commits.borrow_mut().push((
+                            1,
+                            10,
+                            before,
+                            observation.0.clone(),
+                            network.queued_frame(3),
+                        ));
+                        observation
+                    })
+                    .await,
+                )
+            };
+
+            async {
+                Ok::<_, hibana::EndpointError>(
+                    (async {
+                        // SAFETY: read before borrowing WORKER's live view.
+                        #[cfg(not(miri))]
+                        let before = unsafe { actor_snapshot(&worker) };
+                        worker.send::<Value>(&19).await.unwrap();
+                        // SAFETY: the shared actor lease was released by send.
+                        let observation =
+                            unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
+                        #[cfg(not(miri))]
+                        commits.borrow_mut().push((
+                            2,
+                            1,
+                            before,
+                            observation.0.clone(),
+                            network.queued_frame(4),
+                        ));
+                        observation
+                    })
+                    .await,
+                )
+            };
+        }
+        .await
+        .expect("all child results are data");
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 17);
+        assert_eq!(peer.recv::<Value>().await.unwrap(), 19);
+        // One par side can finish without consuming the other's step.
+        assert!(
+            db_done.1 == [false, false, true, false]
+                || worker_done.1 == [false, true, false, false]
+        );
+        // SAFETY: both futures have finished; the worker view is still live.
+        let joined = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
+        assert_eq!(joined.1, [false, false, false, true]);
+        worker.send::<Loan>(db).await.unwrap();
+        // SAFETY: WORKER retains the same actor after moving DB.
+        assert!(!unsafe { received_db_tag.matches_header() });
+        // SAFETY: returning DB leaves WORKER's own view alive.
+        let returned = unsafe { (actor_snapshot(&worker), actor_admissions(&worker)) };
+        assert_eq!(returned.1, [false, false, false, false]);
+        #[cfg(not(miri))]
+        commits.borrow_mut().push((
+            3,
+            1,
+            joined.0.clone(),
+            returned.0.clone(),
+            network.queued_frame(0),
+        ));
+        // SAFETY: OWNER's live view pins the receiving actor.
+        #[cfg(not(miri))]
+        let owner_before_return = unsafe { actor_snapshot(&owner) };
+        let db = owner.recv::<Loan>().await.unwrap();
+        let returned_db_tag = view_tag(&db);
+        // SAFETY: both actor allocations remain pinned. Reissuance
+        // must not resurrect either consumed Rust value's old handle.
+        unsafe {
+            assert!(returned_db_tag.matches_header());
+            assert!(!initial_db_tag.matches_header());
+            assert!(!received_db_tag.matches_header());
+        }
+        // SAFETY: the actual returned DB value pins its new owner actor.
+        #[cfg(not(miri))]
+        let owner_returned = unsafe { actor_snapshot(&db) };
+        assert!(network.queue_is_empty());
+
+        #[cfg(not(miri))]
+        {
+            use crate::test_support::{
+                lean_choreo::LeanChoreo, lean_descriptor::descriptor_source,
+            };
+            let choreo = Steps::lean_source();
+            let image = descriptor_source(RoleDescriptorRef::from_resident(
+                worker_program.role_image_ref(),
             ));
-            // SAFETY: OWNER's live view pins the receiving actor.
-            #[cfg(not(miri))]
-            let owner_before_return = unsafe { actor_snapshot(&owner) };
-            let db = owner.recv::<Loan>().await.unwrap();
-            let returned_db_tag = view_tag(&db);
-            // SAFETY: both actor allocations remain pinned. Reissuance
-            // must not resurrect either consumed Rust value's old handle.
-            unsafe {
-                assert!(returned_db_tag.matches_header());
-                assert!(!initial_db_tag.matches_header());
-                assert!(!received_db_tag.matches_header());
-            }
-            // SAFETY: the actual returned DB value pins its new owner actor.
-            #[cfg(not(miri))]
-            let owner_returned = unsafe { actor_snapshot(&db) };
-            assert!(network.queue_is_empty());
-
-            #[cfg(not(miri))]
-            {
-                use crate::test_support::{
-                    lean_choreo::LeanChoreo, lean_descriptor::descriptor_source,
-                };
-                let choreo = Steps::lean_source();
-                let image = descriptor_source(RoleDescriptorRef::from_resident(
-                    worker_program.role_image_ref(),
-                ));
-                let mut source = std::format!(
-                    "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\nimport Hibana.SourceReadyReceipt\nimport Hibana.ActorMutationCoverage\n\nset_option maxRecDepth 10000\n\n\
+            let mut source = std::format!(
+                "import Hibana.ActorCommitHistory\nimport Hibana.ResourceValueCorrespondence\nimport Hibana.SourceReadyReceipt\nimport Hibana.ActorMutationCoverage\n\nset_option maxRecDepth 10000\n\n\
                      def admissionChoreo : Hibana.Choreo := {choreo}\n\n\
                      def admissionImage : Hibana.RustDescriptorImage := {image}\n\n"
-                );
-                for (name, (snapshot, admitted)) in [
-                    ("initial", initial),
-                    ("received", received),
-                    ("dbDone", db_done),
-                    ("workerDone", worker_done),
-                    ("joined", joined),
-                    ("returned", returned),
-                ] {
-                    source.push_str(&std::format!(
+            );
+            for (name, (snapshot, admitted)) in [
+                ("initial", initial),
+                ("received", received),
+                ("dbDone", db_done),
+                ("workerDone", worker_done),
+                ("joined", joined),
+                ("returned", returned),
+            ] {
+                source.push_str(&std::format!(
                         "def {name} : Hibana.ActorAdmissionObservation := {{ snapshot := {}, \
                          pathIndex := 0, admitted := {admitted:?}, retainedRolls := {:?} }}\n\n\
                          theorem {name}Checked : {name}.check admissionImage admissionChoreo = true := by decide\n\n\
@@ -190,12 +203,12 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                         super::commit::observation_source(&snapshot),
                         snapshot.retained_rolls,
                     ));
-                    source.push_str(&std::format!(
-                        "def {name}MutationCount : Nat := {}\n\n",
-                        snapshot.completion_mutations,
-                    ));
-                }
-                source.push_str(
+                source.push_str(&std::format!(
+                    "def {name}MutationCount : Nat := {}\n\n",
+                    snapshot.completion_mutations,
+                ));
+            }
+            source.push_str(
                     "theorem missingAdmissionRowRejected :\n  \
                      ({ received with admitted := received.admitted.take 3 } : Hibana.ActorAdmissionObservation).check\n    \
                      admissionImage admissionChoreo = false := by decide\n\n\
@@ -219,7 +232,7 @@ fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit() {
                      initial.snapshot.viewIssued 10 = false ∧ received.snapshot.viewIssued 10 = true ∧\n    \
                      returned.snapshot.viewIssued 10 = false := by decide\n\n",
                 );
-                source.push_str(r#"
+            source.push_str(r#"
 def useData : Hibana.DecodedActorOrder :=
   (admissionImage.decodeActorOrder? admissionChoreo).get (by decide)
 def usePath : Hibana.EndpointDelegation.NormalizedPath :=
@@ -350,18 +363,18 @@ theorem everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt
     (by decide) member located required ready
 
 "#);
-                let commits = commits.borrow();
-                assert_eq!(commits.len(), 4);
-                assert_eq!(commits[0].0, 0);
-                assert_eq!(commits[3].0, 3);
-                assert_ne!(commits[1].0, commits[2].0);
-                for (index, (event, view, before, after, (header, payload))) in
-                    commits.iter().enumerate()
-                {
-                    assert!(!before.steps[*event].done);
-                    assert!(after.steps[*event].done);
-                    assert_eq!(after.steps[*event].view, *view);
-                    source.push_str(&std::format!(
+            let commits = commits.borrow();
+            assert_eq!(commits.len(), 4);
+            assert_eq!(commits[0].0, 0);
+            assert_eq!(commits[3].0, 3);
+            assert_ne!(commits[1].0, commits[2].0);
+            for (index, (event, view, before, after, (header, payload))) in
+                commits.iter().enumerate()
+            {
+                assert!(!before.steps[*event].done);
+                assert!(after.steps[*event].done);
+                assert_eq!(after.steps[*event].view, *view);
+                source.push_str(&std::format!(
                         "def observedCommit{index} : Hibana.ActorCommitRecord := {{\n  \
                          step := {{\n    pathIndex := 0\n    event := {event}\n    view := {view}\n    \
                          before := {}\n    after := {}\n  }}\n  \
@@ -375,13 +388,14 @@ theorem everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt
                         header.target_role(),
                         header.label().raw(),
                     ));
-                    source.push_str(&std::format!(
-                        "def observedMutationCommit{index} : Hibana.ActorCommitMutationRecord := {{\n  \
+                source.push_str(&std::format!(
+                    "def observedMutationCommit{index} : Hibana.ActorCommitMutationRecord := {{\n  \
                          commit := observedCommit{index}, before := {}, after := {}\n}}\n\n",
-                        before.completion_mutations, after.completion_mutations,
-                    ));
-                }
-                source.push_str(r#"
+                    before.completion_mutations,
+                    after.completion_mutations,
+                ));
+            }
+            source.push_str(r#"
 def observedCommits : List Hibana.ActorCommitRecord :=
   [observedCommit0, observedCommit1, observedCommit2, observedCommit3]
 
@@ -536,61 +550,61 @@ theorem actualSourceReadyReturnDerivesItsReceipt :
       simpa using pending)
 
 "#);
-                let owner_image = descriptor_source(RoleDescriptorRef::from_resident(
-                    owner_program.role_image_ref(),
-                ));
+            let owner_image = descriptor_source(RoleDescriptorRef::from_resident(
+                owner_program.role_image_ref(),
+            ));
+            source.push_str(&std::format!(
+                "def ownerImage : Hibana.RustDescriptorImage := {owner_image}\n\n"
+            ));
+            for (name, snapshot) in [
+                ("ownerInitial", &owner_initial),
+                ("ownerSent", &owner_sent),
+                ("ownerBeforeReturn", &owner_before_return),
+                ("ownerReturned", &owner_returned),
+            ] {
                 source.push_str(&std::format!(
-                    "def ownerImage : Hibana.RustDescriptorImage := {owner_image}\n\n"
+                    "def {name} : Hibana.ActorProgressObservation := {}\n\n",
+                    super::commit::observation_source(snapshot),
                 ));
-                for (name, snapshot) in [
-                    ("ownerInitial", &owner_initial),
-                    ("ownerSent", &owner_sent),
-                    ("ownerBeforeReturn", &owner_before_return),
-                    ("ownerReturned", &owner_returned),
-                ] {
-                    source.push_str(&std::format!(
-                        "def {name} : Hibana.ActorProgressObservation := {}\n\n",
-                        super::commit::observation_source(snapshot),
-                    ));
-                }
-                let owner_send_event = owner_initial
+            }
+            let owner_send_event = owner_initial
                     .steps
                     .iter()
                     .position(|step| {
                         matches!(step.action, LocalAction::Send { eff_index, .. } if eff_index.dense_ordinal() == 0)
                     })
                     .unwrap();
-                let owner_return_event = owner_before_return
+            let owner_return_event = owner_before_return
                     .steps
                     .iter()
                     .position(|step| {
                         matches!(step.action, LocalAction::Recv { eff_index, .. } if eff_index.dense_ordinal() == 3)
                     })
                     .unwrap();
-                for (name, event, before, after, wire) in [
-                    (
-                        "ownerAccept",
-                        owner_send_event,
-                        "ownerInitial",
-                        "ownerSent",
-                        "observedCommit0.wire",
-                    ),
-                    (
-                        "ownerReturn",
-                        owner_return_event,
-                        "ownerBeforeReturn",
-                        "ownerReturned",
-                        "observedCommit3.wire",
-                    ),
-                ] {
-                    source.push_str(&std::format!(
+            for (name, event, before, after, wire) in [
+                (
+                    "ownerAccept",
+                    owner_send_event,
+                    "ownerInitial",
+                    "ownerSent",
+                    "observedCommit0.wire",
+                ),
+                (
+                    "ownerReturn",
+                    owner_return_event,
+                    "ownerBeforeReturn",
+                    "ownerReturned",
+                    "observedCommit3.wire",
+                ),
+            ] {
+                source.push_str(&std::format!(
                         "def {name} : Hibana.ActorCommitObservation := {{\n  \
                          pathIndex := 0\n  event := {event}\n  view := 0\n  \
                          before := {before}\n  after := {after}\n}}\n\n\
                          theorem {name}Checked : {name}.ownedCheck ownerImage admissionChoreo {wire} 9053 = true := by decide\n\n"
                     ));
-                }
-                source.push_str(r#"
+            }
+            source.push_str(r#"
 def ownerAcceptFacts : Hibana.OwnedCommitFacts :=
   (ownerAccept.ownedFacts? ownerImage admissionChoreo).get (by decide)
 def workerReceiveFacts : Hibana.OwnedCommitFacts :=
@@ -781,11 +795,13 @@ theorem privatePayloadAndAcceptedFramesRemainDistinctFromApplicationValues :
       initialDbTag ≠ receivedDbTag ∧ receivedDbTag ≠ returnedDbTag ∧ initialDbTag ≠ returnedDbTag := by decide
 
 "#);
-                let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("target/lean-proof");
-                std::fs::create_dir_all(&directory).unwrap();
-                std::fs::write(directory.join("ActorAdmissionGenerated.lean"), source).unwrap();
-            }
-            drop(db);
-        });
+            let directory =
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("ActorAdmissionGenerated.lean"), source).unwrap();
+        }
+        drop(db);
+    };
+
+    Ok(())
 }

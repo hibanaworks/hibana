@@ -1,5 +1,7 @@
 #[path = "support/in_memory.rs"]
 mod in_memory;
+#[path = "support/in_process.rs"]
+pub mod in_process;
 
 use hibana::{
     Endpoint, g,
@@ -17,11 +19,12 @@ type Read = g::Msg<2, u32>;
 type Value = g::Msg<3, u32>;
 type Record = g::Msg<4, u32>;
 
-fn main() {
+#[hibana_runtime::main(in_process::InProcess::default())]
+async fn main() -> core::result::Result<(), hibana::EndpointError> {
     // DB names the operation right. SERVICE owns the concrete computation.
     // The role and continuation of DB survive both transfers.
     let global = g::seq(
-        g::send::<OWNER, WORKER, Loan<'_>>(),
+        g::send::<OWNER, WORKER, Loan>(),
         g::seq(
             g::par(
                 g::seq(
@@ -31,7 +34,7 @@ fn main() {
                 g::send::<DB, AUDIT, Record>(),
             ),
             g::seq(
-                g::send::<WORKER, OWNER, Loan<'_>>(),
+                g::send::<WORKER, OWNER, Loan>(),
                 g::seq(
                     g::send::<DB, SERVICE, Read>(),
                     g::send::<SERVICE, DB, Value>(),
@@ -82,44 +85,37 @@ fn main() {
     let mut service = service_runtime.enter(session, &service_program).unwrap();
     let mut audit = audit_runtime.enter(session, &audit_program).unwrap();
 
-    // The carrier uses in-memory readiness, so no OS I/O driver is needed.
-    // The one Tokio executor polls all four localsides and both par fragments.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    let (answer, worker_answer, (), record) = runtime.block_on(async {
-        tokio::join!(
-            async {
-                owner.send::<Loan<'_>>(db).await.unwrap();
-                let mut db = owner.recv::<Loan<'_>>().await.unwrap();
-                db.send::<Read>(&41).await.unwrap();
-                db.recv::<Value>().await.unwrap()
-            },
-            async {
-                let mut db = worker.recv::<Loan<'_>>().await.unwrap();
-                let answer = {
-                    let [mut query, mut record] = db.par().unwrap();
-                    let (answer, ()) = tokio::join!(
-                        async {
-                            query.send::<Read>(&7).await.unwrap();
-                            query.recv::<Value>().await.unwrap()
-                        },
-                        async { record.send::<Record>(&7).await.unwrap() },
-                    );
-                    answer
+    let (answer, worker_answer, (), record) = async {
+        async {
+            owner.send::<Loan>(db).await?;
+            let mut db = owner.recv::<Loan>().await?;
+            db.send::<Read>(&41).await?;
+            db.recv::<Value>().await
+        };
+        async {
+            let mut db = worker.recv::<Loan>().await?;
+            let (answer, ()) = async {
+                let [mut query, mut record] = db.par()?;
+                async {
+                    query.send::<Read>(&7).await?;
+                    query.recv::<Value>().await
                 };
-                worker.send::<Loan<'_>>(db).await.unwrap();
-                answer
-            },
-            async {
-                let key = service.recv::<Read>().await.unwrap();
-                service.send::<Value>(&(key + 1)).await.unwrap();
-                let key = service.recv::<Read>().await.unwrap();
-                service.send::<Value>(&(key + 1)).await.unwrap();
-            },
-            async { audit.recv::<Record>().await.unwrap() },
-        )
-    });
+                async { record.send::<Record>(&7).await };
+            }
+            .await?;
+            worker.send::<Loan>(db).await?;
+            Ok(answer)
+        };
+        async {
+            let key = service.recv::<Read>().await?;
+            service.send::<Value>(&(key + 1)).await?;
+            let key = service.recv::<Read>().await?;
+            service.send::<Value>(&(key + 1)).await?;
+        };
+        async { audit.recv::<Record>().await };
+    }
+    .await?;
     assert_eq!((worker_answer, answer, record), (8, 42, 7));
     println!("worker={worker_answer}, owner={answer}, audit={record}");
+    Ok(())
 }

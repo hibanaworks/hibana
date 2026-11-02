@@ -48,81 +48,95 @@ type ParallelReplies = g::Seq<
     >,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn nested_parallel_replies_preserve_the_prefix_in_every_alternative() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            use crate::{
-                runtime::{SessionKitStorage, ids::SessionId, program::project},
-                test_support::transport::TestTransport,
-            };
-            let global = g::Program::<ParallelReplies>::new();
-            let owner_program = project::<50>(&global);
-            let worker_program = project::<51>(&global);
-            let material_program = project::<36>(&global);
-            let start_program = project::<1>(&global);
-            let client_program = project::<10>(&global);
-            let admission_program = project::<13>(&global);
-            let first_program = project::<8>(&global);
-            let middle_program = project::<9>(&global);
-            let last_program = project::<27>(&global);
-            let service_program = project::<11>(&global);
-            let notice_program = project::<28>(&global);
-            for number in 0..=4 {
-                let network = TestTransport::new();
-                let mut slab = [0; 128 * 1024];
-                let mut storage = SessionKitStorage::uninit();
-                let rv = storage
-                    .init()
-                    .rendezvous(&mut slab, network.clone())
-                    .unwrap();
-                let session = SessionId::new(9950 + number as u32);
-                let mut owner = rv.enter(session, &owner_program).unwrap();
-                let material = rv.enter(session, &material_program).unwrap();
-                let mut worker = rv.enter(session, &worker_program).unwrap();
-                let mut client = rv.enter(session, &client_program).unwrap();
-                if number == 0 {
-                    assert!(
-                        tokio::time::timeout(
-                            core::time::Duration::from_secs(1),
-                            client.send::<Stop>(&())
-                        )
-                        .await
-                        .expect("an early stop must be rejected without waiting")
-                        .is_err()
-                    );
-                    assert!(network.queue_is_empty());
-                    continue;
-                }
-                let mut starter = rv.enter(session, &start_program).unwrap();
-                let mut admission = rv.enter(session, &admission_program).unwrap();
-                let mut first = rv.enter(session, &first_program).unwrap();
-                let mut middle = rv.enter(session, &middle_program).unwrap();
-                let mut last = rv.enter(session, &last_program).unwrap();
-                let mut service = rv.enter(session, &service_program).unwrap();
-                let mut notice = rv.enter(session, &notice_program).unwrap();
-                tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                    tokio::join!(
-                        async {
+async fn nested_parallel_replies_preserve_the_prefix_in_every_alternative()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        use crate::{
+            runtime::{SessionKitStorage, ids::SessionId, program::project},
+            test_support::transport::TestTransport,
+        };
+        let global = g::Program::<ParallelReplies>::new();
+        let owner_program = project::<50>(&global);
+        let worker_program = project::<51>(&global);
+        let material_program = project::<36>(&global);
+        let start_program = project::<1>(&global);
+        let client_program = project::<10>(&global);
+        let admission_program = project::<13>(&global);
+        let first_program = project::<8>(&global);
+        let middle_program = project::<9>(&global);
+        let last_program = project::<27>(&global);
+        let service_program = project::<11>(&global);
+        let notice_program = project::<28>(&global);
+        for number in 0..=4 {
+            let network = TestTransport::new();
+            let mut slab = [0; 128 * 1024];
+            let mut storage = SessionKitStorage::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut slab, network.clone())
+                .unwrap();
+            let session = SessionId::new(9950 + number as u32);
+            let mut owner = rv.enter(session, &owner_program).unwrap();
+            let material = rv.enter(session, &material_program).unwrap();
+            let mut worker = rv.enter(session, &worker_program).unwrap();
+            let mut client = rv.enter(session, &client_program).unwrap();
+            if number == 0 {
+                assert!(
+                    crate::test_support::in_process::timeout(
+                        core::time::Duration::from_secs(1),
+                        client.send::<Stop>(&())
+                    )
+                    .await
+                    .expect("an early stop must be rejected without waiting")
+                    .is_err()
+                );
+                assert!(network.queue_is_empty());
+                continue;
+            }
+            let mut starter = rv.enter(session, &start_program).unwrap();
+            let mut admission = rv.enter(session, &admission_program).unwrap();
+            let mut first = rv.enter(session, &first_program).unwrap();
+            let mut middle = rv.enter(session, &middle_program).unwrap();
+            let mut last = rv.enter(session, &last_program).unwrap();
+            let mut service = rv.enter(session, &service_program).unwrap();
+            let mut notice = rv.enter(session, &notice_program).unwrap();
+            (async {
+                async {
+                    async {
+                        let _: () = (async {
                             owner.send::<Material>(material).await.unwrap();
                             drop(owner.recv::<Material>().await.unwrap());
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             let material = worker.recv::<Material>().await.unwrap();
                             worker.send::<Material>(material).await.unwrap();
-                        }
-                    );
-                    let [mut incoming, mut outgoing] = middle.par().unwrap();
-                    let [mut packets, mut notices] = service.par().unwrap();
-                    tokio::join!(
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+                }
+                .await
+                .expect("all child results are data");
+                let [mut incoming, mut outgoing] = middle.par().unwrap();
+                let [mut packets, mut notices] = service.par().unwrap();
+                async {
+                    async {
+                        let _: () = (async {
                             starter.send::<Started>(&()).await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             client.recv::<Started>().await.unwrap();
                             client.send::<Admitted>(&()).await.unwrap();
                             client.send::<Request>(&number).await.unwrap();
@@ -137,23 +151,53 @@ fn nested_parallel_replies_preserve_the_prefix_in_every_alternative() {
                             assert_eq!(value, number);
                             client.send::<Stop>(&()).await.unwrap();
                             client.recv::<Stopped>().await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             admission.recv::<Admitted>().await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             first.send::<Independent>(&()).await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             incoming.recv::<Independent>().await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             outgoing.send::<Independent>(&()).await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             last.recv::<Independent>().await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             let value = packets
                                 .offer()
                                 .await
@@ -170,20 +214,36 @@ fn nested_parallel_replies_preserve_the_prefix_in_every_alternative() {
                             }
                             packets.offer().await.unwrap().recv::<Stop>().await.unwrap();
                             packets.send::<Stopped>(&()).await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             notices.send::<Notice>(&()).await.unwrap();
-                        },
-                        async {
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        let _: () = (async {
                             notice.recv::<Notice>().await.unwrap();
-                        },
-                    );
-                })
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+                }
                 .await
-                .expect("independent replies and their continuation must finish");
-                assert!(network.queue_is_empty());
-            }
-        });
+                .expect("all child results are data");
+            })
+            .await;
+            assert!(network.queue_is_empty());
+        }
+    };
+
+    Ok(())
 }
 
 #[test]
@@ -386,8 +446,10 @@ type ConditionalHandoff = g::Seq<
     g::Seq<g::Send<1, 0, g::Msg<2, ()>>, g::Send<3, 0, g::Msg<3, ()>>>,
 >;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is_absent() {
+async fn a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is_absent()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::{
         runtime::{SessionKitStorage, ids::SessionId, program::project},
         test_support::transport::TestTransport,
@@ -419,61 +481,61 @@ fn a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is_absen
             let mut owner = owner_runtime.enter(session, &owner_program).unwrap();
             let mut worker = worker_runtime.enter(session, &worker_program).unwrap();
             let mut resource = owner_runtime.enter(session, &resource_program).unwrap();
-            tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .start_paused(true)
-                .build()
-                .unwrap()
-                .block_on(async {
-                    let result = tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                        tokio::try_join!(
-                            async {
-                                if right {
-                                    owner.send::<Loan<'_>>(resource).await?;
-                                    if early_data {
-                                        return owner.recv::<Data>().await;
-                                    }
-                                    owner.recv::<Ack>().await?;
-                                    owner.recv::<Data>().await
-                                } else {
-                                    owner.send::<Choice>(&()).await?;
-                                    if early_data {
-                                        return owner.recv::<Data>().await;
-                                    }
-                                    owner.recv::<Ack>().await?;
-                                    resource.send::<Data>(&()).await?;
-                                    owner.recv::<Data>().await
+            {
+                let result = (async {
+                    async {
+                        async {
+                            if right {
+                                owner.send::<Loan<'_>>(resource).await?;
+                                if early_data {
+                                    return owner.recv::<Data>().await;
                                 }
-                            },
-                            async {
-                                tokio::time::sleep(core::time::Duration::from_millis(1)).await;
-                                let branch = worker.offer().await?;
-                                match branch.label() {
-                                    0 => {
-                                        branch.recv::<Choice>().await?;
-                                        worker.send::<Ack>(&()).await
-                                    }
-                                    1 => {
-                                        let mut resource = branch.recv::<Loan<'_>>().await?;
-                                        worker.send::<Ack>(&()).await?;
-                                        resource.send::<Data>(&()).await
-                                    }
-                                    _ => panic!("unexpected handoff choice"),
+                                owner.recv::<Ack>().await?;
+                                owner.recv::<Data>().await
+                            } else {
+                                owner.send::<Choice>(&()).await?;
+                                if early_data {
+                                    return owner.recv::<Data>().await;
                                 }
+                                owner.recv::<Ack>().await?;
+                                resource.send::<Data>(&()).await?;
+                                owner.recv::<Data>().await
                             }
-                        )
-                    })
-                    .await
-                    .expect("a receive cannot hide its own unfinished prefix");
-                    if early_data {
-                        result.expect_err("Data cannot be received before Ack");
-                    } else {
-                        result.unwrap();
-                        assert!(network.queue_is_empty());
+                        };
+
+                        async {
+                            crate::test_support::in_process::sleep(
+                                core::time::Duration::from_millis(1),
+                            )
+                            .await;
+                            let branch = worker.offer().await?;
+                            match branch.label() {
+                                0 => {
+                                    branch.recv::<Choice>().await?;
+                                    worker.send::<Ack>(&()).await
+                                }
+                                1 => {
+                                    let mut resource = branch.recv::<Loan<'_>>().await?;
+                                    worker.send::<Ack>(&()).await?;
+                                    resource.send::<Data>(&()).await
+                                }
+                                _ => panic!("unexpected handoff choice"),
+                            }
+                        };
                     }
-                });
+                    .await
+                })
+                .await;
+                if early_data {
+                    result.expect_err("Data cannot be received before Ack");
+                } else {
+                    result.unwrap();
+                    assert!(network.queue_is_empty());
+                }
+            };
         }
     }
+    Ok(())
 }
 
 #[cfg(not(miri))]

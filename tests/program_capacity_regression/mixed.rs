@@ -10,7 +10,7 @@ use hibana::{
         resolver::{DecisionArm, ResolverRef},
     },
 };
-use std::{cell::Cell, time::Duration};
+use std::cell::Cell;
 
 type Loan = g::Msg<240, Endpoint<'static, 2>>;
 type A = g::Msg<1, u32>;
@@ -39,8 +39,10 @@ macro_rules! burst {
     }};
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn delegated_parallel_choices_and_nested_repeats_above_1500_events()
+-> core::result::Result<(), hibana::EndpointError> {
     // 1,536 events in both choices, two outer headers, two transfers, two final messages.
     let global = g::seq(
         g::send::<0, 1, Loan>(),
@@ -113,8 +115,8 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
         let db = r0.enter(sid, &p2).unwrap();
         let mut worker = r1.enter(sid, &p1).unwrap();
         let mut service = r3.enter(sid, &p3).unwrap();
-        tokio::time::timeout(Duration::from_secs(30), async {
-            tokio::try_join!(
+        (async {
+            async {
                 async {
                     owner.send::<Loan>(db).await?;
                     for _ in 0..2 {
@@ -145,60 +147,66 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                     owner.send::<ServiceDone>(&()).await?;
                     drop(db);
                     Ok::<_, EndpointError>(())
-                },
+                };
+
                 async {
                     let mut db = worker.recv::<Loan>().await?;
                     for _ in 0..2 {
                         worker.send::<Head>(&()).await?;
                         worker.send::<Head>(&()).await?;
-                        tokio::try_join!(
+                        async {
                             async {
                                 for _ in 0..2 {
                                     let label = db.offer().await?.label();
                                     match label {
                                         1 | 2 => {
                                             let [mut a, mut b] = db.par()?;
-                                            tokio::try_join!(
+                                            async {
                                                 async {
                                                     for i in 0..128u32 {
                                                         a.send::<A>(&i).await?;
                                                         assert_eq!(a.recv::<A>().await?, i + 1);
                                                     }
                                                     Ok::<_, EndpointError>(())
-                                                },
+                                                };
+
                                                 async {
                                                     for i in 0..128u32 {
                                                         b.send::<B>(&i).await?;
                                                         assert_eq!(b.recv::<B>().await?, i + 1);
                                                     }
                                                     Ok::<_, EndpointError>(())
-                                                },
-                                            )?;
+                                                };
+                                            }
+                                            .await?;
                                         }
                                         3 | 4 => {
                                             let [mut a, mut b] = db.par()?;
-                                            tokio::try_join!(
+                                            async {
                                                 async {
                                                     for i in 0..128u32 {
                                                         a.send::<C>(&i).await?;
                                                         assert_eq!(a.recv::<C>().await?, i + 1);
                                                     }
                                                     Ok::<_, EndpointError>(())
-                                                },
+                                                };
+
                                                 async {
                                                     for i in 0..128u32 {
                                                         b.send::<D>(&i).await?;
                                                         assert_eq!(b.recv::<D>().await?, i + 1);
                                                     }
                                                     Ok::<_, EndpointError>(())
-                                                },
-                                            )?;
+                                                };
+                                            }
+                                            .await?;
                                         }
                                         _ => panic!("unexpected delegated choice"),
                                     }
                                 }
                                 Ok::<_, EndpointError>(())
-                            },
+                            };
+
                             async {
                                 for _ in 0..2 {
                                     let label = worker.offer().await?.label();
@@ -219,13 +227,15 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                                     }
                                 }
                                 Ok::<_, EndpointError>(())
-                            },
-                        )?;
+                            };
+                        }
+                        .await?;
                     }
                     worker.send::<Loan>(db).await?;
                     worker.recv::<OwnerDone>().await?;
                     Ok::<_, EndpointError>(())
-                },
+                };
+
                 async {
                     for _ in 0..2 {
                         service.recv::<Head>().await?;
@@ -234,7 +244,7 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                             match label {
                                 1 | 2 => {
                                     let [mut a, mut b] = service.par()?;
-                                    tokio::try_join!(
+                                    async {
                                         async {
                                             for i in 0..128u32 {
                                                 let value = a.recv::<A>().await?;
@@ -242,7 +252,8 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                                                 a.send::<A>(&(value + 1)).await?;
                                             }
                                             Ok::<_, EndpointError>(())
-                                        },
+                                        };
+
                                         async {
                                             for i in 0..128u32 {
                                                 let value = b.recv::<B>().await?;
@@ -250,12 +261,13 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                                                 b.send::<B>(&(value + 1)).await?;
                                             }
                                             Ok::<_, EndpointError>(())
-                                        },
-                                    )?;
+                                        };
+                                    }
+                                    .await?;
                                 }
                                 3 | 4 => {
                                     let [mut a, mut b] = service.par()?;
-                                    tokio::try_join!(
+                                    async {
                                         async {
                                             for i in 0..128u32 {
                                                 let value = a.recv::<C>().await?;
@@ -263,7 +275,8 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                                                 a.send::<C>(&(value + 1)).await?;
                                             }
                                             Ok::<_, EndpointError>(())
-                                        },
+                                        };
+
                                         async {
                                             for i in 0..128u32 {
                                                 let value = b.recv::<D>().await?;
@@ -271,8 +284,9 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                                                 b.send::<D>(&(value + 1)).await?;
                                             }
                                             Ok::<_, EndpointError>(())
-                                        },
-                                    )?;
+                                        };
+                                    }
+                                    .await?;
                                 }
                                 _ => panic!("unexpected service branch"),
                             }
@@ -280,11 +294,11 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
                     }
                     service.recv::<ServiceDone>().await?;
                     Ok::<_, EndpointError>(())
-                },
-            )
+                };
+            }
+            .await
         })
         .await
-        .expect("mixed capacity protocol stalled")
         .unwrap();
         assert!(network.is_empty());
         assert_eq!((network.sent.get(), network.received.get()), (3080, 3080));
@@ -294,4 +308,5 @@ async fn delegated_parallel_choices_and_nested_repeats_above_1500_events() {
         );
         assert_eq!((resource_choices.1.get(), worker_choices.1.get()), (4, 4));
     }
+    Ok(())
 }

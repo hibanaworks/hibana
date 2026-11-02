@@ -149,8 +149,10 @@ fn conditional_resource_admission_requires_a_known_local_holder() {
     }
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
+async fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder()
+-> core::result::Result<(), hibana::EndpointError> {
     use super::distributed_source::{FrameBoundary, OperationObservation};
     use crate::{
         endpoint::proof_snapshot::actor_snapshot,
@@ -191,62 +193,78 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
         text
     };
 
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            // This is test input selecting the intrinsic route, not a record
-            // of ownership or protocol progress. Each localside follows offer.
-            for holder in [1u8, 2, 3] {
-                let network = TestTransport::new();
-                let mut owner_slab = [0; 32 * 1024];
-                let mut first_slab = [0; 32 * 1024];
-                let mut second_slab = [0; 32 * 1024];
-                let mut third_slab = [0; 32 * 1024];
-                let mut service_slab = [0; 32 * 1024];
-                let mut owner_storage = SessionKitStorage::uninit();
-                let mut first_storage = SessionKitStorage::uninit();
-                let mut second_storage = SessionKitStorage::uninit();
-                let mut third_storage = SessionKitStorage::uninit();
-                let mut service_storage = SessionKitStorage::uninit();
-                let owner_rv = owner_storage.init().rendezvous(&mut owner_slab, network.clone()).unwrap();
-                let first_rv = first_storage.init().rendezvous(&mut first_slab, network.clone()).unwrap();
-                let second_rv = second_storage.init().rendezvous(&mut second_slab, network.clone()).unwrap();
-                let third_rv = third_storage.init().rendezvous(&mut third_slab, network.clone()).unwrap();
-                let service_rv = service_storage.init().rendezvous(&mut service_slab, network.clone()).unwrap();
-                let sid = SessionId::new(9070 + u32::from(holder));
-                let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-                let db = owner_rv.enter(sid, &db_program).unwrap();
-                let mut first = first_rv.enter(sid, &first_program).unwrap();
-                let mut second = second_rv.enter(sid, &second_program).unwrap();
-                let mut third = third_rv.enter(sid, &third_program).unwrap();
-                let mut service = service_rv.enter(sid, &service_program).unwrap();
-                let ((), from_first, from_second, from_third, received) =
-                    tokio::time::timeout(core::time::Duration::from_secs(30), async {
-                        tokio::join!(
-                            async {
-                                match holder {
-                                    1 => {
-                                        owner.send::<Loan>(db).await.unwrap();
-                                        owner.send::<FirstNotice>(&()).await.unwrap();
-                                        owner.send::<FirstNotice>(&()).await.unwrap();
-                                    }
-                                    2 => {
-                                        owner.send::<SecondNotice>(&()).await.unwrap();
-                                        owner.send::<Loan>(db).await.unwrap();
-                                        owner.send::<SecondNotice>(&()).await.unwrap();
-                                    }
-                                    3 => {
-                                        owner.send::<ThirdNotice>(&()).await.unwrap();
-                                        owner.send::<ThirdNotice>(&()).await.unwrap();
-                                        owner.send::<Loan>(db).await.unwrap();
-                                    }
-                                    _ => unreachable!(),
+    {
+        // This is test input selecting the intrinsic route, not a record
+        // of ownership or protocol progress. Each localside follows offer.
+        for holder in [1u8, 2, 3] {
+            let network = TestTransport::new();
+            let mut owner_slab = [0; 32 * 1024];
+            let mut first_slab = [0; 32 * 1024];
+            let mut second_slab = [0; 32 * 1024];
+            let mut third_slab = [0; 32 * 1024];
+            let mut service_slab = [0; 32 * 1024];
+            let mut owner_storage = SessionKitStorage::uninit();
+            let mut first_storage = SessionKitStorage::uninit();
+            let mut second_storage = SessionKitStorage::uninit();
+            let mut third_storage = SessionKitStorage::uninit();
+            let mut service_storage = SessionKitStorage::uninit();
+            let owner_rv = owner_storage
+                .init()
+                .rendezvous(&mut owner_slab, network.clone())
+                .unwrap();
+            let first_rv = first_storage
+                .init()
+                .rendezvous(&mut first_slab, network.clone())
+                .unwrap();
+            let second_rv = second_storage
+                .init()
+                .rendezvous(&mut second_slab, network.clone())
+                .unwrap();
+            let third_rv = third_storage
+                .init()
+                .rendezvous(&mut third_slab, network.clone())
+                .unwrap();
+            let service_rv = service_storage
+                .init()
+                .rendezvous(&mut service_slab, network.clone())
+                .unwrap();
+            let sid = SessionId::new(9070 + u32::from(holder));
+            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+            let db = owner_rv.enter(sid, &db_program).unwrap();
+            let mut first = first_rv.enter(sid, &first_program).unwrap();
+            let mut second = second_rv.enter(sid, &second_program).unwrap();
+            let mut third = third_rv.enter(sid, &third_program).unwrap();
+            let mut service = service_rv.enter(sid, &service_program).unwrap();
+            let ((), from_first, from_second, from_third, received) = (async {
+                async {
+                    async {
+                        let _: () = (async {
+                            match holder {
+                                1 => {
+                                    owner.send::<Loan>(db).await.unwrap();
+                                    owner.send::<FirstNotice>(&()).await.unwrap();
+                                    owner.send::<FirstNotice>(&()).await.unwrap();
                                 }
-                            },
-                            async {
+                                2 => {
+                                    owner.send::<SecondNotice>(&()).await.unwrap();
+                                    owner.send::<Loan>(db).await.unwrap();
+                                    owner.send::<SecondNotice>(&()).await.unwrap();
+                                }
+                                3 => {
+                                    owner.send::<ThirdNotice>(&()).await.unwrap();
+                                    owner.send::<ThirdNotice>(&()).await.unwrap();
+                                    owner.send::<Loan>(db).await.unwrap();
+                                }
+                                _ => unreachable!(),
+                            }
+                        })
+                        .await;
+                        Ok::<_, hibana::EndpointError>(())
+                    };
+
+                    async {
+                        Ok::<_, hibana::EndpointError>(
+                            (async {
                                 let branch = first.offer().await.unwrap();
                                 match branch.label() {
                                     1 => {
@@ -254,19 +272,35 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
                                         let before = unsafe { actor_snapshot(&db) };
                                         db.send::<Read>(&7).await.unwrap();
                                         let observed = OperationObservation {
-                                            view: 10, label: 3, before,
+                                            view: 10,
+                                            label: 3,
+                                            before,
                                             after: unsafe { actor_snapshot(&db) },
-                                            frame: FrameBoundary::Sent(network.accepted_frame(4, 0)),
+                                            frame: FrameBoundary::Sent(
+                                                network.accepted_frame(4, 0),
+                                            ),
                                         };
                                         assert_eq!(db.recv::<Value>().await.unwrap(), 8);
                                         Some(observed)
                                     }
-                                    6 => { branch.recv::<SecondNotice>().await.unwrap(); None }
-                                    7 => { branch.recv::<ThirdNotice>().await.unwrap(); None }
+                                    6 => {
+                                        branch.recv::<SecondNotice>().await.unwrap();
+                                        None
+                                    }
+                                    7 => {
+                                        branch.recv::<ThirdNotice>().await.unwrap();
+                                        None
+                                    }
                                     label => panic!("unexpected first worker branch {label}"),
                                 }
-                            },
-                            async {
+                            })
+                            .await,
+                        )
+                    };
+
+                    async {
+                        Ok::<_, hibana::EndpointError>(
+                            (async {
                                 let branch = second.offer().await.unwrap();
                                 match branch.label() {
                                     1 => {
@@ -274,19 +308,35 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
                                         let before = unsafe { actor_snapshot(&db) };
                                         db.send::<Read>(&7).await.unwrap();
                                         let observed = OperationObservation {
-                                            view: 10, label: 3, before,
+                                            view: 10,
+                                            label: 3,
+                                            before,
                                             after: unsafe { actor_snapshot(&db) },
-                                            frame: FrameBoundary::Sent(network.accepted_frame(4, 0)),
+                                            frame: FrameBoundary::Sent(
+                                                network.accepted_frame(4, 0),
+                                            ),
                                         };
                                         assert_eq!(db.recv::<Value>().await.unwrap(), 8);
                                         Some(observed)
                                     }
-                                    5 => { branch.recv::<FirstNotice>().await.unwrap(); None }
-                                    7 => { branch.recv::<ThirdNotice>().await.unwrap(); None }
+                                    5 => {
+                                        branch.recv::<FirstNotice>().await.unwrap();
+                                        None
+                                    }
+                                    7 => {
+                                        branch.recv::<ThirdNotice>().await.unwrap();
+                                        None
+                                    }
                                     label => panic!("unexpected second worker branch {label}"),
                                 }
-                            },
-                            async {
+                            })
+                            .await,
+                        )
+                    };
+
+                    async {
+                        Ok::<_, hibana::EndpointError>(
+                            (async {
                                 let branch = third.offer().await.unwrap();
                                 match branch.label() {
                                     1 => {
@@ -294,53 +344,93 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
                                         let before = unsafe { actor_snapshot(&db) };
                                         db.send::<Read>(&7).await.unwrap();
                                         let observed = OperationObservation {
-                                            view: 10, label: 3, before,
+                                            view: 10,
+                                            label: 3,
+                                            before,
                                             after: unsafe { actor_snapshot(&db) },
-                                            frame: FrameBoundary::Sent(network.accepted_frame(4, 0)),
+                                            frame: FrameBoundary::Sent(
+                                                network.accepted_frame(4, 0),
+                                            ),
                                         };
                                         assert_eq!(db.recv::<Value>().await.unwrap(), 8);
                                         Some(observed)
                                     }
-                                    5 => { branch.recv::<FirstNotice>().await.unwrap(); None }
-                                    6 => { branch.recv::<SecondNotice>().await.unwrap(); None }
+                                    5 => {
+                                        branch.recv::<FirstNotice>().await.unwrap();
+                                        None
+                                    }
+                                    6 => {
+                                        branch.recv::<SecondNotice>().await.unwrap();
+                                        None
+                                    }
                                     label => panic!("unexpected third worker branch {label}"),
                                 }
-                            },
-                            async {
+                            })
+                            .await,
+                        )
+                    };
+
+                    async {
+                        Ok::<_, hibana::EndpointError>(
+                            (async {
                                 let before = unsafe { actor_snapshot(&service) };
                                 let number = service.recv::<Read>().await.unwrap();
                                 let observed = OperationObservation {
-                                    view: 4, label: 3, before,
+                                    view: 4,
+                                    label: 3,
+                                    before,
                                     after: unsafe { actor_snapshot(&service) },
-                                    frame: FrameBoundary::Received(network.received_frame(4, sid, 0)),
+                                    frame: FrameBoundary::Received(
+                                        network.received_frame(4, sid, 0),
+                                    ),
                                 };
                                 assert_eq!(number, 7);
                                 service.send::<Value>(&(number + 1)).await.unwrap();
                                 observed
-                            },
+                            })
+                            .await,
                         )
-                    }).await.unwrap();
-                // Passive records are inspected only after all five localsides
-                // finish. No endpoint operation consults them.
-                let sources = [from_first, from_second, from_third];
-                assert_eq!(sources.iter().filter(|source| source.is_some()).count(), 1);
-                let sent = sources.into_iter().flatten().next().unwrap();
-                assert_eq!(sent.before.actor, holder);
-                assert_eq!(received.before.actor, 4);
-                assert_eq!(received.before.choices.len(), 2);
-                assert_eq!(received.after.choices, received.before.choices);
-                assert!(received.before.choices.iter().all(|(_, arm)| arm.is_none()));
-                assert_eq!(sent.frame().header, received.frame().header);
-                assert_eq!(sent.frame().payload(), received.frame().payload());
-                #[cfg(not(miri))]
-                {
-                    use std::fmt::Write;
-                    let sender_event = sent.before.steps.iter().position(|step| step.view == 10 && matches!(step.action, LocalAction::Send { label: 3, .. })).unwrap();
-                    let receiver_event = received.before.steps.iter().position(|step| step.view == 4 && matches!(step.action, LocalAction::Recv { label: 3, .. })).unwrap();
-                    let path = usize::from(holder - 1);
-                    let other_path = if holder == 1 { 1 } else { 0 };
-                    let header = sent.frame().header;
-                    writeln!(proof, "def peerWitnessSenderBefore{holder} : ActorProgressObservation := {}\n\n\
+                    };
+                }
+                .await
+                .expect("all child results are data")
+            })
+            .await;
+            // Passive records are inspected only after all five localsides
+            // finish. No endpoint operation consults them.
+            let sources = [from_first, from_second, from_third];
+            assert_eq!(sources.iter().filter(|source| source.is_some()).count(), 1);
+            let sent = sources.into_iter().flatten().next().unwrap();
+            assert_eq!(sent.before.actor, holder);
+            assert_eq!(received.before.actor, 4);
+            assert_eq!(received.before.choices.len(), 2);
+            assert_eq!(received.after.choices, received.before.choices);
+            assert!(received.before.choices.iter().all(|(_, arm)| arm.is_none()));
+            assert_eq!(sent.frame().header, received.frame().header);
+            assert_eq!(sent.frame().payload(), received.frame().payload());
+            #[cfg(not(miri))]
+            {
+                use std::fmt::Write;
+                let sender_event = sent
+                    .before
+                    .steps
+                    .iter()
+                    .position(|step| {
+                        step.view == 10 && matches!(step.action, LocalAction::Send { label: 3, .. })
+                    })
+                    .unwrap();
+                let receiver_event = received
+                    .before
+                    .steps
+                    .iter()
+                    .position(|step| {
+                        step.view == 4 && matches!(step.action, LocalAction::Recv { label: 3, .. })
+                    })
+                    .unwrap();
+                let path = usize::from(holder - 1);
+                let other_path = if holder == 1 { 1 } else { 0 };
+                let header = sent.frame().header;
+                writeln!(proof, "def peerWitnessSenderBefore{holder} : ActorProgressObservation := {}\n\n\
                         def peerWitnessReceiverBefore{holder} : ActorProgressObservation := {}\n\n\
                         def peerWitnessReceiverAfter{holder} : ActorProgressObservation := {}\n\n\
                         def peerWitnessWire{holder} : OwnedWireObservation := {{ session := {}, lane := {}, sender := {}, receiver := {}, frameLabel := {}, payload := {:?} }}\n\n\
@@ -361,9 +451,9 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
                         sid.raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(), sent.frame().payload(),
                         sid.raw(), sid.raw(), sid.raw(), sid.raw(), sid.raw(), sid.raw(),
                     ).unwrap();
-                }
             }
-        });
+        }
+    };
     #[cfg(not(miri))]
     {
         proof.push_str(include_str!("peer_source_port.lean"));
@@ -371,5 +461,6 @@ fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder() {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("PeerWitnessGenerated.lean"), proof).unwrap();
-    }
+    };
+    Ok(())
 }

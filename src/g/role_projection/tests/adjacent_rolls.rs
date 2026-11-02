@@ -16,8 +16,10 @@ type Done = g::Msg<4, ()>;
 type Closed = g::Msg<191, ()>;
 type ClosedAck = g::Msg<192, ()>;
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn a_later_rolled_receipt_can_choose_its_closing_branch() {
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn a_later_rolled_receipt_can_choose_its_closing_branch()
+-> core::result::Result<(), hibana::EndpointError> {
     let prefix = g::route(
         g::seq(
             g::send::<0, 1, Early>(),
@@ -55,14 +57,15 @@ async fn a_later_rolled_receipt_can_choose_its_closing_branch() {
     let mut source = rv.enter(sid, &source_program).unwrap();
     let mut ingress = rv.enter(sid, &ingress_program).unwrap();
     let mut collector = rv.enter(sid, &collector_program).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(2), async {
-        tokio::try_join!(
+    (async {
+        async {
             async {
                 source.send::<Skip>(&()).await?;
                 source.send::<Open>(&()).await?;
                 source.recv::<Ended>().await?;
                 source.send::<Done>(&()).await
-            },
+            };
+
             async {
                 ingress.recv::<Skip>().await?;
                 ingress.send::<Skipped>(&()).await?;
@@ -73,17 +76,20 @@ async fn a_later_rolled_receipt_can_choose_its_closing_branch() {
                 ingress.recv::<Done>().await?;
                 ingress.send::<Closed>(&()).await?;
                 ingress.recv::<ClosedAck>().await
-            },
+            };
+
             async {
                 collector.recv::<Skipped>().await?;
                 collector.offer().await?.recv::<Receipt>().await?;
                 collector.send::<Stored>(&()).await?;
                 collector.offer().await?.recv::<Closed>().await?;
                 collector.send::<ClosedAck>(&()).await
-            },
-        )
+            };
+        }
+        .await
     })
     .await
-    .expect("the collector did not observe the closing branch")
     .unwrap();
+
+    Ok(())
 }

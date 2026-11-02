@@ -6,8 +6,10 @@ use crate::{
 
 mod distinct_controller;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_rolled_body_cannot_restart_after_its_resource_has_left_in_the_continuation() {
+async fn a_rolled_body_cannot_restart_after_its_resource_has_left_in_the_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::endpoint::proof_snapshot::actor_snapshot;
     type Tick = g::Msg<39, ()>;
     type Steps =
@@ -18,53 +20,58 @@ fn a_rolled_body_cannot_restart_after_its_resource_has_left_in_the_continuation(
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let ticker_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let mut slab = [0u8; 48 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, TestTransport::new())
-                .unwrap();
-            let sid = SessionId::new(9027);
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let mut db = rv.enter(sid, &db_program).unwrap();
-            let mut worker = rv.enter(sid, &worker_program).unwrap();
-            let mut ticker = rv.enter(sid, &ticker_program).unwrap();
-            let mut reader = rv.enter(sid, &reader_program).unwrap();
+    {
+        let mut slab = [0u8; 48 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .unwrap();
+        let sid = SessionId::new(9027);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+        let mut ticker = rv.enter(sid, &ticker_program).unwrap();
+        let mut reader = rv.enter(sid, &reader_program).unwrap();
 
-            owner.send::<Tick>(&()).await.unwrap();
-            db.send::<Read>(&7).await.unwrap();
-            ticker.recv::<Tick>().await.unwrap();
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
-            owner.send::<Loan>(db).await.unwrap();
-            let transferred_db = worker.recv::<Loan>().await.unwrap();
+        owner.send::<Tick>(&()).await.unwrap();
+        db.send::<Read>(&7).await.unwrap();
+        ticker.recv::<Tick>().await.unwrap();
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+        owner.send::<Loan>(db).await.unwrap();
+        let transferred_db = worker.recv::<Loan>().await.unwrap();
 
-            // SAFETY: this actor was attached through TestTransport above.
-            let before = unsafe { actor_snapshot(&owner) };
-            let result = tokio::time::timeout(
-                std::time::Duration::from_millis(100),
-                owner.send::<Tick>(&()),
-            )
-            .await;
-            // SAFETY: the same pinned TestTransport actor remains alive.
-            let after = unsafe { actor_snapshot(&owner) };
-            assert!(
-                !matches!(result, Ok(Ok(()))),
-                "a later handoff must not admit a new body that needs the transferred view: before={before:?}, after={after:?}"
-            );
-            assert_eq!(before.counter, after.counter);
-            assert!(before.steps.iter().map(|step| step.done)
-                .eq(after.steps.iter().map(|step| step.done)));
-            drop(transferred_db);
-        });
+        // SAFETY: this actor was attached through TestTransport above.
+        let before = unsafe { actor_snapshot(&owner) };
+        let result = crate::test_support::in_process::timeout(
+            std::time::Duration::from_millis(100),
+            owner.send::<Tick>(&()),
+        )
+        .await;
+        // SAFETY: the same pinned TestTransport actor remains alive.
+        let after = unsafe { actor_snapshot(&owner) };
+        assert!(
+            !matches!(result, Ok(Ok(()))),
+            "a later handoff must not admit a new body that needs the transferred view: before={before:?}, after={after:?}"
+        );
+        assert_eq!(before.counter, after.counter);
+        assert!(
+            before
+                .steps
+                .iter()
+                .map(|step| step.done)
+                .eq(after.steps.iter().map(|step| step.done))
+        );
+        drop(transferred_db);
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_rolled_body_can_restart_after_its_resource_returns_from_the_continuation() {
+async fn a_rolled_body_can_restart_after_its_resource_returns_from_the_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     type Tick = g::Msg<39, ()>;
     type Steps = g::Seq<
         g::Roll<g::Seq<g::Send<0, 2, Tick>, g::Send<10, 3, Read>>>,
@@ -76,45 +83,45 @@ fn a_rolled_body_can_restart_after_its_resource_returns_from_the_continuation() 
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let ticker_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
     let reader_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let mut slab = [0u8; 48 * 1024];
-            let mut storage = SessionKitStorage::<TestTransport>::uninit();
-            let rv = storage
-                .init()
-                .rendezvous(&mut slab, TestTransport::new())
-                .unwrap();
-            let sid = SessionId::new(9028);
-            let mut owner = rv.enter(sid, &owner_program).unwrap();
-            let mut db = rv.enter(sid, &db_program).unwrap();
-            let mut worker = rv.enter(sid, &worker_program).unwrap();
-            let mut ticker = rv.enter(sid, &ticker_program).unwrap();
-            let mut reader = rv.enter(sid, &reader_program).unwrap();
+    {
+        let mut slab = [0u8; 48 * 1024];
+        let mut storage = SessionKitStorage::<TestTransport>::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .unwrap();
+        let sid = SessionId::new(9028);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut db = rv.enter(sid, &db_program).unwrap();
+        let mut worker = rv.enter(sid, &worker_program).unwrap();
+        let mut ticker = rv.enter(sid, &ticker_program).unwrap();
+        let mut reader = rv.enter(sid, &reader_program).unwrap();
 
-            owner.send::<Tick>(&()).await.unwrap();
-            db.send::<Read>(&7).await.unwrap();
-            ticker.recv::<Tick>().await.unwrap();
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
-            owner.send::<Loan>(db).await.unwrap();
-            let db = worker.recv::<Loan>().await.unwrap();
-            worker.send::<Loan>(db).await.unwrap();
-            let mut db = owner.recv::<Loan>().await.unwrap();
+        owner.send::<Tick>(&()).await.unwrap();
+        db.send::<Read>(&7).await.unwrap();
+        ticker.recv::<Tick>().await.unwrap();
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 7);
+        owner.send::<Loan>(db).await.unwrap();
+        let db = worker.recv::<Loan>().await.unwrap();
+        worker.send::<Loan>(db).await.unwrap();
+        let mut db = owner.recv::<Loan>().await.unwrap();
 
-            owner.send::<Tick>(&()).await.unwrap();
-            db.send::<Read>(&9).await.unwrap();
-            ticker.recv::<Tick>().await.unwrap();
-            assert_eq!(reader.recv::<Read>().await.unwrap(), 9);
-        });
+        owner.send::<Tick>(&()).await.unwrap();
+        db.send::<Read>(&9).await.unwrap();
+        ticker.recv::<Tick>().await.unwrap();
+        assert_eq!(reader.recv::<Read>().await.unwrap(), 9);
+    };
+
+    Ok(())
 }
 
 #[cfg(not(miri))]
 mod future_custody;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() {
+async fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::endpoint::proof_snapshot::owned_future::{Capture, OwnedFutureBoundary};
     use crate::endpoint::proof_snapshot::{actor_snapshot, view_tag};
     use core::{
@@ -148,10 +155,8 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
     let auth_program = crate::runtime::program::project::<11>(&g::Program::<Steps>::new());
     let observer_program = crate::runtime::program::project::<12>(&g::Program::<Steps>::new());
     let observer_sink_program = crate::runtime::program::project::<5>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let network = TestTransport::new();
         let mut owner_slab = [0; 48 * 1024];
         let mut peer_slab = [0; 48 * 1024];
@@ -311,41 +316,60 @@ fn dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view() 
                 (&events, [&loan_frame, &return_frame]),
             );
         }
-        let (value, ()) = tokio::join!(
+        let (value, ()) = async {
             async {
-                db.send::<Read>(&42).await.unwrap();
-                db.recv::<Value>().await.unwrap()
-            },
+                Ok::<_, hibana::EndpointError>(
+                    (async {
+                        db.send::<Read>(&42).await.unwrap();
+                        db.recv::<Value>().await.unwrap()
+                    })
+                    .await,
+                )
+            };
+
             async {
-                let key = service.recv::<Read>().await.unwrap();
-                service.send::<Value>(&(key + 1)).await.unwrap();
-            },
-        );
+                let _: () = (async {
+                    let key = service.recv::<Read>().await.unwrap();
+                    service.send::<Value>(&(key + 1)).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
         assert_eq!(value, 43);
-        let (auth_sent, observer_sent, auth_received, observer_received) = tokio::join!(
-            owner.send::<OtherLoan>(auth),
-            worker.send::<ObserverLoan>(observer),
-            receiver.recv::<OtherLoan>(),
-            observer_sink.recv::<ObserverLoan>(),
-        );
+        let (auth_sent, observer_sent, auth_received, observer_received) = async {
+            async { Ok::<_, hibana::EndpointError>((owner.send::<OtherLoan>(auth)).await) };
+
+            async { Ok::<_, hibana::EndpointError>((worker.send::<ObserverLoan>(observer)).await) };
+
+            async { Ok::<_, hibana::EndpointError>((receiver.recv::<OtherLoan>()).await) };
+
+            async { Ok::<_, hibana::EndpointError>((observer_sink.recv::<ObserverLoan>()).await) };
+        }
+        .await
+        .expect("all child results are data");
         auth_sent.unwrap();
         observer_sent.unwrap();
         drop(auth_received.unwrap());
         drop(observer_received.unwrap());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_message_between_co_resident_views_consumes_both_local_halves_before_handoff() {
+async fn a_message_between_co_resident_views_consumes_both_local_halves_before_handoff()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Seq<g::Send<0, 10, Read>, g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>>;
     let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 48 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
         let kit = storage.init();
@@ -363,7 +387,9 @@ fn a_message_between_co_resident_views_consumes_both_local_halves_before_handoff
         let db = worker.recv::<Loan>().await.unwrap();
         worker.send::<Loan>(db).await.unwrap();
         drop(owner.recv::<Loan>().await.unwrap());
-    });
+    };
+
+    Ok(())
 }
 
 #[test]
@@ -418,18 +444,18 @@ fn one_resource_binding_cannot_issue_again_in_another_runtime_or_session() {
     );
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn received_resource_keeps_working_after_its_original_runtime_is_destroyed() {
+async fn received_resource_keeps_working_after_its_original_runtime_is_destroyed()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Seq<g::Send<0, 1, Loan>, g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>>;
     let () = crate::g::ProgramProjection::<Steps, 8>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let network = TestTransport::new();
         let mut worker_slab = [0u8; 32 * 1024];
         let mut service_slab = [0u8; 32 * 1024];
@@ -461,21 +487,36 @@ fn received_resource_keeps_working_after_its_original_runtime_is_destroyed() {
         // The sender's kit/slab/ports have all been destroyed. The received
         // value owns a continuation in the receiver, not a pointer into them.
         assert!(worker_rv.enter(SessionId::new(845), &db_program).is_err());
-        tokio::join!(
+        async {
             async {
-                db.send::<Read>(&42).await.unwrap();
-                assert_eq!(db.recv::<Value>().await.unwrap(), 43);
-            },
+                let _: () = (async {
+                    db.send::<Read>(&42).await.unwrap();
+                    assert_eq!(db.recv::<Value>().await.unwrap(), 43);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                let key = service.recv::<Read>().await.unwrap();
-                service.send::<Value>(&(key + 1)).await.unwrap();
-            }
-        );
-    });
+                let _: () = (async {
+                    let key = service.recv::<Read>().await.unwrap();
+                    service.send::<Value>(&(key + 1)).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it() {
+async fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Seq<
         g::Send<3, 0, Loan>,
         g::Seq<
@@ -491,10 +532,8 @@ fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it(
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let network = TestTransport::new();
         {
             // Even the correct source actor cannot issue a physical right
@@ -551,27 +590,45 @@ fn physical_service_grants_the_initial_right_and_remote_holders_only_receive_it(
         let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
         let mut service = service_rv.enter(sid, &service_program).unwrap();
         let db = service_rv.enter(sid, &db_program).unwrap();
-        tokio::join!(
+        async {
             async {
-                service.send::<Loan>(db).await.unwrap();
-                let key = service.recv::<Read>().await.unwrap();
-                service.send::<Value>(&(key + 1)).await.unwrap();
-                drop(service.recv::<Loan>().await.unwrap());
-            },
+                let _: () = (async {
+                    service.send::<Loan>(db).await.unwrap();
+                    let key = service.recv::<Read>().await.unwrap();
+                    service.send::<Value>(&(key + 1)).await.unwrap();
+                    drop(service.recv::<Loan>().await.unwrap());
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                let db = owner.recv::<Loan>().await.unwrap();
-                owner.send::<Loan>(db).await.unwrap();
-                let db = owner.recv::<Loan>().await.unwrap();
-                owner.send::<Loan>(db).await.unwrap();
-            },
+                let _: () = (async {
+                    let db = owner.recv::<Loan>().await.unwrap();
+                    owner.send::<Loan>(db).await.unwrap();
+                    let db = owner.recv::<Loan>().await.unwrap();
+                    owner.send::<Loan>(db).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                let mut db = worker.recv::<Loan>().await.unwrap();
-                db.send::<Read>(&42).await.unwrap();
-                assert_eq!(db.recv::<Value>().await.unwrap(), 43);
-                worker.send::<Loan>(db).await.unwrap();
-            }
-        );
-    });
+                let _: () = (async {
+                    let mut db = worker.recv::<Loan>().await.unwrap();
+                    db.send::<Read>(&42).await.unwrap();
+                    assert_eq!(db.recv::<Value>().await.unwrap(), 43);
+                    worker.send::<Loan>(db).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
+    };
+
+    Ok(())
 }
 
 #[test]
@@ -653,8 +710,10 @@ fn delegated_branch_diagnostic_locates_an_uninformed_parallel_sender() {
     let _ = crate::runtime::program::project::<7>(&ordered);
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn received_resource_endpoint_selects_its_own_resolved_route() {
+async fn received_resource_endpoint_selects_its_own_resolved_route()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::runtime::resolver::{DecisionArm, ResolverRef};
     type OtherRead = g::Msg<6, u32>;
     type Work = g::Resolve<
@@ -669,10 +728,8 @@ fn received_resource_endpoint_selects_its_own_resolved_route() {
     let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 48 * 1024];
         let resolver_calls = core::cell::Cell::new(0usize);
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
@@ -711,11 +768,15 @@ fn received_resource_endpoint_selects_its_own_resolved_route() {
         assert_eq!(db.recv::<Value>().await.unwrap(), 43);
         worker.send::<Loan>(db).await.unwrap();
         drop(owner.recv::<Loan>().await.unwrap());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn two_owned_views_drive_independent_parallel_exchanges_with_the_same_message_type() {
+async fn two_owned_views_drive_independent_parallel_exchanges_with_the_same_message_type()
+-> core::result::Result<(), hibana::EndpointError> {
     type Work = g::Par<
         g::Seq<g::Send<10, 3, Read>, g::Send<3, 10, Value>>,
         g::Seq<g::Send<11, 4, Read>, g::Send<4, 11, Value>>,
@@ -733,10 +794,8 @@ fn two_owned_views_drive_independent_parallel_exchanges_with_the_same_message_ty
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let db_service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     let auth_service_program = crate::runtime::program::project::<4>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 64 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
         let kit = storage.init();
@@ -752,37 +811,62 @@ fn two_owned_views_drive_independent_parallel_exchanges_with_the_same_message_ty
         owner.send::<OtherLoan>(auth).await.unwrap();
         let mut db = worker.recv::<Loan>().await.unwrap();
         let mut auth = worker.recv::<OtherLoan>().await.unwrap();
-        tokio::join!(
+        async {
             // Poll the second source arm first. The message label/schema are
             // deliberately identical; logical view identity selects the step.
             async {
-                auth.send::<Read>(&11).await.unwrap();
-                assert_eq!(auth.recv::<Value>().await.unwrap(), 12);
-            },
+                let _: () = (async {
+                    auth.send::<Read>(&11).await.unwrap();
+                    assert_eq!(auth.recv::<Value>().await.unwrap(), 12);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                db.send::<Read>(&7).await.unwrap();
-                assert_eq!(db.recv::<Value>().await.unwrap(), 8);
-            },
+                let _: () = (async {
+                    db.send::<Read>(&7).await.unwrap();
+                    assert_eq!(db.recv::<Value>().await.unwrap(), 8);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                assert_eq!(db_service.recv::<Read>().await.unwrap(), 7);
-                db_service.send::<Value>(&8).await.unwrap();
-            },
+                let _: () = (async {
+                    assert_eq!(db_service.recv::<Read>().await.unwrap(), 7);
+                    db_service.send::<Value>(&8).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                assert_eq!(auth_service.recv::<Read>().await.unwrap(), 11);
-                auth_service.send::<Value>(&12).await.unwrap();
-            }
-        );
+                let _: () = (async {
+                    assert_eq!(auth_service.recv::<Read>().await.unwrap(), 11);
+                    auth_service.send::<Value>(&12).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
         worker.send::<Loan>(db).await.unwrap();
         worker.send::<OtherLoan>(auth).await.unwrap();
         let db = owner.recv::<Loan>().await.unwrap();
         let auth = owner.recv::<OtherLoan>().await.unwrap();
         drop(db);
         drop(auth);
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn two_received_resources_select_parallel_routes_without_serializing_their_views() {
+async fn two_received_resources_select_parallel_routes_without_serializing_their_views()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::runtime::resolver::{DecisionArm, ResolverRef};
     type OtherRead = g::Msg<6, u32>;
     type Work = g::Par<
@@ -823,10 +907,8 @@ fn two_received_resources_select_parallel_routes_without_serializing_their_views
         image.program().event_atom_at(2).lane,
         image.program().event_atom_at(6).lane
     );
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 64 * 1024];
         let db_choice = core::cell::Cell::new(DecisionArm::Left);
         let auth_choice = core::cell::Cell::new(DecisionArm::Left);
@@ -854,84 +936,107 @@ fn two_received_resources_select_parallel_routes_without_serializing_their_views
         owner.send::<OtherLoan>(auth).await.unwrap();
         let mut db = worker.recv::<Loan>().await.unwrap();
         let mut auth = worker.recv::<OtherLoan>().await.unwrap();
-        tokio::join!(
+        async {
             async {
-                for (number, arm) in [(11, DecisionArm::Left), (13, DecisionArm::Right)] {
-                    auth_choice.set(arm);
-                    let branch = match futures::poll!(auth.offer()) {
-                        core::task::Poll::Ready(result) => result.unwrap(),
-                        core::task::Poll::Pending => {
-                            panic!("the second resource route is independently enabled")
+                let _: () = (async {
+                    for (number, arm) in [(11, DecisionArm::Left), (13, DecisionArm::Right)] {
+                        auth_choice.set(arm);
+                        let branch = match futures::poll!(auth.offer()) {
+                            core::task::Poll::Ready(result) => result.unwrap(),
+                            core::task::Poll::Pending => {
+                                panic!("the second resource route is independently enabled")
+                            }
+                        };
+                        match branch.label() {
+                            3 => branch.send::<Read>(&number).await.unwrap(),
+                            6 => branch.send::<OtherRead>(&number).await.unwrap(),
+                            label => panic!("unexpected branch {label}"),
                         }
-                    };
-                    match branch.label() {
-                        3 => branch.send::<Read>(&number).await.unwrap(),
-                        6 => branch.send::<OtherRead>(&number).await.unwrap(),
-                        label => panic!("unexpected branch {label}"),
+                        assert_eq!(auth.recv::<Value>().await.unwrap(), number + 1);
                     }
-                    assert_eq!(auth.recv::<Value>().await.unwrap(), number + 1);
-                }
-            },
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for (number, arm) in [(7, DecisionArm::Left), (9, DecisionArm::Right)] {
-                    db_choice.set(arm);
-                    let branch = match futures::poll!(db.offer()) {
-                        core::task::Poll::Ready(result) => result.unwrap(),
-                        core::task::Poll::Pending => {
-                            panic!("the first resource route is independently enabled")
+                let _: () = (async {
+                    for (number, arm) in [(7, DecisionArm::Left), (9, DecisionArm::Right)] {
+                        db_choice.set(arm);
+                        let branch = match futures::poll!(db.offer()) {
+                            core::task::Poll::Ready(result) => result.unwrap(),
+                            core::task::Poll::Pending => {
+                                panic!("the first resource route is independently enabled")
+                            }
+                        };
+                        match branch.label() {
+                            3 => branch.send::<Read>(&number).await.unwrap(),
+                            6 => branch.send::<OtherRead>(&number).await.unwrap(),
+                            label => panic!("unexpected branch {label}"),
                         }
-                    };
-                    match branch.label() {
-                        3 => branch.send::<Read>(&number).await.unwrap(),
-                        6 => branch.send::<OtherRead>(&number).await.unwrap(),
-                        label => panic!("unexpected branch {label}"),
+                        assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
                     }
-                    assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
-                }
-            },
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for expected in [7, 9] {
-                    let branch = db_service.offer().await.unwrap();
-                    let number = match branch.label() {
-                        3 => branch.recv::<Read>().await.unwrap(),
-                        6 => branch.recv::<OtherRead>().await.unwrap(),
-                        label => panic!("unexpected branch {label}"),
-                    };
-                    assert_eq!(number, expected);
-                    db_service.send::<Value>(&(number + 1)).await.unwrap();
-                }
-            },
+                let _: () = (async {
+                    for expected in [7, 9] {
+                        let branch = db_service.offer().await.unwrap();
+                        let number = match branch.label() {
+                            3 => branch.recv::<Read>().await.unwrap(),
+                            6 => branch.recv::<OtherRead>().await.unwrap(),
+                            label => panic!("unexpected branch {label}"),
+                        };
+                        assert_eq!(number, expected);
+                        db_service.send::<Value>(&(number + 1)).await.unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for expected in [11, 13] {
-                    let branch = auth_service.offer().await.unwrap();
-                    let number = match branch.label() {
-                        3 => branch.recv::<Read>().await.unwrap(),
-                        6 => branch.recv::<OtherRead>().await.unwrap(),
-                        label => panic!("unexpected branch {label}"),
-                    };
-                    assert_eq!(number, expected);
-                    auth_service.send::<Value>(&(number + 1)).await.unwrap();
-                }
-            }
-        );
+                let _: () = (async {
+                    for expected in [11, 13] {
+                        let branch = auth_service.offer().await.unwrap();
+                        let number = match branch.label() {
+                            3 => branch.recv::<Read>().await.unwrap(),
+                            6 => branch.recv::<OtherRead>().await.unwrap(),
+                            label => panic!("unexpected branch {label}"),
+                        };
+                        assert_eq!(number, expected);
+                        auth_service.send::<Value>(&(number + 1)).await.unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
         worker.send::<Loan>(db).await.unwrap();
         worker.send::<OtherLoan>(auth).await.unwrap();
         drop(owner.recv::<Loan>().await.unwrap());
         drop(owner.recv::<OtherLoan>().await.unwrap());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn rolled_owned_exchange_moves_the_returned_value_without_reattaching() {
+async fn rolled_owned_exchange_moves_the_returned_value_without_reattaching()
+-> core::result::Result<(), hibana::EndpointError> {
     type Steps = g::Roll<DbLoan>;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 48 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
         let kit = storage.init();
@@ -941,42 +1046,60 @@ fn rolled_owned_exchange_moves_the_returned_value_without_reattaching() {
         let mut db = rv.enter(sid, &resource_program).unwrap();
         let mut worker = rv.enter(sid, &worker_program).unwrap();
         let mut service = rv.enter(sid, &service_program).unwrap();
-        tokio::join!(
+        async {
             async {
-                for _ in 0..2 {
-                    owner.send::<Loan>(db).await.unwrap();
-                    db = owner.recv::<Loan>().await.unwrap();
-                    assert!(rv.enter(sid, &resource_program).is_err());
-                }
-                drop(db);
-            },
+                let _: () = (async {
+                    for _ in 0..2 {
+                        owner.send::<Loan>(db).await.unwrap();
+                        db = owner.recv::<Loan>().await.unwrap();
+                        assert!(rv.enter(sid, &resource_program).is_err());
+                    }
+                    drop(db);
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for number in [7, 9] {
-                    let mut db = worker.recv::<Loan>().await.unwrap();
-                    db.send::<Read>(&number).await.unwrap();
-                    assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
-                    worker.send::<Loan>(db).await.unwrap();
-                }
-            },
+                let _: () = (async {
+                    for number in [7, 9] {
+                        let mut db = worker.recv::<Loan>().await.unwrap();
+                        db.send::<Read>(&number).await.unwrap();
+                        assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
+                        worker.send::<Loan>(db).await.unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for number in [7, 9] {
-                    assert_eq!(service.recv::<Read>().await.unwrap(), number);
-                    service.send::<Value>(&(number + 1)).await.unwrap();
-                }
-            }
-        );
-    });
+                let _: () = (async {
+                    for number in [7, 9] {
+                        assert_eq!(service.recv::<Read>().await.unwrap(), number);
+                        service.send::<Value>(&(number + 1)).await.unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn owned_return_waits_for_resource_operations_in_the_same_actor_progress() {
+async fn owned_return_waits_for_resource_operations_in_the_same_actor_progress()
+-> core::result::Result<(), hibana::EndpointError> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<DbLoan>::new());
     let resource_program = crate::runtime::program::project::<10>(&g::Program::<DbLoan>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<DbLoan>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 32 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
         let network = TestTransport::new();
@@ -992,18 +1115,20 @@ fn owned_return_waits_for_resource_operations_in_the_same_actor_progress() {
         assert!(network.queue_is_empty());
         assert!(owner.recv::<Loan>().await.is_err());
         assert!(rv.enter(sid, &resource_program).is_err());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn malformed_owned_frame_never_returns_an_endpoint_or_restores_the_sender() {
+async fn malformed_owned_frame_never_returns_an_endpoint_or_restores_the_sender()
+-> core::result::Result<(), hibana::EndpointError> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<DbLoan>::new());
     let resource_program = crate::runtime::program::project::<10>(&g::Program::<DbLoan>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<DbLoan>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 32 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
         let network = TestTransport::new();
@@ -1018,11 +1143,15 @@ fn malformed_owned_frame_never_returns_an_endpoint_or_restores_the_sender() {
         assert!(worker.recv::<Loan>().await.is_err());
         assert!(rv.enter(sid, &resource_program).is_err());
         assert!(owner.recv::<Loan>().await.is_err());
-    });
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn resolved_owned_branch_send_and_recv_preserve_the_resource_continuation() {
+async fn resolved_owned_branch_send_and_recv_preserve_the_resource_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::runtime::resolver::{DecisionArm, ResolverRef};
     type AltLoan = g::Msg<5, Endpoint<'static, 10>>;
     type Steps = g::Seq<
@@ -1033,10 +1162,8 @@ fn resolved_owned_branch_send_and_recv_preserve_the_resource_continuation() {
     let resource_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
+
+    {
         let mut slab = [0u8; 48 * 1024];
         let choose = DecisionArm::Left;
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
@@ -1066,10 +1193,14 @@ fn resolved_owned_branch_send_and_recv_preserve_the_resource_continuation() {
         let db = owner.recv::<Loan>().await.unwrap();
         drop(owner);
         drop(db);
-    });
+    };
+
+    Ok(())
 }
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_conditional_holder_keeps_resource_rolls_and_returns_through_an_owned_carrier() {
+async fn a_conditional_holder_keeps_resource_rolls_and_returns_through_an_owned_carrier()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::runtime::resolver::{DecisionArm, ResolverRef};
     type Notice = g::Msg<8, ()>;
     type AfterRead = g::Msg<9, u32>;
@@ -1096,10 +1227,7 @@ fn a_conditional_holder_keeps_resource_rolls_and_returns_through_an_owned_carrie
     let b_program = crate::runtime::program::project::<2>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
     for choose in [DecisionArm::Left, DecisionArm::Right] {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        runtime.block_on(async {
+        {
             let mut owner_slab = [0u8; 32 * 1024];
             let mut a_slab = [0u8; 32 * 1024];
             let mut b_slab = [0u8; 32 * 1024];
@@ -1131,63 +1259,85 @@ fn a_conditional_holder_keeps_resource_rolls_and_returns_through_an_owned_carrie
             let mut a = a_rv.enter(sid, &a_program).unwrap();
             let mut b = b_rv.enter(sid, &b_program).unwrap();
             let mut service = service_rv.enter(sid, &service_program).unwrap();
-            tokio::join!(
+            async {
                 async {
-                    let branch = owner.offer().await.unwrap();
-                    branch.send::<Loan>(db).await.unwrap();
-                    owner.send::<OtherLoan>(auth).await.unwrap();
-                    owner.send::<Notice>(&()).await.unwrap();
-                    let mut db = owner.recv::<Loan>().await.unwrap();
-                    drop(owner);
-                    assert!(rv.enter(sid, &db_program).is_err());
-                    db.send::<AfterRead>(&47).await.unwrap();
-                    assert_eq!(db.recv::<Value>().await.unwrap(), 48);
-                },
+                    let _: () = (async {
+                        let branch = owner.offer().await.unwrap();
+                        branch.send::<Loan>(db).await.unwrap();
+                        owner.send::<OtherLoan>(auth).await.unwrap();
+                        owner.send::<Notice>(&()).await.unwrap();
+                        let mut db = owner.recv::<Loan>().await.unwrap();
+                        drop(owner);
+                        assert!(rv.enter(sid, &db_program).is_err());
+                        db.send::<AfterRead>(&47).await.unwrap();
+                        assert_eq!(db.recv::<Value>().await.unwrap(), 48);
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
                 async {
-                    let branch = a.offer().await.unwrap();
-                    match branch.label() {
-                        1 => {
-                            let mut db = branch.recv::<Loan>().await.unwrap();
-                            let mut auth = a.recv::<OtherLoan>().await.unwrap();
-                            for number in [41, 43] {
-                                db.send::<Read>(&number).await.unwrap();
-                                assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
+                    let _: () = (async {
+                        let branch = a.offer().await.unwrap();
+                        match branch.label() {
+                            1 => {
+                                let mut db = branch.recv::<Loan>().await.unwrap();
+                                let mut auth = a.recv::<OtherLoan>().await.unwrap();
+                                for number in [41, 43] {
+                                    db.send::<Read>(&number).await.unwrap();
+                                    assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
+                                }
+                                auth.send::<Loan>(db).await.unwrap();
                             }
-                            auth.send::<Loan>(db).await.unwrap();
-                        }
-                        8 => {
-                            branch.recv::<Notice>().await.unwrap();
-                        }
-                        label => panic!("unexpected choice {label}"),
-                    }
-                },
-                async {
-                    let branch = b.offer().await.unwrap();
-                    match branch.label() {
-                        1 => {
-                            let mut db = branch.recv::<Loan>().await.unwrap();
-                            let mut auth = b.recv::<OtherLoan>().await.unwrap();
-                            for number in [41, 43] {
-                                db.send::<Read>(&number).await.unwrap();
-                                assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
+                            8 => {
+                                branch.recv::<Notice>().await.unwrap();
                             }
-                            auth.send::<Loan>(db).await.unwrap();
+                            label => panic!("unexpected choice {label}"),
                         }
-                        8 => {
-                            branch.recv::<Notice>().await.unwrap();
-                        }
-                        label => panic!("unexpected choice {label}"),
-                    }
-                },
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
                 async {
-                    for expected in [41, 43] {
-                        assert_eq!(service.recv::<Read>().await.unwrap(), expected);
-                        service.send::<Value>(&(expected + 1)).await.unwrap();
-                    }
-                    assert_eq!(service.recv::<AfterRead>().await.unwrap(), 47);
-                    service.send::<Value>(&48).await.unwrap();
-                },
-            );
-        });
+                    let _: () = (async {
+                        let branch = b.offer().await.unwrap();
+                        match branch.label() {
+                            1 => {
+                                let mut db = branch.recv::<Loan>().await.unwrap();
+                                let mut auth = b.recv::<OtherLoan>().await.unwrap();
+                                for number in [41, 43] {
+                                    db.send::<Read>(&number).await.unwrap();
+                                    assert_eq!(db.recv::<Value>().await.unwrap(), number + 1);
+                                }
+                                auth.send::<Loan>(db).await.unwrap();
+                            }
+                            8 => {
+                                branch.recv::<Notice>().await.unwrap();
+                            }
+                            label => panic!("unexpected choice {label}"),
+                        }
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
+                        for expected in [41, 43] {
+                            assert_eq!(service.recv::<Read>().await.unwrap(), expected);
+                            service.send::<Value>(&(expected + 1)).await.unwrap();
+                        }
+                        assert_eq!(service.recv::<AfterRead>().await.unwrap(), 47);
+                        service.send::<Value>(&48).await.unwrap();
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
+            .await
+            .expect("all child results are data");
+        };
     }
+    Ok(())
 }

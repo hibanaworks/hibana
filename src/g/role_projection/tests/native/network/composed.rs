@@ -19,8 +19,10 @@ use std::{net::SocketAddr, process::Command, string::ToString, vec};
 const SID: SessionId = SessionId::new(9021);
 const WORKER: &str = "g::role_projection::tests::native::network::composed::worker_process";
 
-#[tokio::test(flavor = "current_thread")]
-async fn tcp_inboxes_preserve_resolved_choices_and_repeated_loans_alongside_parallel_work() {
+#[hibana_runtime::main]
+#[test]
+async fn tcp_inboxes_preserve_resolved_choices_and_repeated_loans_alongside_parallel_work()
+-> core::result::Result<(), hibana::EndpointError> {
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Global>::new());
     let service_program = crate::runtime::program::project::<2>(&g::Program::<Global>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Global>::new());
@@ -31,14 +33,13 @@ async fn tcp_inboxes_preserve_resolved_choices_and_repeated_loans_alongside_para
     // During unwinding, process guards fence remote rights before the binding.
     let binding = unsafe { crate::runtime::transport::EndpointBinding::new() };
     let broker = Broker::start(BROKER).await;
-    let mut child = Process(
+    let mut child = Process::spawn(
         Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", WORKER, "--nocapture"])
             .env("HIBANA_NETWORK_ADDRESS", broker.address.to_string())
-            .env("HIBANA_NETWORK_PARENT", std::process::id().to_string())
-            .spawn()
-            .unwrap(),
-    );
+            .env("HIBANA_NETWORK_PARENT", std::process::id().to_string()),
+    )
+    .unwrap();
     {
         let mut owner_slab = vec![0; 64 * 1024];
         let mut service_slab = vec![0; 64 * 1024];
@@ -73,48 +74,69 @@ async fn tcp_inboxes_preserve_resolved_choices_and_repeated_loans_alongside_para
         let db = service_rv.enter(SID, &db_program).unwrap();
         let mut left = side_rv.enter(SID, &left_program).unwrap();
         let mut right = side_rv.enter(SID, &right_program).unwrap();
-        tokio::join!(
+        async {
             async {
-                service.send::<Loan>(db).await.unwrap();
-                for expected in [44, 40] {
-                    let branch = service.offer().await.unwrap();
-                    value = match branch.label() {
-                        3 => value + branch.recv::<Read>().await.unwrap(),
-                        6 => value - branch.recv::<Subtract>().await.unwrap(),
-                        label => panic!("unexpected branch {label}"),
-                    };
-                    assert_eq!(value, expected);
-                    service.send::<Value>(&value).await.unwrap();
-                }
-                value += service.recv::<AfterRead>().await.unwrap();
-                service.send::<AfterValue>(&value).await.unwrap();
-                drop(service.recv::<Finished>().await.unwrap());
-            },
+                let _: () = (async {
+                    service.send::<Loan>(db).await.unwrap();
+                    for expected in [44, 40] {
+                        let branch = service.offer().await.unwrap();
+                        value = match branch.label() {
+                            3 => value + branch.recv::<Read>().await.unwrap(),
+                            6 => value - branch.recv::<Subtract>().await.unwrap(),
+                            label => panic!("unexpected branch {label}"),
+                        };
+                        assert_eq!(value, expected);
+                        service.send::<Value>(&value).await.unwrap();
+                    }
+                    value += service.recv::<AfterRead>().await.unwrap();
+                    service.send::<AfterValue>(&value).await.unwrap();
+                    drop(service.recv::<Finished>().await.unwrap());
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                let mut db = owner.recv::<Loan>().await.unwrap();
-                for _ in 0..2 {
-                    owner.send::<Loan>(db).await.unwrap();
-                    db = owner.recv::<Loan>().await.unwrap();
-                }
-                db.send::<AfterRead>(&5).await.unwrap();
-                assert_eq!(db.recv::<AfterValue>().await.unwrap(), 45);
-                owner.send::<Finished>(db).await.unwrap();
-            },
+                let _: () = (async {
+                    let mut db = owner.recv::<Loan>().await.unwrap();
+                    for _ in 0..2 {
+                        owner.send::<Loan>(db).await.unwrap();
+                        db = owner.recv::<Loan>().await.unwrap();
+                    }
+                    db.send::<AfterRead>(&5).await.unwrap();
+                    assert_eq!(db.recv::<AfterValue>().await.unwrap(), 45);
+                    owner.send::<Finished>(db).await.unwrap();
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for number in [10, 20] {
-                    left.send::<Read>(&number).await.unwrap();
-                    assert_eq!(left.recv::<Value>().await.unwrap(), number + 1);
-                }
-            },
+                let _: () = (async {
+                    for number in [10, 20] {
+                        left.send::<Read>(&number).await.unwrap();
+                        assert_eq!(left.recv::<Value>().await.unwrap(), number + 1);
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+
             async {
-                for number in [10, 20] {
-                    assert_eq!(right.recv::<Read>().await.unwrap(), number);
-                    right.send::<Value>(&(number + 1)).await.unwrap();
-                }
-            }
-        );
+                let _: () = (async {
+                    for number in [10, 20] {
+                        assert_eq!(right.recv::<Read>().await.unwrap(), number);
+                        right.send::<Value>(&(number + 1)).await.unwrap();
+                    }
+                })
+                .await;
+                Ok::<_, hibana::EndpointError>(())
+            };
+        }
+        .await
+        .expect("all child results are data");
     }
-    child.wait_success().await;
+    assert!((child).wait().await.unwrap().success());
     assert_eq!(value, 45);
     let journal = broker.journal().await;
     let mut accepted = std::collections::BTreeMap::<_, std::vec::Vec<_>>::new();
@@ -134,11 +156,14 @@ async fn tcp_inboxes_preserve_resolved_choices_and_repeated_loans_alongside_para
     );
     drop(child);
     drop(broker);
+
+    Ok(())
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[hibana_runtime::main]
+#[test]
 #[ignore = "separate process entrypoint exercised by the composed network fixture"]
-async fn worker_process() {
+async fn worker_process() -> core::result::Result<(), hibana::EndpointError> {
     let parent: u32 = std::env::var("HIBANA_NETWORK_PARENT")
         .unwrap()
         .parse()
@@ -182,4 +207,5 @@ async fn worker_process() {
         assert_eq!(db.recv::<Value>().await.unwrap(), expected);
         worker.send::<Loan>(db).await.unwrap();
     }
+    Ok(())
 }

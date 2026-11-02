@@ -103,7 +103,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CONFORMANCE_INPUTS}" "Endpoint source/image inputs"
 # Keep physical acceptance separate from sender completion. The first loan,
 # independent tick, return and next loan enumerate all enabled I/O releases;
-# the owned/par/roll localsides run as ordinary concurrent Tokio tasks.
+# the owned/par/roll localsides run as concurrent hibana-runtime scopes.
 : > "${PHASE_CASES}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::bounded_conformance::phases::bounded_acceptance_and_completion_schedules_emit_lean_cases \

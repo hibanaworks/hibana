@@ -17,56 +17,54 @@ pub(super) type Steps =
 #[cfg(not(miri))]
 type Wire = (crate::transport::FrameHeader, std::vec::Vec<u8>);
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
+async fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry()
+-> core::result::Result<(), hibana::EndpointError> {
     let () = g::ProgramProjection::<Steps, 16>::VALIDATION;
     let owner_program = crate::runtime::program::project::<0>(&g::Program::<Steps>::new());
     let worker_program = crate::runtime::program::project::<1>(&g::Program::<Steps>::new());
     let db_program = crate::runtime::program::project::<10>(&g::Program::<Steps>::new());
     let service_program = crate::runtime::program::project::<3>(&g::Program::<Steps>::new());
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            let network = TestTransport::new();
-            let mut owner_slab = [0; 32 * 1024];
-            let mut worker_slab = [0; 32 * 1024];
-            let mut service_slab = [0; 32 * 1024];
-            let mut owner_storage = SessionKitStorage::uninit();
-            let mut worker_storage = SessionKitStorage::uninit();
-            let mut service_storage = SessionKitStorage::uninit();
-            let owner_rv = owner_storage
-                .init()
-                .rendezvous(&mut owner_slab, network.clone())
-                .unwrap();
-            let worker_rv = worker_storage
-                .init()
-                .rendezvous(&mut worker_slab, network.clone())
-                .unwrap();
-            let service_rv = service_storage
-                .init()
-                .rendezvous(&mut service_slab, network.clone())
-                .unwrap();
-            let sid = SessionId::new(9062);
-            let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
-            let mut db = owner_rv.enter(sid, &db_program).unwrap();
-            let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
-            let mut service = service_rv.enter(sid, &service_program).unwrap();
-            let operations = RefCell::new(std::vec::Vec::new());
-            // SAFETY: all three pinned actors were attached with TestTransport.
-            let initial = unsafe {
-                [
-                    actor_snapshot(&owner),
-                    actor_snapshot(&worker),
-                    actor_snapshot(&service),
-                ]
-            };
-            let (sends, receipts, ()) =
-                tokio::time::timeout(core::time::Duration::from_secs(30), async {
-                    tokio::join!(
-                        async {
+    {
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 32 * 1024];
+        let mut worker_slab = [0; 32 * 1024];
+        let mut service_slab = [0; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut worker_storage = SessionKitStorage::uninit();
+        let mut service_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let worker_rv = worker_storage
+            .init()
+            .rendezvous(&mut worker_slab, network.clone())
+            .unwrap();
+        let service_rv = service_storage
+            .init()
+            .rendezvous(&mut service_slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(9062);
+        let mut owner = owner_rv.enter(sid, &owner_program).unwrap();
+        let mut db = owner_rv.enter(sid, &db_program).unwrap();
+        let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
+        let mut service = service_rv.enter(sid, &service_program).unwrap();
+        let operations = RefCell::new(std::vec::Vec::new());
+        // SAFETY: all three pinned actors were attached with TestTransport.
+        let initial = unsafe {
+            [
+                actor_snapshot(&owner),
+                actor_snapshot(&worker),
+                actor_snapshot(&service),
+            ]
+        };
+        let (sends, receipts, ()) = (async {
+            async {
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
                             let mut sends = std::vec::Vec::new();
                             for number in [7, 9] {
                                 // SAFETY: this pinned actor was attached with TestTransport.
@@ -128,8 +126,14 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
                                 frame: FrameBoundary::Received(network.received_frame(10, sid, 0)),
                             });
                             sends
-                        },
-                        async {
+                        })
+                        .await,
+                    )
+                };
+
+                async {
+                    Ok::<_, hibana::EndpointError>(
+                        (async {
                             let mut receipts = std::vec::Vec::new();
                             for number in [7, 9] {
                                 // SAFETY: WORKER has its own pinned TestTransport actor.
@@ -168,74 +172,85 @@ fn ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry() {
                                 receipts.push((before, after));
                             }
                             receipts
-                        },
-                        async {
-                            let before = unsafe { actor_snapshot(&service) };
-                            let number = service.recv::<Read>().await.unwrap();
-                            operations.borrow_mut().push(OperationObservation {
-                                view: 3,
-                                label: 3,
-                                before,
-                                after: unsafe { actor_snapshot(&service) },
-                                frame: FrameBoundary::Received(network.received_frame(3, sid, 0)),
-                            });
-                            let before = unsafe { actor_snapshot(&service) };
-                            service.send::<Value>(&(number + 1)).await.unwrap();
-                            operations.borrow_mut().push(OperationObservation {
-                                view: 3,
-                                label: 4,
-                                before,
-                                after: unsafe { actor_snapshot(&service) },
-                                frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
-                            });
-                        },
+                        })
+                        .await,
                     )
-                })
-                .await
-                .expect("mixed source FIFO stopped progressing");
-            assert!(network.queue_is_empty());
-            assert_eq!(sends.len(), 4);
-            assert_eq!(receipts.len(), 2);
-            assert_eq!(sends[0].1.1, sends[2].1.1);
-            assert_ne!(receipts[0].1.views, receipts[1].1.views);
-            let operations = operations.into_inner();
-            super::distributed_source::check_observations(&operations);
-            for actor in &initial {
-                assert_eq!(
-                    &operations
-                        .iter()
-                        .find(|op| op.before.actor == actor.actor)
-                        .unwrap()
-                        .before,
-                    actor
-                );
+                };
+
+                async {
+                    let _: () = (async {
+                        let before = unsafe { actor_snapshot(&service) };
+                        let number = service.recv::<Read>().await.unwrap();
+                        operations.borrow_mut().push(OperationObservation {
+                            view: 3,
+                            label: 3,
+                            before,
+                            after: unsafe { actor_snapshot(&service) },
+                            frame: FrameBoundary::Received(network.received_frame(3, sid, 0)),
+                        });
+                        let before = unsafe { actor_snapshot(&service) };
+                        service.send::<Value>(&(number + 1)).await.unwrap();
+                        operations.borrow_mut().push(OperationObservation {
+                            view: 3,
+                            label: 4,
+                            before,
+                            after: unsafe { actor_snapshot(&service) },
+                            frame: FrameBoundary::Sent(network.accepted_frame(10, 0)),
+                        });
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
             }
-            #[cfg(not(miri))]
-            {
-                write_observations(
-                    [
-                        owner_program.role_image_ref(),
-                        worker_program.role_image_ref(),
-                    ],
-                    &sends,
-                    &receipts,
-                );
-                let candidates = sends
+            .await
+            .expect("all child results are data")
+        })
+        .await;
+        assert!(network.queue_is_empty());
+        assert_eq!(sends.len(), 4);
+        assert_eq!(receipts.len(), 2);
+        assert_eq!(sends[0].1.1, sends[2].1.1);
+        assert_ne!(receipts[0].1.views, receipts[1].1.views);
+        let operations = operations.into_inner();
+        super::distributed_source::check_observations(&operations);
+        for actor in &initial {
+            assert_eq!(
+                &operations
                     .iter()
-                    .map(|(before, _, admitted)| (before.clone(), admitted.clone()))
-                    .collect::<std::vec::Vec<_>>();
-                super::distributed_source::write_observations(
-                    [
-                        owner_program.role_image_ref(),
-                        worker_program.role_image_ref(),
-                        service_program.role_image_ref(),
-                    ],
-                    &initial,
-                    &operations,
-                    &candidates,
-                );
-            }
-        });
+                    .find(|op| op.before.actor == actor.actor)
+                    .unwrap()
+                    .before,
+                actor
+            );
+        }
+        #[cfg(not(miri))]
+        {
+            write_observations(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                ],
+                &sends,
+                &receipts,
+            );
+            let candidates = sends
+                .iter()
+                .map(|(before, _, admitted)| (before.clone(), admitted.clone()))
+                .collect::<std::vec::Vec<_>>();
+            super::distributed_source::write_observations(
+                [
+                    owner_program.role_image_ref(),
+                    worker_program.role_image_ref(),
+                    service_program.role_image_ref(),
+                ],
+                &initial,
+                &operations,
+                &candidates,
+            );
+        }
+    };
+
+    Ok(())
 }
 
 #[cfg(not(miri))]

@@ -1,7 +1,9 @@
 use super::*;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_received_endpoint_drives_three_flat_arms_and_returns_its_continuation() {
+async fn a_received_endpoint_drives_three_flat_arms_and_returns_its_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     type Loan = g::Msg<101, Endpoint<'static, 10>>;
     type A = g::Msg<102, u32>;
     type AR = g::Msg<103, u32>;
@@ -54,66 +56,110 @@ fn a_received_endpoint_drives_three_flat_arms_and_returns_its_continuation() {
     let db = owner_rv.enter(sid, &db_program).unwrap();
     let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
     let mut service = service_rv.enter(sid, &service_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                tokio::join!(
-                    async {
+    {
+        (async {
+            async {
+                async {
+                    let _: () = (async {
                         owner.send::<Loan>(db).await.unwrap();
                         let mut db = owner.recv::<Loan>().await.unwrap();
                         db.send::<Final>(&42).await.unwrap();
                         assert_eq!(db.recv::<FinalReply>().await.unwrap(), 43);
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         let mut db = worker.recv::<Loan>().await.unwrap();
                         {
                             let [mut left, mut right, mut third] = db.par().unwrap();
-                            tokio::join!(
+                            async {
                                 async {
-                                    left.send::<A>(&7).await.unwrap();
-                                    assert_eq!(left.recv::<AR>().await.unwrap(), 8);
-                                },
+                                    let _: () = (async {
+                                        left.send::<A>(&7).await.unwrap();
+                                        assert_eq!(left.recv::<AR>().await.unwrap(), 8);
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
                                 async {
-                                    right.send::<B>(&11).await.unwrap();
-                                    assert_eq!(right.recv::<BR>().await.unwrap(), 12);
-                                },
+                                    let _: () = (async {
+                                        right.send::<B>(&11).await.unwrap();
+                                        assert_eq!(right.recv::<BR>().await.unwrap(), 12);
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
                                 async {
-                                    third.send::<C>(&17).await.unwrap();
-                                    assert_eq!(third.recv::<CR>().await.unwrap(), 18);
-                                },
-                            );
+                                    let _: () = (async {
+                                        third.send::<C>(&17).await.unwrap();
+                                        assert_eq!(third.recv::<CR>().await.unwrap(), 18);
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                         }
                         worker.send::<Loan>(db).await.unwrap();
-                    },
-                    async {
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+
+                async {
+                    let _: () = (async {
                         {
                             let [mut left, mut right, mut third] = service.par().unwrap();
-                            tokio::join!(
+                            async {
                                 async {
-                                    let value = left.recv::<A>().await.unwrap();
-                                    left.send::<AR>(&(value + 1)).await.unwrap();
-                                },
+                                    let _: () = (async {
+                                        let value = left.recv::<A>().await.unwrap();
+                                        left.send::<AR>(&(value + 1)).await.unwrap();
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
                                 async {
-                                    let value = right.recv::<B>().await.unwrap();
-                                    right.send::<BR>(&(value + 1)).await.unwrap();
-                                },
+                                    let _: () = (async {
+                                        let value = right.recv::<B>().await.unwrap();
+                                        right.send::<BR>(&(value + 1)).await.unwrap();
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+
                                 async {
-                                    let value = third.recv::<C>().await.unwrap();
-                                    third.send::<CR>(&(value + 1)).await.unwrap();
-                                },
-                            );
+                                    let _: () = (async {
+                                        let value = third.recv::<C>().await.unwrap();
+                                        third.send::<CR>(&(value + 1)).await.unwrap();
+                                    })
+                                    .await;
+                                    Ok::<_, hibana::EndpointError>(())
+                                };
+                            }
+                            .await
+                            .expect("all child results are data");
                         }
                         let value = service.recv::<Final>().await.unwrap();
                         service.send::<FinalReply>(&(value + 1)).await.unwrap();
-                    },
-                );
-            })
+                    })
+                    .await;
+                    Ok::<_, hibana::EndpointError>(())
+                };
+            }
             .await
-            .expect("a received Endpoint must keep its own parallel semantics and continuation");
-        });
+            .expect("all child results are data");
+        })
+        .await;
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }

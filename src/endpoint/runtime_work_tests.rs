@@ -28,8 +28,9 @@ type AlternativeReply = Msg<5, u32>;
 type Loan<'r> = Msg<6, Endpoint<'r, 2>>;
 type Tick = Msg<7, u32>;
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn work_observation_preserves_live_endpoint_progress() {
+async fn work_observation_preserves_live_endpoint_progress() -> Result<(), crate::EndpointError> {
     let global = g::seq(g::send::<0, 1, Request>(), g::send::<1, 0, Reply>());
     let programs: (RoleProgram<0>, RoleProgram<1>) = (project(&global), project(&global));
     let network = InMemoryTransport::new([]);
@@ -45,21 +46,20 @@ fn work_observation_preserves_live_endpoint_progress() {
     let tag = view_tag(&a);
     // SAFETY: a retains this actor, attached with InMemoryTransport.
     let before = unsafe { work_counts::<InMemoryTransport>(tag) };
-    tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::join!(
-                async {
-                    a.send::<Request>(&41).await.unwrap();
-                    assert_eq!(a.recv::<Reply>().await.unwrap(), 42);
-                },
-                async {
-                    let value = b.recv::<Request>().await.unwrap();
-                    b.send::<Reply>(&(value + 1)).await.unwrap();
-                },
-            );
-        });
+
+    async {
+        async {
+            a.send::<Request>(&41).await?;
+            assert_eq!(a.recv::<Reply>().await?, 42);
+        };
+        async {
+            let value = b.recv::<Request>().await?;
+            b.send::<Reply>(&(value + 1)).await?;
+        };
+        Ok(())
+    }
+    .await?;
+
     // SAFETY: a and its actor are still live and no future is being polled.
     let after = unsafe { work_counts::<InMemoryTransport>(tag) };
     // SAFETY: the same actor is retained for this second read.
@@ -73,6 +73,8 @@ fn work_observation_preserves_live_endpoint_progress() {
             .any(|((_, first), (_, last))| first < last)
     );
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
 fn report<const ACTORS: usize>(
@@ -103,7 +105,12 @@ fn report<const ACTORS: usize>(
     }
 }
 
-async fn measure(case: &str, parameter: u32, programs: &(RoleProgram<0>, RoleProgram<1>)) {
+#[hibana_runtime::scope]
+async fn measure(
+    case: &str,
+    parameter: u32,
+    programs: &(RoleProgram<0>, RoleProgram<1>),
+) -> Result<(), crate::EndpointError> {
     let rounds = if case == "roll" { 128u32 } else { 32 };
     for run in 0..2 {
         let network = InMemoryTransport::new([]);
@@ -122,28 +129,30 @@ async fn measure(case: &str, parameter: u32, programs: &(RoleProgram<0>, RolePro
             let [mut b_recv, mut b_send] = b.par().unwrap();
             // SAFETY: both InMemoryTransport actors remain pinned by these live borrows.
             let before = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
-            tokio::join!(
+            async {
                 async {
                     for n in 0..rounds {
-                        a_send.send::<Request>(&n).await.unwrap();
+                        a_send.send::<Request>(&n).await?;
                     }
-                },
+                };
                 async {
                     for n in 0..rounds {
-                        assert_eq!(a_recv.recv::<Reply>().await.unwrap(), n + 1);
+                        assert_eq!(a_recv.recv::<Reply>().await?, n + 1);
                     }
-                },
+                };
                 async {
                     for n in 0..rounds {
-                        assert_eq!(b_recv.recv::<Request>().await.unwrap(), n);
+                        assert_eq!(b_recv.recv::<Request>().await?, n);
                     }
-                },
+                };
                 async {
                     for n in 0..rounds {
-                        b_send.send::<Reply>(&(n + 1)).await.unwrap();
+                        b_send.send::<Reply>(&(n + 1)).await?;
                     }
-                },
-            );
+                };
+                Ok(())
+            }
+            .await?;
             // SAFETY: the same actors remain alive; the synchronous observation
             // takes the existing kernel lease without retaining it across a poll.
             let after = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
@@ -158,20 +167,22 @@ async fn measure(case: &str, parameter: u32, programs: &(RoleProgram<0>, RolePro
         } else {
             // SAFETY: both InMemoryTransport actors remain pinned by a and b.
             let before = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
-            tokio::join!(
+            async {
                 async {
                     for n in 0..rounds {
-                        a.send::<Request>(&n).await.unwrap();
-                        assert_eq!(a.recv::<Reply>().await.unwrap(), n + 1);
+                        a.send::<Request>(&n).await?;
+                        assert_eq!(a.recv::<Reply>().await?, n + 1);
                     }
-                },
+                };
                 async {
                     for n in 0..rounds {
-                        assert_eq!(b.recv::<Request>().await.unwrap(), n);
-                        b.send::<Reply>(&(n + 1)).await.unwrap();
+                        assert_eq!(b.recv::<Request>().await?, n);
+                        b.send::<Reply>(&(n + 1)).await?;
                     }
-                },
-            );
+                };
+                Ok(())
+            }
+            .await?;
             // SAFETY: a and b still retain the same actors.
             let after = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
             report(
@@ -184,25 +195,30 @@ async fn measure(case: &str, parameter: u32, programs: &(RoleProgram<0>, RolePro
             );
         }
         if case != "roll" {
-            tokio::join!(
+            async {
                 async {
                     for _ in 0..parameter {
-                        a.send::<Tail>(&()).await.unwrap();
+                        a.send::<Tail>(&()).await?;
                     }
-                },
+                };
                 async {
                     for _ in 0..parameter {
-                        b.recv::<Tail>().await.unwrap();
+                        b.recv::<Tail>().await?;
                     }
-                },
-            );
+                };
+                Ok(())
+            }
+            .await?;
         }
         assert!(network.queue_is_empty());
     }
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn runtime_work_profile() {
+async fn runtime_work_profile() -> Result<(), crate::EndpointError> {
     std::println!();
     let seq8 = g::seq(
         repeated!(g::seq(g::send::<0, 1, Request>(), g::send::<1, 0, Reply>()); 32),
@@ -238,22 +254,19 @@ fn runtime_work_profile() {
         ("roll", 8, (project(&roll8), project(&roll8))),
         ("roll", 32, (project(&roll32), project(&roll32))),
     ];
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            for (name, parameter, programs) in cases {
-                measure(name, parameter, &programs).await;
-            }
-            measure_routes().await;
-            measure_delegation().await;
-            measure_nested_roll().await;
-        });
+
+    for (name, parameter, programs) in cases {
+        measure(name, parameter, &programs).await?;
+    }
+    measure_routes().await?;
+    measure_delegation().await?;
+    measure_nested_roll().await?;
+
+    Ok(())
 }
 
-async fn measure_routes() {
+#[hibana_runtime::scope]
+async fn measure_routes() -> Result<(), crate::EndpointError> {
     let global = g::route(
         g::seq(g::send::<0, 1, Request>(), g::send::<1, 0, Reply>()),
         g::seq(
@@ -294,40 +307,42 @@ async fn measure_routes() {
             let tags = [view_tag(&a), view_tag(&b)];
             // SAFETY: both actors remain alive; no future is polled during the snapshot.
             let before = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
-            tokio::join!(
+            async {
                 async {
                     for value in 0..32 {
-                        let branch = a.offer().await.unwrap();
+                        let branch = a.offer().await?;
                         match branch.label() {
                             1 => {
-                                branch.send::<Request>(&value).await.unwrap();
-                                assert_eq!(a.recv::<Reply>().await.unwrap(), value + 1);
+                                branch.send::<Request>(&value).await?;
+                                assert_eq!(a.recv::<Reply>().await?, value + 1);
                             }
                             4 => {
-                                branch.send::<Alternative>(&value).await.unwrap();
-                                assert_eq!(a.recv::<AlternativeReply>().await.unwrap(), value + 2);
+                                branch.send::<Alternative>(&value).await?;
+                                assert_eq!(a.recv::<AlternativeReply>().await?, value + 2);
                             }
                             label => panic!("unexpected selected route {label}"),
                         }
                     }
-                },
+                };
                 async {
                     for _ in 0..32 {
-                        let branch = b.offer().await.unwrap();
+                        let branch = b.offer().await?;
                         match branch.label() {
                             1 => {
-                                let value = branch.recv::<Request>().await.unwrap();
-                                b.send::<Reply>(&(value + 1)).await.unwrap();
+                                let value = branch.recv::<Request>().await?;
+                                b.send::<Reply>(&(value + 1)).await?;
                             }
                             4 => {
-                                let value = branch.recv::<Alternative>().await.unwrap();
-                                b.send::<AlternativeReply>(&(value + 2)).await.unwrap();
+                                let value = branch.recv::<Alternative>().await?;
+                                b.send::<AlternativeReply>(&(value + 2)).await?;
                             }
                             label => panic!("unexpected received route {label}"),
                         }
                     }
-                },
-            );
+                };
+                Ok(())
+            }
+            .await?;
             // SAFETY: both original actors are still retained by a and b.
             let after = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
             report(
@@ -341,11 +356,14 @@ async fn measure_routes() {
             assert!(network.queue_is_empty());
         }
     }
+
+    Ok(())
 }
 
-async fn measure_delegation() {
+#[hibana_runtime::scope]
+async fn measure_delegation() -> Result<(), crate::EndpointError> {
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::send::<1, 3, Tick>(),
             g::seq(
@@ -353,7 +371,7 @@ async fn measure_delegation() {
                     g::seq(g::send::<2, 3, Request>(), g::send::<3, 2, Reply>()),
                     g::send::<1, 3, Tick>(),
                 ),
-                g::send::<1, 0, Loan<'_>>(),
+                g::send::<1, 0, Loan>(),
             ),
         ),
     )
@@ -392,47 +410,51 @@ async fn measure_delegation() {
         let tags = [view_tag(&owner), view_tag(&worker), view_tag(&service)];
         // SAFETY: all three actors remain alive, including during resource transfers.
         let before = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
-        let (_resource, (), ()) = tokio::join!(
+        let (_resource, (), ()) = async {
             async {
                 for _ in 0..32 {
-                    owner.send::<Loan<'_>>(resource).await.unwrap();
-                    resource = owner.recv::<Loan<'_>>().await.unwrap();
+                    owner.send::<Loan>(resource).await?;
+                    resource = owner.recv::<Loan>().await?;
                 }
-                resource
-            },
+                Ok(resource)
+            };
             async {
                 for value in 0..32 {
-                    let mut resource = worker.recv::<Loan<'_>>().await.unwrap();
-                    tokio::join!(
-                        biased;
+                    let mut resource = worker.recv::<Loan>().await?;
+                    async {
                         async {
-                            resource.send::<Request>(&value).await.unwrap();
-                            assert_eq!(resource.recv::<Reply>().await.unwrap(), value + 1);
-                        },
+                            resource.send::<Request>(&value).await?;
+                            assert_eq!(resource.recv::<Reply>().await?, value + 1);
+                        };
                         async {
-                            worker.send::<Tick>(&value).await.unwrap();
-                            worker.send::<Tick>(&value).await.unwrap();
-                        },
-                    );
-                    worker.send::<Loan<'_>>(resource).await.unwrap();
+                            worker.send::<Tick>(&value).await?;
+                            worker.send::<Tick>(&value).await?;
+                        };
+                        Ok(())
+                    }
+                    .await?;
+                    worker.send::<Loan>(resource).await?;
                 }
-            },
+            };
             async {
                 for value in 0..32 {
-                    assert_eq!(service.recv::<Tick>().await.unwrap(), value);
+                    assert_eq!(service.recv::<Tick>().await?, value);
                     let [mut query, mut tick] = service.par().unwrap();
-                    tokio::join!(
+                    async {
                         async {
-                            assert_eq!(query.recv::<Request>().await.unwrap(), value);
-                            query.send::<Reply>(&(value + 1)).await.unwrap();
-                        },
+                            assert_eq!(query.recv::<Request>().await?, value);
+                            query.send::<Reply>(&(value + 1)).await?;
+                        };
                         async {
-                            assert_eq!(tick.recv::<Tick>().await.unwrap(), value);
-                        },
-                    );
+                            assert_eq!(tick.recv::<Tick>().await?, value);
+                        };
+                        Ok(())
+                    }
+                    .await?;
                 }
-            },
-        );
+            };
+        }
+        .await?;
         // SAFETY: owner, worker and service still retain their original actors.
         let after = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
         report(
@@ -445,9 +467,12 @@ async fn measure_delegation() {
         );
         assert!(network.queue_is_empty());
     }
+
+    Ok(())
 }
 
-async fn measure_nested_roll() {
+#[hibana_runtime::scope]
+async fn measure_nested_roll() -> Result<(), crate::EndpointError> {
     let global = g::seq(
         g::seq(g::send::<0, 1, Request>(), g::send::<1, 0, Reply>()).roll(),
         g::seq(
@@ -471,28 +496,30 @@ async fn measure_nested_roll() {
         let tags = [view_tag(&a), view_tag(&b)];
         // SAFETY: both actors remain pinned by their live endpoints.
         let before = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
-        tokio::join!(
+        async {
             async {
                 for value in 0..32 {
                     for _ in 0..2 {
-                        a.send::<Request>(&value).await.unwrap();
-                        assert_eq!(a.recv::<Reply>().await.unwrap(), value + 1);
+                        a.send::<Request>(&value).await?;
+                        assert_eq!(a.recv::<Reply>().await?, value + 1);
                     }
-                    a.send::<Alternative>(&value).await.unwrap();
-                    assert_eq!(a.recv::<AlternativeReply>().await.unwrap(), value + 2);
+                    a.send::<Alternative>(&value).await?;
+                    assert_eq!(a.recv::<AlternativeReply>().await?, value + 2);
                 }
-            },
+            };
             async {
                 for value in 0..32 {
                     for _ in 0..2 {
-                        assert_eq!(b.recv::<Request>().await.unwrap(), value);
-                        b.send::<Reply>(&(value + 1)).await.unwrap();
+                        assert_eq!(b.recv::<Request>().await?, value);
+                        b.send::<Reply>(&(value + 1)).await?;
                     }
-                    assert_eq!(b.recv::<Alternative>().await.unwrap(), value);
-                    b.send::<AlternativeReply>(&(value + 2)).await.unwrap();
+                    assert_eq!(b.recv::<Alternative>().await?, value);
+                    b.send::<AlternativeReply>(&(value + 2)).await?;
                 }
-            },
-        );
+            };
+            Ok(())
+        }
+        .await?;
         // SAFETY: the same a and b are still live after all measured operations.
         let after = tags.map(|tag| unsafe { work_counts::<InMemoryTransport>(tag) });
         report(
@@ -505,4 +532,6 @@ async fn measure_nested_roll() {
         );
         assert!(network.queue_is_empty());
     }
+
+    Ok(())
 }

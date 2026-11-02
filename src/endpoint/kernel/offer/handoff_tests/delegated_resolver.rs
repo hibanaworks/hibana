@@ -1,8 +1,10 @@
 use super::*;
 use crate::runtime::resolver::{DecisionArm, ResolverRef};
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn delegated_resolver_starts_before_the_holders_later_send() {
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn delegated_resolver_starts_before_the_holders_later_send()
+-> core::result::Result<(), hibana::EndpointError> {
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
     type A = g::Msg<1, ()>;
     type B = g::Msg<2, ()>;
@@ -64,15 +66,16 @@ async fn delegated_resolver_starts_before_the_holders_later_send() {
     let db = rv0.enter(sid, &p3).unwrap();
     let mut worker = rv1.enter(sid, &p1).unwrap();
     let mut service = rv2.enter(sid, &p2).unwrap();
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        tokio::try_join!(
+    (async {
+        async {
             async {
                 owner.send::<Loan<'_>>(db).await?;
                 owner.offer().await?.recv::<B>().await?;
                 owner.offer().await?.recv::<D>().await?;
                 let _db = owner.recv::<Loan<'_>>().await?;
                 Ok::<_, crate::EndpointError>(())
-            },
+            };
+
             async {
                 let mut db = worker.recv::<Loan<'_>>().await?;
                 let branch = db.offer().await?;
@@ -85,17 +88,20 @@ async fn delegated_resolver_starts_before_the_holders_later_send() {
                 worker.send::<K>(&()).await?;
                 db.recv::<L>().await?;
                 worker.send::<Loan<'_>>(db).await
-            },
+            };
+
             async {
                 service.offer().await?.recv::<A>().await?;
                 service.offer().await?.recv::<C>().await?;
                 service.recv::<K>().await?;
                 service.send::<L>(&()).await
-            }
-        )
+            };
+        }
+        .await
     })
     .await
-    .expect("delegated resolver stalled")
     .unwrap();
     assert!(network.queue_is_empty());
+
+    Ok(())
 }

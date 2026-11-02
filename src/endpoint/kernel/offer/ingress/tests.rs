@@ -1,8 +1,10 @@
 use super::{OfferLaneScan, incoming_offer_lanes};
 use crate::global::role_program::{LANE_SET_VIEW_WORDS, LaneSetView, LaneWord};
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_waiting_offer_polls_each_direction_once_and_receives_an_independent_choice() {
+async fn a_waiting_offer_polls_each_direction_once_and_receives_an_independent_choice()
+-> core::result::Result<(), hibana::EndpointError> {
     use crate::{
         g,
         runtime::{SessionKitStorage, ids::SessionId, program::project},
@@ -86,42 +88,38 @@ fn a_waiting_offer_polls_each_direction_once_and_receives_an_independent_choice(
     let mut a = runtime.enter(session, &a_program).unwrap();
     let mut b = runtime.enter(session, &b_program).unwrap();
     let mut c = runtime.enter(session, &c_program).unwrap();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            tokio::time::timeout(core::time::Duration::from_secs(1), async {
-                {
-                    let waiting = b.offer();
-                    tokio::pin!(waiting);
-                    core::future::poll_fn(|cx| {
-                        assert!(waiting.as_mut().poll(cx).is_pending());
-                        receives.borrow_mut().clear();
-                        assert!(waiting.as_mut().poll(cx).is_pending());
-                        let reads = receives.borrow();
-                        assert_eq!(
-                            reads.len(),
-                            2,
-                            "one pending poll per independent direction: {reads:?}"
-                        );
-                        assert_ne!(reads[0], reads[1]);
-                        Poll::Ready(())
-                    })
-                    .await;
-                    c.send::<OtherRight>(&31).await.unwrap();
-                    let branch = waiting.as_mut().await.unwrap();
-                    assert_eq!(branch.label(), 204);
-                    assert_eq!(branch.recv::<OtherRight>().await.unwrap(), 31);
-                }
-                a.send::<Right>(&19).await.unwrap();
-                assert_eq!(b.offer().await.unwrap().recv::<Right>().await.unwrap(), 19);
-            })
-            .await
-            .expect("an independent choice must wake the waiting offer");
-        });
+    {
+        (async {
+            {
+                let waiting = b.offer();
+                let mut waiting = core::pin::pin!(waiting);
+                core::future::poll_fn(|cx| {
+                    assert!(waiting.as_mut().poll(cx).is_pending());
+                    receives.borrow_mut().clear();
+                    assert!(waiting.as_mut().poll(cx).is_pending());
+                    let reads = receives.borrow();
+                    assert_eq!(
+                        reads.len(),
+                        2,
+                        "one pending poll per independent direction: {reads:?}"
+                    );
+                    assert_ne!(reads[0], reads[1]);
+                    Poll::Ready(())
+                })
+                .await;
+                c.send::<OtherRight>(&31).await.unwrap();
+                let branch = waiting.as_mut().await.unwrap();
+                assert_eq!(branch.label(), 204);
+                assert_eq!(branch.recv::<OtherRight>().await.unwrap(), 31);
+            }
+            a.send::<Right>(&19).await.unwrap();
+            assert_eq!(b.offer().await.unwrap().recv::<Right>().await.unwrap(), 19);
+        })
+        .await;
+    };
     assert!(network.queue_is_empty());
+
+    Ok(())
 }
 
 fn collect(words: &[LaneWord; LANE_SET_VIEW_WORDS], preferred: usize) -> [bool; 256] {

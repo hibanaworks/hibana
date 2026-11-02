@@ -72,15 +72,18 @@ impl Outcome {
     }
 }
 
-// Drive each operation under Tokio, including internal wakeups. The virtual
-// watchdog classifies quiescence without making wall-clock speed a protocol
-// condition. Cancelling the final candidate cannot poison another replay.
+// Probe a call while all other participants are frozen at this source cut.
 macro_rules! observe {
     ($operation:expr) => {{
-        match tokio::time::timeout(core::time::Duration::from_millis(1), $operation).await {
-            Ok(Ok(_)) => Outcome::Accepted,
-            Ok(Err(error)) => Outcome::Rejected(format!("{error:?}")),
-            Err(_) => Outcome::Pending,
+        match hibana_runtime::race(async { Some($operation.await) }, async {
+            crate::test_support::in_process::sleep(core::time::Duration::from_millis(1)).await;
+            None
+        })
+        .await
+        {
+            Some(Ok(_)) => Outcome::Accepted,
+            Some(Err(error)) => Outcome::Rejected(format!("{error:?}")),
+            None => Outcome::Pending,
         }
     }};
 }
@@ -167,21 +170,21 @@ async fn replay_owned(commands: &[u8]) -> Outcome {
                 Some(db) => observe!(loans.send::<Loan>(db)),
                 None => Outcome::Unavailable,
             },
-            1 => match tokio::time::timeout(
-                core::time::Duration::from_millis(1),
-                worker.recv::<Loan>(),
-            )
+            1 => match hibana_runtime::race(async { Some(worker.recv::<Loan>().await) }, async {
+                crate::test_support::in_process::sleep(core::time::Duration::from_millis(1)).await;
+                None
+            })
             .await
             {
-                Ok(Ok(db)) => {
+                Some(Ok(db)) => {
                     assert!(
                         worker_db.replace(db).is_none(),
                         "duplicate live worker value"
                     );
                     Outcome::Accepted
                 }
-                Ok(Err(error)) => Outcome::Rejected(format!("{error:?}")),
-                Err(_) => Outcome::Pending,
+                Some(Err(error)) => Outcome::Rejected(format!("{error:?}")),
+                None => Outcome::Pending,
             },
             2 => match worker_db.as_mut() {
                 Some(db) => observe!(db.send::<Read>(&7)),
@@ -192,18 +195,18 @@ async fn replay_owned(commands: &[u8]) -> Outcome {
                 Some(db) => observe!(worker.send::<Return>(db)),
                 None => Outcome::Unavailable,
             },
-            5 => match tokio::time::timeout(
-                core::time::Duration::from_millis(1),
-                loans.recv::<Return>(),
-            )
+            5 => match hibana_runtime::race(async { Some(loans.recv::<Return>().await) }, async {
+                crate::test_support::in_process::sleep(core::time::Duration::from_millis(1)).await;
+                None
+            })
             .await
             {
-                Ok(Ok(db)) => {
+                Some(Ok(db)) => {
                     assert!(owner_db.replace(db).is_none(), "duplicate live owner value");
                     Outcome::Accepted
                 }
-                Ok(Err(error)) => Outcome::Rejected(format!("{error:?}")),
-                Err(_) => Outcome::Pending,
+                Some(Err(error)) => Outcome::Rejected(format!("{error:?}")),
+                None => Outcome::Pending,
             },
             6 => observe!(ticker.send::<Tick>(&7)),
             7 => observe!(ticks.recv::<Tick>()),
@@ -315,49 +318,46 @@ fn probe_source(probes: &[(u8, u8)]) -> String {
     output
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
 #[cfg_attr(
     miri,
     ignore = "native exhaustive schedules; actual holder replays have a separate Miri test"
 )]
-fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
-    let (sequential, parallel, owned, continuation) = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            (
-                enumerate(
-                    "seqRoll",
-                    &[2, 2, 2, 2, 1, 1],
-                    EXCHANGE_PROBES,
-                    replay::<Sequential>,
-                )
-                .await,
-                enumerate(
-                    "parRoll",
-                    &[2, 2, 2, 2, 1, 1],
-                    EXCHANGE_PROBES,
-                    replay::<Parallel>,
-                )
-                .await,
-                enumerate(
-                    "ownedParRoll",
-                    &[2, 2, 2, 2, 2, 2, 1, 1],
-                    OWNED_PROBES,
-                    replay_owned,
-                )
-                .await,
-                enumerate(
-                    "seqRollContinuation",
-                    &[2, 2, 2, 2, 1, 1, 1, 1],
-                    CONTINUATION_PROBES,
-                    replay::<SequentialContinuation>,
-                )
-                .await,
+async fn bounded_public_schedules_emit_executable_lean_conformance_cases()
+-> core::result::Result<(), hibana::EndpointError> {
+    let (sequential, parallel, owned, continuation) = {
+        (
+            enumerate(
+                "seqRoll",
+                &[2, 2, 2, 2, 1, 1],
+                EXCHANGE_PROBES,
+                replay::<Sequential>,
             )
-        });
+            .await,
+            enumerate(
+                "parRoll",
+                &[2, 2, 2, 2, 1, 1],
+                EXCHANGE_PROBES,
+                replay::<Parallel>,
+            )
+            .await,
+            enumerate(
+                "ownedParRoll",
+                &[2, 2, 2, 2, 2, 2, 1, 1],
+                OWNED_PROBES,
+                replay_owned,
+            )
+            .await,
+            enumerate(
+                "seqRollContinuation",
+                &[2, 2, 2, 2, 1, 1, 1, 1],
+                CONTINUATION_PROBES,
+                replay::<SequentialContinuation>,
+            )
+            .await,
+        )
+    };
     let inputs = format!(
         "def conformanceInputs : List ConformanceCase := [\n\
         {{ name := \"seq-roll\", choreo := {}, images := [{}, {}], probes := {}, attempts := [] }},\n\
@@ -433,42 +433,42 @@ fn bounded_public_schedules_emit_executable_lean_conformance_cases() {
         continuation.1,
         continuation.2,
     );
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn actual_holder_values_survive_two_visits_and_refuse_another_callers_operation() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            assert!(matches!(replay_owned(&[8]).await, Outcome::Rejected(_)));
-            assert_eq!(replay_owned(&[0, 1, 8]).await, Outcome::Unavailable);
-            assert_eq!(
-                replay_owned(&[0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7]).await,
-                Outcome::Accepted
-            );
-        });
+async fn actual_holder_values_survive_two_visits_and_refuse_another_callers_operation()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        assert!(matches!(replay_owned(&[8]).await, Outcome::Rejected(_)));
+        assert_eq!(replay_owned(&[0, 1, 8]).await, Outcome::Unavailable);
+        assert_eq!(
+            replay_owned(&[0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7]).await,
+            Outcome::Accepted
+        );
+    };
+
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn multiple_continuation_steps_keep_their_local_order_after_reentry() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap()
-        .block_on(async {
-            // The old Finish can be received before the new Ack. The outgoing
-            // Done must still follow this role's new body, even after Finish.
-            assert!(matches!(
-                replay::<SequentialContinuation>(&[0, 1, 2, 3, 4, 0, 1, 2, 5, 6]).await,
-                Outcome::Rejected(_)
-            ));
-            assert_eq!(
-                replay::<SequentialContinuation>(&[0, 1, 2, 3, 4, 0, 1, 2, 5, 3, 6, 7]).await,
-                Outcome::Accepted
-            );
-        });
+async fn multiple_continuation_steps_keep_their_local_order_after_reentry()
+-> core::result::Result<(), hibana::EndpointError> {
+    {
+        // The old Finish can be received before the new Ack. The outgoing
+        // Done must still follow this role's new body, even after Finish.
+        assert!(matches!(
+            replay::<SequentialContinuation>(&[0, 1, 2, 3, 4, 0, 1, 2, 5, 6]).await,
+            Outcome::Rejected(_)
+        ));
+        assert_eq!(
+            replay::<SequentialContinuation>(&[0, 1, 2, 3, 4, 0, 1, 2, 5, 3, 6, 7]).await,
+            Outcome::Accepted
+        );
+    };
+
+    Ok(())
 }

@@ -1,8 +1,10 @@
 use super::*;
 use core::{future::Future, task::Poll};
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn an_owned_preview_in_the_second_fragment_keeps_its_continuation() {
+async fn an_owned_preview_in_the_second_fragment_keeps_its_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
     type LoanLeft = g::Msg<201, Endpoint<'static, 10>>;
     type LoanRight = g::Msg<203, Endpoint<'static, 10>>;
     type Left = g::Msg<202, u32>;
@@ -48,61 +50,78 @@ fn an_owned_preview_in_the_second_fragment_keeps_its_continuation() {
         let db = owner_rv.enter(sid, &db_program).unwrap();
         let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
         let mut service = service_rv.enter(sid, &service_program).unwrap();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .start_paused(true)
-            .build()
-            .unwrap()
-            .block_on(async {
-                tokio::time::timeout(core::time::Duration::from_secs(10), async {
-                    // Arrive through the second fragment before the first is sent.
-                    match expected_label {
-                        201 => owner.send::<LoanLeft>(db).await.unwrap(),
-                        203 => owner.send::<LoanRight>(db).await.unwrap(),
+        {
+            (async {
+                // Arrive through the second fragment before the first is sent.
+                match expected_label {
+                    201 => owner.send::<LoanLeft>(db).await.unwrap(),
+                    203 => owner.send::<LoanRight>(db).await.unwrap(),
+                    _ => unreachable!(),
+                }
+                let label = worker.offer().await.unwrap().label();
+                assert_eq!(label, expected_label);
+                let mut db = {
+                    let [mut notice, mut loan] = worker.par().unwrap();
+                    let mut db = match label {
+                        201 => loan.recv::<LoanLeft>().await.unwrap(),
+                        203 => loan.recv::<LoanRight>().await.unwrap(),
                         _ => unreachable!(),
-                    }
-                    let label = worker.offer().await.unwrap().label();
-                    assert_eq!(label, expected_label);
-                    let mut db = {
-                        let [mut notice, mut loan] = worker.par().unwrap();
-                        let mut db = match label {
-                            201 => loan.recv::<LoanLeft>().await.unwrap(),
-                            203 => loan.recv::<LoanRight>().await.unwrap(),
+                    };
+                    {
+                        let reading = db.send::<Read>(&7);
+                        let mut reading = core::pin::pin!(reading);
+                        core::future::poll_fn(|cx| {
+                            assert!(reading.as_mut().poll(cx).is_pending());
+                            Poll::Ready(())
+                        })
+                        .await;
+                        assert!(network.queue_is_empty());
+                        let (sent, received) = match label {
+                            201 => async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>((owner.send::<Left>(&41)).await)
+                                };
+                                async {
+                                    Ok::<_, hibana::EndpointError>((notice.recv::<Left>()).await)
+                                };
+                            }
+                            .await
+                            .expect("all child results are data"),
+                            203 => async {
+                                async {
+                                    Ok::<_, hibana::EndpointError>((owner.send::<Right>(&41)).await)
+                                };
+                                async {
+                                    Ok::<_, hibana::EndpointError>((notice.recv::<Right>()).await)
+                                };
+                            }
+                            .await
+                            .expect("all child results are data"),
                             _ => unreachable!(),
                         };
-                        {
-                            let reading = db.send::<Read>(&7);
-                            tokio::pin!(reading);
-                            core::future::poll_fn(|cx| {
-                                assert!(reading.as_mut().poll(cx).is_pending());
-                                Poll::Ready(())
-                            })
-                            .await;
-                            assert!(network.queue_is_empty());
-                            let (sent, received) = match label {
-                                201 => tokio::join!(owner.send::<Left>(&41), notice.recv::<Left>()),
-                                203 => {
-                                    tokio::join!(owner.send::<Right>(&41), notice.recv::<Right>())
-                                }
-                                _ => unreachable!(),
+                        sent.unwrap();
+                        assert_eq!(received.unwrap(), 41);
+                        let (sent, received) = async {
+                            async { Ok::<_, hibana::EndpointError>((reading.as_mut()).await) };
+                            async {
+                                Ok::<_, hibana::EndpointError>((service.recv::<Read>()).await)
                             };
-                            sent.unwrap();
-                            assert_eq!(received.unwrap(), 41);
-                            let (sent, received) =
-                                tokio::join!(reading.as_mut(), service.recv::<Read>());
-                            sent.unwrap();
-                            assert_eq!(received.unwrap(), 7);
                         }
-                        service.send::<Value>(&8).await.unwrap();
-                        db
-                    };
-                    assert_eq!(db.recv::<Value>().await.unwrap(), 8);
-                    worker.send::<Return>(db).await.unwrap();
-                    drop(owner.recv::<Return>().await.unwrap());
-                })
-                .await
-                .expect("moving a retained owned preview must preserve its unique continuation");
-            });
+                        .await
+                        .expect("all child results are data");
+                        sent.unwrap();
+                        assert_eq!(received.unwrap(), 7);
+                    }
+                    service.send::<Value>(&8).await.unwrap();
+                    db
+                };
+                assert_eq!(db.recv::<Value>().await.unwrap(), 8);
+                worker.send::<Return>(db).await.unwrap();
+                drop(owner.recv::<Return>().await.unwrap());
+            })
+            .await;
+        };
         assert!(network.queue_is_empty());
     }
+    Ok(())
 }
