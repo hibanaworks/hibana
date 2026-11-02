@@ -13,10 +13,12 @@ cat .github/ci-tests/endpoint_conformance.lean .github/ci-tests/protocol_shapes.
 # alternate runtime, application protocol or reduced observation inventory.
 (cd proofs/lean && lake env lean -j1 "${OUTPUT}/current.lean") \
   > "${OUTPUT}/positive.log" 2>&1
+claim_count="$(grep -c '^#print axioms ' "${OUTPUT}/current.lean")"
+bash .github/scripts/lib/supplemental_proofs_tool.sh lean "${OUTPUT}/positive.log" "${claim_count}"
 (cd proofs/lean && lake env lean -j1 --run "${OUTPUT}/current.lean" --check-guarded-reentry) \
   > "${OUTPUT}/guarded-positive.log" 2>&1
 : > "${OUTPUT}/mutants.tsv"
-for defect in resumption context actor guarded-context selected-expansion continuation-position resolver-origin; do
+for defect in resumption context actor guarded-context selected-expansion continuation-position resolver-origin visit-fuel; do
   cp "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean"
   if [[ "${defect}" == resumption ]]; then
     perl -0pi -e '
@@ -26,9 +28,9 @@ for defect in resumption context actor guarded-context selected-expansion contin
     expected='shapeStates resumedOutgoingTail'
   elif [[ "${defect}" == context ]]; then
     perl -0pi -e '
-      s/inside \+\+ \(shapeRollFocuses left\)\.flatMap fun focus =>/inside ++ ((shapeRollFocuses left).filter (fun focus => match focus.context with | .hole => true | _ => false)).flatMap fun focus =>/ == 1 or die "missing contextual resumption\n";
+      s/\(\(shapeRollFocuses left\)\.flatMap fun focus =>/(((shapeRollFocuses left).filter (fun focus => match focus.context with | .hole => true | _ => false)).flatMap fun focus =>/ == 1 or die "missing contextual resumption\n";
     ' "${OUTPUT}/${defect}.lean"
-    expected='shapeStates parallelRetainedRolls'
+    expected="'a_left_roll_can_resume_after_the_common_parallel_continuation' depends on axioms: [propext, sorryAx]"
   elif [[ "${defect}" == actor ]]; then
     perl -0pi -e '
       s/(def shapeOriginalActorsMatch \(plan : SourceOccurrenceCut source\) : Bool :=)\n.*?\n\nstructure ShapePlan/$1\n  true\n\nstructure ShapePlan/s == 1 or die "missing original actor bindings\n";
@@ -53,6 +55,11 @@ for defect in resumption context actor guarded-context selected-expansion contin
       s/shapeResolverEntered plan scope id (before|after)/shapeScopeEntered scope $1/g == 4 or die "missing resolver origin checks\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='continuation-cut regression:'
+  elif [[ "${defect}" == visit-fuel ]]; then
+    perl -0pi -e '
+      s/allowance\.toList\.sum \+ source\.eventCount \+ 1/allowance.toList.sum + 1/ == 1 or die "missing structural visit fuel\n";
+    ' "${OUTPUT}/${defect}.lean"
+    expected="'a_skewed_parallel_roll_keeps_unequal_independent_visit_counts' depends on axioms: [propext, sorryAx]"
   else
     perl -0pi -e '
       s/(  \| some original =>\n)(    match expandedAt : normalizeExpansion)/$1    if (normalize expanded).isNone then [] else\n$2/ == 1 or die "missing selected expansion normalization\n";
@@ -114,5 +121,5 @@ rm -r "${owner_copy}"
 shasum -a 256 --check "${OUTPUT}/source.sha256" > "${OUTPUT}/source-check.log"
 rm "${OUTPUT}/current.lean" "${OUTPUT}/resumption.lean" "${OUTPUT}/context.lean" \
   "${OUTPUT}/actor.lean" "${OUTPUT}/guarded-context.lean" "${OUTPUT}/selected-expansion.lean" \
-  "${OUTPUT}/continuation-position.lean" "${OUTPUT}/resolver-origin.lean"
-echo 'Shape resumption sensitivity: all eight restored checker omissions are rejected'
+  "${OUTPUT}/continuation-position.lean" "${OUTPUT}/resolver-origin.lean" "${OUTPUT}/visit-fuel.lean"
+echo 'Shape resumption sensitivity: all nine restored checker omissions are rejected'

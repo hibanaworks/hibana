@@ -400,8 +400,11 @@ order of the first four public operations, probing every next operation at those
 duplicate probes fail the comparison. Separate controls
 change a continuation result and omit or duplicate a continuation probe.
 Repeated protocols use complete traces with two visits at each nested `roll`.
-Admission plans allow one or two visits independently at those dynamic sites,
-a third visit at one site, and one elastic reentry alongside its continuation.
+Admission plans allocate a shared allowance to each original roll site. For
+`C` scheduled parent copies the allowance is `2 * C + 1`; descendants account
+for `2 * C` copies. Copies consume the same site's remaining allowance, so
+visits can be redistributed between them. The plans also include an elastic
+reentry alongside a continuation.
 Each expansion carries a witness from the source occurrence semantics.
 For a roll directly over parallel children, admission plans also allow unequal
 child visit counts after checking that the selected physical participant sets
@@ -409,10 +412,13 @@ are disjoint. This check includes delegated actors. It permits an independent
 ordinary branch to revisit after the resource branch returns its Endpoint;
 equal whole-body visit counts cannot express that prefix. The checker retains
 both the original issuance and its existing actor and resumption checks.
-The finite candidate horizon is not a completeness argument: a prefix produced
-with two nested visits can require a differently grouped expansion for its
-next operation. That candidate-coverage issue remains separate from the
-physical-separation rule.
+The finite candidate horizon is not a completeness argument. A regression
+requires one resource operation, four inner exchanges and a legal return to
+have an admitted expansion, matching the actual Endpoint fixture. Another
+keeps unequal independent visit counts through a skewed parallel tree. Its
+control removes the source-structure term from the allocator's termination
+fuel and must fail that regression. Physical separation, original actors,
+issuance and resumption guards remain required for each plan.
 An elastic visit may come from a roll inside sequential or parallel children,
 not just a roll immediately before that continuation. The context preserves
 the original message positions and resources. Reentry through an enclosing
@@ -555,6 +561,14 @@ their own source dependencies. Its finite plans include unequal nested visit
 counts, a third visit at one dynamic roll site, and a visit overlapping the
 sequential continuation, using the source model's existing elastic-roll rule.
 These are bounded comparisons, not a proof for arbitrary visit counts.
+The visit allowance belongs to each original roll and is shared across its
+expanded copies. A nested roll can therefore spend its allowance unevenly
+across parent visits. Independent parallel children consume the enclosing
+allowance by their maximum, while retaining their own separate inner counts.
+Termination fuel includes source structure, since descending through an
+independent parallel split need not consume a visit. A skewed four-child
+fixture retains counts 3/1/2/3; a defect control removes only the structural
+fuel term and must falsify that claim.
 Every replayed call uses its recorded resolver input. The checker retains one
 coherent source-plan witness across the whole prefix; validating each call
 separately and then rebuilding unconstrained states would lose earlier choices.
@@ -563,6 +577,13 @@ once, alongside its dependency and resumption queries. Resolver checks reuse
 those values during replay. A general Lean equality proves that the prepared
 function gives the source rule's result for every pair of histories and every
 resolver input; it does not cache observed admission outcomes.
+Native checking prepares one candidate's tables at a time, answers every
+prefix's requests and retains only Boolean results before releasing those
+tables. General Lean equalities establish that grouped replay produces the
+same answers as replaying the complete candidate family, including recorded
+resolver inputs and invalid input lengths. One coherent candidate still has
+to justify an entire prefix. The change reduces retained tables; it does not
+reduce the candidate family, query inventory or visit allowance.
 Only scopes entered by a call consume that input. Later visits remain free to
 choose differently. A general Lean theorem checks the entry condition, and four
 concrete theorems cover shared entries, changed inputs and future visits. Actual

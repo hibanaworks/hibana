@@ -1,5 +1,8 @@
 -- Appended to endpoint_conformance.lean. This uses the established occurrence
 -- semantics, not the Rust generator's first-event calculation.
+-- Retain one elaboration job at a time under the descendant memory limit.
+set_option Elab.async false
+
 structure ShapeNode where
   kind : Nat
   left : Nat := 0
@@ -371,6 +374,101 @@ def shapePermits (states : List (ShapePlan source × List SourcePoint))
     (shapeAdvance plan points label receive).any fun after =>
       plan.entryChoices points after choice
 
+/-- Evaluate the same finite nondeterministic replay per witness. This avoids
+materializing every candidate's intermediate state when an existential query
+already has a witness. It changes evaluation order, not the source rule. -/
+def shapeExistsReplay {command state : Type}
+    (step : state → command → List state) (accept : state → Bool) :
+    List command → state → Bool
+  | [], before => accept before
+  | item :: rest, before => (step before item).any (shapeExistsReplay step accept rest)
+
+theorem shapeExistsReplay_matches_batched_replay {command state : Type}
+    (step : state → command → List state) (accept : state → Bool)
+    (word : List command) (states : List state) :
+    (word.foldl (fun before item => before.flatMap (fun state => step state item)) states).any accept =
+      states.any (shapeExistsReplay step accept word) := by
+  induction word generalizing states with
+  | nil => rfl
+  | cons item rest ih =>
+    simp only [List.foldl_cons, ih, List.any_flatMap, shapeExistsReplay]
+
+/-- Prepare one candidate, answer all query groups, then release its tables.
+The accumulator contains query results, not model states. -/
+def shapeQueryAnswers {candidate query prepared answer : Type}
+    (prepare : candidate → prepared) (ask : prepared → query → answer)
+    (initial : query → answer) (merge : answer → answer → answer)
+    (candidates : List candidate) (queries : List query) : List answer :=
+  candidates.foldl (fun answers candidate =>
+    let prepared := prepare candidate
+    answers.zipWith (fun previous query => merge previous (ask prepared query)) queries)
+    (queries.map initial)
+
+theorem shapeQueryAnswers_accumulate {candidate query prepared answer : Type}
+    (prepare : candidate → prepared) (ask : prepared → query → answer)
+    (merge : answer → answer → answer)
+    (candidates : List candidate) (queries : List query) (previous : query → answer) :
+    candidates.foldl (fun answers candidate =>
+      answers.zipWith (fun prior query => merge prior (ask (prepare candidate) query)) queries)
+        (queries.map previous) =
+      queries.map (fun query => candidates.foldl
+        (fun prior candidate => merge prior (ask (prepare candidate) query)) (previous query)) := by
+  induction candidates generalizing previous with
+  | nil => rfl
+  | cons candidate rest ih =>
+    simp only [List.foldl_cons]
+    have combined : (queries.map previous).zipWith
+        (fun prior query => merge prior (ask (prepare candidate) query)) queries =
+        queries.map (fun query => merge (previous query) (ask (prepare candidate) query)) := by
+      clear ih
+      induction queries with
+      | nil => rfl
+      | cons query queries ih => simp only [List.map_cons, List.zipWith_cons_cons, ih]
+    rw [combined, ih]
+
+theorem shapeQueryAnswers_matches_independent_folds
+    {candidate query prepared answer : Type}
+    (prepare : candidate → prepared) (ask : prepared → query → answer)
+    (initial : query → answer) (merge : answer → answer → answer)
+    (candidates : List candidate) (queries : List query) :
+    shapeQueryAnswers prepare ask initial merge candidates queries =
+      queries.map (fun query => candidates.foldl
+        (fun prior candidate => merge prior (ask (prepare candidate) query)) (initial query)) := by
+  exact shapeQueryAnswers_accumulate prepare ask merge candidates queries initial
+
+#print axioms shapeQueryAnswers_accumulate
+#print axioms shapeQueryAnswers_matches_independent_folds
+
+theorem shapePermits_after_states (source : Source) (plans : List (ShapePlan source))
+    (word choice : List Nat) (label : Nat) (receive : Bool) :
+    shapePermits (shapeStates source plans word) choice label receive =
+      plans.any (fun plan =>
+        shapeExistsReplay
+          (fun (plan, points) command =>
+            (shapeAdvance plan points (command / 2) (command % 2 == 1)).map (plan, ·))
+          (fun (plan, points) =>
+            (shapeAdvance plan points label receive).any (fun after =>
+              plan.entryChoices points after choice)) word (plan, [])) := by
+  unfold shapePermits shapeStates
+  rw [shapeExistsReplay_matches_batched_replay]
+  simp only [List.any_map, Function.comp_def]
+
+#print axioms shapeExistsReplay_matches_batched_replay
+#print axioms shapePermits_after_states
+
+/-- One checked source witness suffices for an existential query over the
+whole candidate set. The witness must actually be a member of that set. -/
+theorem shapePermits_after_states_of_witness (source : Source)
+    (plans : List (ShapePlan source)) (word choice : List Nat) (label : Nat) (receive : Bool)
+    (plan : ShapePlan source) (present : plan ∈ plans)
+    (enabled : shapePermits (shapeStates source [plan] word) choice label receive = true) :
+    shapePermits (shapeStates source plans word) choice label receive = true := by
+  rw [shapePermits_after_states] at enabled ⊢
+  simp only [List.any_cons, List.any_nil, Bool.or_false] at enabled
+  exact List.any_eq_true.mpr ⟨plan, present, enabled⟩
+
+#print axioms shapePermits_after_states_of_witness
+
 def shapeInputStep (states : List (ShapePlan source × List SourcePoint))
     (command : Nat) (choice : List Nat) : List (ShapePlan source × List SourcePoint) :=
   states.flatMap fun (plan, points) =>
@@ -386,6 +484,126 @@ def shapeReplayStates (source : Source) (plans : List (ShapePlan source))
     let states := (word.zip inputs).foldl (fun states (command, choice) =>
       shapeInputStep states command choice) (plans.map (·, []))
     if states.isEmpty then none else some states
+
+-- A group names one prefix and its questions. Missing input leaves abstract
+-- choices existential; observed prefixes always provide every recorded input.
+-- A missing request asks whether the prefix has a coherent source execution.
+abbrev ShapeRequest := List Nat × Nat × Bool
+abbrev ShapeQueryGroup := List Nat × Option (List (List Nat)) × List (Option ShapeRequest)
+
+def shapeStateQuery (states : List (ShapePlan source × List SourcePoint)) :
+    Option ShapeRequest → Bool
+  | none => !states.isEmpty
+  | some (choice, event, receive) => shapePermits states choice event receive
+
+def shapeGroupAnswers (source : Source) (plans : List (SourceOccurrenceCut source))
+    (groups : List ShapeQueryGroup) : List (List Bool) :=
+  shapeQueryAnswers ShapePlan.of
+    (fun plan group =>
+      let states := match group.2.1 with
+        | none => shapeStates source [plan] group.1
+        | some inputs => (shapeReplayStates source [plan] group.1 inputs).getD []
+      group.2.2.map (shapeStateQuery states))
+    (fun group => group.2.2.map fun _ => false)
+    (List.zipWith (· || ·)) plans groups
+
+theorem shapeStateQuery_as_any (states : List (ShapePlan source × List SourcePoint))
+    (request : Option ShapeRequest) :
+    shapeStateQuery states request =
+      states.any (fun state => shapeStateQuery [state] request) := by
+  cases request with
+  | none => cases states <;> simp [shapeStateQuery]
+  | some request =>
+      obtain ⟨choice, event, receive⟩ := request
+      simp [shapeStateQuery, shapePermits]
+
+theorem shapeStateQuery_after_replay {command : Type}
+    (step : (ShapePlan source × List SourcePoint) → command →
+      List (ShapePlan source × List SourcePoint))
+    (word : List command) (states : List (ShapePlan source × List SourcePoint))
+    (request : Option ShapeRequest) :
+    shapeStateQuery
+      (word.foldl (fun before command => before.flatMap (fun state => step state command)) states)
+      request =
+      states.any (fun state => shapeStateQuery
+        (word.foldl (fun before command => before.flatMap (fun state => step state command)) [state])
+        request) := by
+  rw [shapeStateQuery_as_any, shapeExistsReplay_matches_batched_replay]
+  apply congrArg (fun accept => states.any accept)
+  funext state
+  rw [shapeStateQuery_as_any, shapeExistsReplay_matches_batched_replay]
+  simp
+
+theorem shapeReplayStates_query (source : Source) (plans : List (ShapePlan source))
+    (word : List Nat) (inputs : List (List Nat)) (request : Option ShapeRequest) :
+    shapeStateQuery ((shapeReplayStates source plans word inputs).getD []) request =
+      plans.any (fun plan =>
+        shapeStateQuery ((shapeReplayStates source [plan] word inputs).getD []) request) := by
+  by_cases matched : word.length = inputs.length
+  · have discardEmpty (states : List (ShapePlan source × List SourcePoint)) :
+        (if states.isEmpty then none else some states).getD [] = states := by
+      cases states <;> rfl
+    simp only [shapeReplayStates, matched, bne_self_eq_false, Bool.false_eq_true,
+      ↓reduceIte, discardEmpty]
+    simp only [shapeInputStep]
+    rw [shapeStateQuery_after_replay]
+    simp only [List.any_map, Function.comp_def, List.map_cons, List.map_nil]
+  · cases request <;> simp [shapeReplayStates, matched, shapeStateQuery, shapePermits]
+
+theorem shapeStates_query (source : Source) (plans : List (ShapePlan source))
+    (word : List Nat) (request : Option ShapeRequest) :
+    shapeStateQuery (shapeStates source plans word) request =
+      plans.any (fun plan => shapeStateQuery (shapeStates source [plan] word) request) := by
+  unfold shapeStates
+  rw [shapeStateQuery_after_replay]
+  simp only [List.any_map, Function.comp_def, List.map_cons, List.map_nil]
+
+theorem shapeQueryRows_fold {candidate query : Type}
+    (ask : candidate → query → Bool) (candidates : List candidate) (queries : List query)
+    (previous : query → Bool) :
+    candidates.foldl
+        (fun answers candidate =>
+          answers.zipWith (· || ·) (queries.map (ask candidate))) (queries.map previous) =
+      queries.map (fun query => previous query || candidates.any (fun candidate => ask candidate query)) := by
+  induction candidates generalizing previous with
+  | nil => simp
+  | cons candidate candidates ih =>
+      simp only [List.foldl_cons, List.zipWith_map, List.zipWith_self]
+      rw [ih]
+      simp only [List.any_cons, Bool.or_assoc]
+
+theorem shapeGroupAnswers_match_whole_family (source : Source)
+    (plans : List (SourceOccurrenceCut source)) (groups : List ShapeQueryGroup) :
+    shapeGroupAnswers source plans groups =
+      groups.map (fun group =>
+        let states := match group.2.1 with
+          | none => shapeStates source (plans.map ShapePlan.of) group.1
+          | some inputs => (shapeReplayStates source (plans.map ShapePlan.of) group.1 inputs).getD []
+        group.2.2.map (shapeStateQuery states)) := by
+  rw [shapeGroupAnswers, shapeQueryAnswers_matches_independent_folds]
+  apply List.map_congr_left
+  intro group _
+  rw [shapeQueryRows_fold]
+  apply List.map_congr_left
+  intro request _
+  simp only [Bool.false_or]
+  cases groupInputs : group.2.1 with
+  | none =>
+      dsimp only
+      rw [shapeStates_query]
+      simp only [List.any_map, Function.comp_def]
+  | some inputs =>
+      dsimp only
+      rw [shapeReplayStates_query]
+      simp only [List.any_map, Function.comp_def]
+
+#print axioms shapeStateQuery_as_any
+#print axioms shapeStateQuery_after_replay
+#print axioms shapeReplayStates_query
+#print axioms shapeStates_query
+#print axioms shapeQueryRows_fold
+#print axioms shapeGroupAnswers_match_whole_family
+
 
 def shapeRepetitions : Source → Nat
   | .send _ => 0
@@ -411,69 +629,90 @@ def shapeTwoCopyUnfolding : (source : Source) → SourceUnfolding source (shapeT
   | .route resolver left right => .route resolver (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
   | .roll body => .rollMore (.rollOnce (shapeTwoCopyUnfolding body)) (shapeTwoCopyUnfolding body)
 
-def shapeRollUnfoldings (cuts : List (Σ expanded : Source, SourceUnfolding body expanded)) :
-    List (Σ expanded : Source, SourceUnfolding (.roll body) expanded) :=
-  cuts.map (fun cut => ⟨cut.1, .rollOnce cut.2⟩) ++
-    cuts.flatMap fun first => cuts.map fun second =>
-      ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩
+/-- Total visits at original source sites, not a separate limit on each copy
+of a nested roll. Completed scripts visit every site twice per enclosing copy;
+one further entry is available to a next-call probe. -/
+def shapeVisitAllowance : Source → Nat → List Nat
+  | .send _, _ => []
+  | .seq left right, copies | .par left right, copies | .route _ left right, copies =>
+      shapeVisitAllowance left copies ++ shapeVisitAllowance right copies
+  | .roll body, copies => (2 * copies + 1) :: shapeVisitAllowance body (2 * copies)
 
-def shapeBoundedUnfoldings :
-    (source : Source) → List (Σ expanded : Source, SourceUnfolding source expanded)
-  | .send message => [⟨.send message, .send message⟩]
-  | .seq left right =>
-      (shapeBoundedUnfoldings left).flatMap fun first =>
-        (shapeBoundedUnfoldings right).map fun second =>
-          ⟨.seq first.1 second.1, .seq first.2 second.2⟩
-  | .par left right =>
-      (shapeBoundedUnfoldings left).flatMap fun first =>
-        (shapeBoundedUnfoldings right).map fun second =>
-          ⟨.par first.1 second.1, .par first.2 second.2⟩
-  | .route resolver left right =>
-      (shapeBoundedUnfoldings left).flatMap fun first =>
-        (shapeBoundedUnfoldings right).map fun second =>
-          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩
-  | .roll (.par left right) =>
-      shapeRollUnfoldings (shapeBoundedUnfoldings (.par left right)) ++
-        (shapeRollUnfoldings (shapeBoundedUnfoldings left)).flatMap fun first =>
-          (shapeRollUnfoldings (shapeBoundedUnfoldings right)).map fun second =>
-            ⟨.par first.1 second.1, .rollParallel first.2 second.2⟩
-  | .roll body => shapeRollUnfoldings (shapeBoundedUnfoldings body)
+theorem shapeVisitAllowance_has_one_count_per_original_roll (source : Source) (copies : Nat) :
+    (shapeVisitAllowance source copies).length = shapeRepetitions source := by
+  induction source generalizing copies <;>
+    simp_all [shapeVisitAllowance, shapeRepetitions, Nat.add_comm]
 
-def shapeExtraUnfoldings :
-    (source : Source) → List (Σ expanded : Source, SourceUnfolding source expanded)
-  | .send _ => []
-  | .seq left right =>
-      ((shapeExtraUnfoldings left).flatMap fun first =>
-        (shapeBoundedUnfoldings right).map fun second =>
-          ⟨.seq first.1 second.1, .seq first.2 second.2⟩) ++
-      (shapeBoundedUnfoldings left).flatMap fun first =>
-        (shapeExtraUnfoldings right).map fun second =>
-          ⟨.seq first.1 second.1, .seq first.2 second.2⟩
-  | .par left right =>
-      ((shapeExtraUnfoldings left).flatMap fun first =>
-        (shapeBoundedUnfoldings right).map fun second =>
-          ⟨.par first.1 second.1, .par first.2 second.2⟩) ++
-      (shapeBoundedUnfoldings left).flatMap fun first =>
-        (shapeExtraUnfoldings right).map fun second =>
-          ⟨.par first.1 second.1, .par first.2 second.2⟩
-  | .route resolver left right =>
-      ((shapeExtraUnfoldings left).flatMap fun first =>
-        (shapeBoundedUnfoldings right).map fun second =>
-          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩) ++
-      (shapeBoundedUnfoldings left).flatMap fun first =>
-        (shapeExtraUnfoldings right).map fun second =>
-          ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩
-  | .roll body =>
-      let cuts := shapeBoundedUnfoldings body
-      let extra := shapeExtraUnfoldings body
-      (extra.map fun cut => ⟨cut.1, .rollOnce cut.2⟩) ++
-      (extra.flatMap fun first => cuts.map fun second =>
-        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩) ++
-      (cuts.flatMap fun first => extra.map fun second =>
-        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩) ++
-      cuts.flatMap fun first => cuts.flatMap fun second => cuts.map fun third =>
-        ⟨.seq (.seq first.1 second.1) third.1,
-          .rollMore (.rollMore (.rollOnce first.2) second.2) third.2⟩
+#print axioms shapeVisitAllowance_has_one_count_per_original_roll
+
+abbrev ShapeBudgetCut (source : Source) :=
+  Σ expanded : Source, SourceUnfolding source expanded × Array Nat
+
+def shapeBudgetStep (extend : (source : Source) → Array Nat → List (ShapeBudgetCut source)) :
+    (source : Source) → Array Nat → List (ShapeBudgetCut source)
+  | .send message, remaining => [⟨.send message, .send message, remaining⟩]
+  | .seq left right, remaining =>
+      let split := shapeRepetitions left
+      (shapeBudgetStep extend left (remaining.extract 0 split)).flatMap fun first =>
+        (shapeBudgetStep extend right (remaining.extract split remaining.size)).map fun second =>
+          ⟨.seq first.1 second.1, .seq first.2.1 second.2.1, first.2.2 ++ second.2.2⟩
+  | .par left right, remaining =>
+      let split := shapeRepetitions left
+      (shapeBudgetStep extend left (remaining.extract 0 split)).flatMap fun first =>
+        (shapeBudgetStep extend right (remaining.extract split remaining.size)).map fun second =>
+          ⟨.par first.1 second.1, .par first.2.1 second.2.1, first.2.2 ++ second.2.2⟩
+  | .route resolver left right, remaining =>
+      let split := shapeRepetitions left
+      (shapeBudgetStep extend left (remaining.extract 0 split)).flatMap fun first =>
+        (shapeBudgetStep extend right (remaining.extract split remaining.size)).map fun second =>
+          ⟨.route resolver first.1 second.1, .route resolver first.2.1 second.2.1, first.2.2 ++ second.2.2⟩
+  | .roll body, remaining =>
+      let available := remaining[0]?.getD 0
+      if available == 0 then [] else
+      let inside := remaining.extract 1 remaining.size
+      let once : List (ShapeBudgetCut (.roll body)) := (shapeBudgetStep extend body inside).map fun cut =>
+        ⟨cut.1, .rollOnce cut.2.1, #[available - 1] ++ cut.2.2⟩
+      let more : List (ShapeBudgetCut (.roll body)) :=
+        (extend (.roll body) (#[available - 1] ++ inside)).flatMap fun first =>
+          (shapeBudgetStep extend body (first.2.2.extract 1 first.2.2.size)).map fun second =>
+            ⟨.seq first.1 second.1, .rollMore first.2.1 second.2.1,
+              #[(first.2.2[0]?.getD 0)] ++ second.2.2⟩
+      let independent : List (ShapeBudgetCut (.roll body)) := match body with
+        | .par left right =>
+          let split := shapeRepetitions left
+          (extend (.roll left) (#[available] ++ inside.extract 0 split)).flatMap fun first =>
+            (extend (.roll right) (#[available] ++ inside.extract split inside.size)).map fun second =>
+              let unused := min (first.2.2[0]?.getD 0) (second.2.2[0]?.getD 0)
+              ⟨.par first.1 second.1, .rollParallel first.2.1 second.2.1,
+                #[unused] ++ first.2.2.extract 1 first.2.2.size ++
+                  second.2.2.extract 1 second.2.2.size⟩
+        | _ => []
+      once ++ more ++ independent
+
+def shapeBudgetCuts : Nat → (source : Source) → Array Nat → List (ShapeBudgetCut source)
+  | 0 => shapeBudgetStep (fun _ _ => [])
+  | fuel + 1 => shapeBudgetStep (shapeBudgetCuts fuel)
+
+def shapeBoundedUnfoldings (source : Source) :
+    List (Σ expanded : Source, SourceUnfolding source expanded) :=
+  let allowance := (shapeVisitAllowance source 1).toArray
+  -- Independent splits descend through source par nodes without spending a
+  -- new visit. Include source structure in the termination fuel as well.
+  (shapeBudgetCuts (allowance.toList.sum + source.eventCount + 1) source allowance).map fun cut =>
+    ⟨cut.1, cut.2.1⟩
+
+theorem a_skewed_parallel_roll_keeps_unequal_independent_visit_counts :
+    let message := fun (actor : Nat) =>
+      Source.send ⟨⟨0, actor⟩, ⟨0, actor⟩, actor, .wire 0⟩
+    let original := Source.roll (.par (message 0)
+      (.par (message 1) (.par (message 2) (message 3))))
+    let expected := Source.par (.seq (.seq (message 0) (message 0)) (message 0))
+      (.par (message 1) (.par (.seq (message 2) (message 2))
+        (.seq (.seq (message 3) (message 3)) (message 3))))
+    (shapeBoundedUnfoldings original).any (fun cut => decide (cut.1 = expected)) = true := by
+  decide +kernel
+
+#print axioms a_skewed_parallel_roll_keeps_unequal_independent_visit_counts
 
 structure ShapeRollFocus (source : Source) where
   context : RollContext
@@ -576,8 +815,8 @@ def shapeElasticUnfoldings :
         (shapeBoundedUnfoldings left).flatMap fun first =>
           (shapeElasticUnfoldings right).map fun second =>
             ⟨.seq first.1 second.1, .seq first.2 second.2⟩
-      inside ++ (shapeRollFocuses left).flatMap fun focus =>
-        shapeAlongsidePlans focus right ++ shapeAfterPlans focus right
+      ((shapeRollFocuses left).flatMap fun focus =>
+        shapeAfterPlans focus right ++ shapeAlongsidePlans focus right) ++ inside
   | .par left right =>
       ((shapeElasticUnfoldings left).flatMap fun first =>
         (shapeBoundedUnfoldings right).map fun second =>
@@ -603,8 +842,7 @@ def shapeElasticUnfoldings :
 
 def shapePlans : (source : Source) → List (SourceOccurrenceCut source)
   | source =>
-      let cuts := shapeBoundedUnfoldings source ++ shapeExtraUnfoldings source ++
-        shapeElasticUnfoldings source
+      let cuts := shapeBoundedUnfoldings source ++ shapeElasticUnfoldings source
       -- Check every operation in the selected expansion. An incorrectly reassigned
       -- resource operation could disappear from this actor's prerequisites,
       -- incorrectly releasing its following ordinary send.
@@ -631,6 +869,23 @@ theorem a_shared_whole_body_unfolding_misses_the_disjoint_revisit :
       checkedPlans disjointReturnedBranch _ two).filter shapeOriginalActorsMatch
     shapePermits (shapeStates disjointReturnedBranch (plans.map ShapePlan.of)
       [0, 1, 2, 3, 4, 5, 6, 7]) [] 2 false = false := by decide
+
+private def redistributedNestedVisits : Source := .seq
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .endpoint ⟨0, 3⟩⟩)
+  (.seq (.roll (.par
+    (.send ⟨⟨0, 3⟩, ⟨0, 2⟩, 1, .wire 0⟩)
+    (.roll (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 2, .wire 0⟩))))
+    (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 3, .endpoint ⟨0, 3⟩⟩))
+
+-- Same global and operation word as the actual Endpoint regression.
+theorem four_inner_visits_can_finish_before_the_parent_resource_return :
+    shapePermits (shapeStates redistributedNestedVisits
+      ((shapePlans redistributedNestedVisits).map ShapePlan.of)
+      [0, 1, 2, 3, 4, 5, 4, 5, 4, 5, 4, 5]) [] 3 false = true := by
+  rw [shapePermits_after_states]
+  decide
+
+#print axioms four_inner_visits_can_finish_before_the_parent_resource_return
 
 private def nestedRollCuts : Source := .roll (.seq
   (.roll (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 0, .wire 0⟩))
@@ -664,12 +919,16 @@ private def parallelRetainedRolls : Source := .seq
 theorem a_left_roll_can_resume_after_the_common_parallel_continuation :
     shapePermits (shapeStates parallelRetainedRolls
       ((shapePlans parallelRetainedRolls).map ShapePlan.of)
-      [0, 1, 0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8]) [] 0 false = true := by decide
+      [0, 1, 0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8]) [] 0 false = true := by
+  rw [shapePermits_after_states]
+  decide
 
 theorem a_right_roll_can_resume_after_the_common_parallel_continuation :
     shapePermits (shapeStates parallelRetainedRolls
       ((shapePlans parallelRetainedRolls).map ShapePlan.of)
-      [0, 1, 0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8]) [] 2 false = true := by decide
+      [0, 1, 0, 1, 2, 3, 4, 5, 4, 5, 6, 7, 8]) [] 2 false = true := by
+  rw [shapePermits_after_states]
+  decide
 
 #print axioms a_left_roll_can_resume_after_the_common_parallel_continuation
 #print axioms a_right_roll_can_resume_after_the_common_parallel_continuation
@@ -708,30 +967,51 @@ theorem a_new_holder_cannot_inherit_another_actors_rolled_operation :
 theorem returning_the_endpoint_to_the_roll_actor_allows_reentry :
     shapePermits (shapeStates returnedRollEndpoint
       ((shapePlans returnedRollEndpoint).map ShapePlan.of)
-      [0, 1, 2, 3, 2, 3, 4, 5, 6, 7]) [] 1 false = true := by decide
+      [0, 1, 2, 3, 2, 3, 4, 5, 6, 7]) [] 1 false = true := by
+  rw [shapePermits_after_states]
+  decide
 
 #print axioms a_new_holder_cannot_inherit_another_actors_rolled_operation
 #print axioms returning_the_endpoint_to_the_roll_actor_allows_reentry
 
 theorem an_inner_roll_can_exit_after_its_first_visit :
     shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
-      [0]) [] 1 false = true := by decide
+      [0]) [] 1 false = true := by
+  rw [shapePermits_after_states]
+  decide
 
 theorem nested_roll_visits_can_have_different_lengths :
     shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
-      [0, 0, 2, 0]) [] 1 false = true := by decide
+      [0, 0, 2, 0]) [] 1 false = true := by
+  let tick : Source := .send ⟨⟨0, 0⟩, ⟨0, 0⟩, 0, .wire 0⟩
+  let tail : Source := .send ⟨⟨0, 0⟩, ⟨0, 0⟩, 1, .wire 0⟩
+  let expected : Source := .seq (.seq (.seq tick tick) tail) (.seq tick tail)
+  let selected := (shapePlans nestedRollCuts).find?
+    (fun plan => decide (plan.expanded = expected))
+  have found : selected.isSome = true := by decide
+  let witness := selected.get found
+  refine shapePermits_after_states_of_witness _ _ _ _ _ _ (ShapePlan.of witness) ?_ ?_
+  · exact List.mem_map.mpr
+      ⟨witness, List.mem_of_find?_eq_some (Option.some_get found).symm, rfl⟩
+  · decide +kernel +revert
 
 theorem the_next_call_can_start_a_third_outer_visit :
     shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
-      [0, 0, 2, 0, 0, 2]) [] 0 false = true := by decide
+      [0, 0, 2, 0, 0, 2]) [] 0 false = true := by
+  rw [shapePermits_after_states]
+  decide +kernel
 
 theorem a_completed_tail_cannot_repeat_without_its_predecessor :
     shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
-      [0, 2]) [] 1 false = false := by decide
+      [0, 2]) [] 1 false = false := by
+  rw [shapePermits_after_states]
+  decide +kernel
 
 theorem a_completed_continuation_does_not_close_its_inner_roll :
     shapePermits (shapeStates nestedRollCuts ((shapePlans nestedRollCuts).map ShapePlan.of)
-      [0, 0, 2]) [] 0 false = true := by decide
+      [0, 0, 2]) [] 0 false = true := by
+  rw [shapePermits_after_states]
+  decide
 
 #print axioms an_inner_roll_can_exit_after_its_first_visit
 #print axioms nested_roll_visits_can_have_different_lengths
@@ -1252,47 +1532,57 @@ def main (args : List String) : IO UInt32 := do
   -- Evaluate the whole bounded plan set natively. The general anchor theorem
   -- is kernel checked; materializing all these plans in a `by decide` proof
   -- duplicates the exhaustive search in the proof term.
-  let guardedPlans := (shapePlans guardedInnerRoll).map ShapePlan.of
-  for (word, expected) in [
+  let guardedCases := [
       ([0, 1, 2, 3, 4, 5, 6, 7], true),
       ([0, 1, 2, 3, 4, 5, 6], true),
       ([2, 3, 4, 5, 0, 1, 6, 7], false),
-      ([0, 1, 0, 1, 6, 7], false)] do
-    unless shapePermits (shapeStates guardedInnerRoll guardedPlans word) [] 2 false == expected do
+      ([0, 1, 0, 1, 6, 7], false)]
+  let guardedAnswers := shapeGroupAnswers guardedInnerRoll (shapePlans guardedInnerRoll)
+    (guardedCases.map fun (word, _) => (word, none, [some ([], 2, false)]))
+  unless guardedAnswers.length == guardedCases.length do throw (IO.userError "missing guarded answers")
+  for ((word, expected), answers) in guardedCases.zip guardedAnswers do
+    unless answers == [expected] do
       throw (IO.userError s!"guarded inner-roll regression: word={word} expected={expected}")
-  let holderPlans := (shapePlans returnedConditionalHolder).map ShapePlan.of
-  for (word, expected) in [
+  let holderCases := [
       ([2, 3, 4, 5, 6, 7], true),
       ([2, 3, 4, 5, 6, 7, 8, 9], false),
-      ([0, 1, 6, 7, 8, 9], true)] do
-    unless shapePermits (shapeStates returnedConditionalHolder holderPlans word) [] 3 false == expected do
+      ([0, 1, 6, 7, 8, 9], true)]
+  let holderAnswers := shapeGroupAnswers returnedConditionalHolder (shapePlans returnedConditionalHolder)
+    (holderCases.map fun (word, _) => (word, none, [some ([], 3, false)]))
+  unless holderAnswers.length == holderCases.length do throw (IO.userError "missing holder answers")
+  for ((word, expected), answers) in holderCases.zip holderAnswers do
+    unless answers == [expected] do
       throw (IO.userError s!"retained-owner regression: word={word} expected={expected}")
-  unless shapePermits (shapeStates movedUnrelatedResource
-      ((shapePlans movedUnrelatedResource).map ShapePlan.of) [0, 1, 2, 3, 4, 5]) [] 1 false do
+  unless shapeGroupAnswers movedUnrelatedResource (shapePlans movedUnrelatedResource)
+      [([0, 1, 2, 3, 4, 5], none, [some ([], 1, false)])] == [[true]] do
     throw (IO.userError "an unrelated resource transfer blocked a retained roll")
-  let selectedPlans := (shapePlans ownerPreservingContinuation).map ShapePlan.of
-  for (word, expected) in [
+  let selectedCases := [
       ([0, 1, 2, 3, 4, 5, 6, 7], true),
-      ([0, 1, 2, 3, 4, 5, 8, 9], false)] do
-    unless shapePermits (shapeStates ownerPreservingContinuation selectedPlans word) [] 0 false == expected do
+      ([0, 1, 2, 3, 4, 5, 8, 9], false)]
+  let selectedAnswers := shapeGroupAnswers ownerPreservingContinuation (shapePlans ownerPreservingContinuation)
+    (selectedCases.map fun (word, _) => (word, none, [some ([], 0, false)]))
+  unless selectedAnswers.length == selectedCases.length do throw (IO.userError "missing selected answers")
+  for ((word, expected), answers) in selectedCases.zip selectedAnswers do
+    unless answers == [expected] do
       throw (IO.userError s!"selected-expansion regression: word={word} expected={expected}")
-  -- Check this exact finite witness as well as the whole search. Subtree
-  -- insertion can find another witness for the same word; it must not hide a
-  -- check that incorrectly rejects an otherwise valid selected expansion.
-  let selectedAfter := (checkedPlans ownerPreservingContinuation _
+  -- This exact finite witness remains required even if another candidate
+  -- could admit the same word.
+  let selectedAfter := checkedPlans ownerPreservingContinuation _
     (.resumeAfterContinuation .hole
-      (.seq (.rollOnce (.oneCopy _)) (.oneCopy _)) (.oneCopy _))).map ShapePlan.of
-  unless shapePermits (shapeStates ownerPreservingContinuation selectedAfter
-      [0, 1, 2, 3, 4, 5, 6, 7]) [] 0 false do
+      (.seq (.rollOnce (.oneCopy _)) (.oneCopy _)) (.oneCopy _))
+  unless shapeGroupAnswers ownerPreservingContinuation selectedAfter
+      [([0, 1, 2, 3, 4, 5, 6, 7], none, [some ([], 0, false)])] == [[true]] do
     throw (IO.userError "selected-expansion regression: the exact after-continuation witness was rejected")
-  let incomingPlans := (shapePlans incomingLoanContinuation).map ShapePlan.of
-  for (word, choice, event, expected) in [
+  let incomingCases := [
       ([0, 1, 2, 3, 4, 5, 0, 1], [], 3, true),
       ([0, 1, 2, 3, 4, 5, 0, 1], [0], 3, false),
       ([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 8, 9], [0], 0, true),
-      ([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 8, 9, 10, 11], [0], 0, false)] do
-    unless shapePermits (shapeStates incomingLoanContinuation incomingPlans word)
-        choice event false == expected do
+      ([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 8, 9, 10, 11], [0], 0, false)]
+  let incomingAnswers := shapeGroupAnswers incomingLoanContinuation (shapePlans incomingLoanContinuation)
+    (incomingCases.map fun (word, choice, event, _) => (word, none, [some (choice, event, false)]))
+  unless incomingAnswers.length == incomingCases.length do throw (IO.userError "missing incoming answers")
+  for ((word, choice, event, expected), answers) in incomingCases.zip incomingAnswers do
+    unless answers == [expected] do
       throw (IO.userError s!"continuation-cut regression: word={word} choice={choice} event={event} expected={expected}")
   if args == ["--check-guarded-reentry"] then
     IO.println "Guarded reentry regressions: all fifteen source cuts passed"
@@ -1335,13 +1625,13 @@ def main (args : List String) : IO UInt32 := do
     let (runs, calls, plannedPrefixes) ← shapeCheckCompleted source input.name input.parallelCoverage outputPath
     completedRuns := completedRuns + runs
     completedCalls := completedCalls + calls
-    let plans := (shapePlans source).map ShapePlan.of
-    unless !plans.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
+    let candidates := shapePlans source
+    unless !candidates.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let choices := shapeChoicePatterns source
+    let shortPrefixes := if shapeRepetitions source == 0 then
+      shapeShortPrefixes source (candidates.map ShapePlan.of) choices else []
     let prefixes := ((plannedPrefixes.map fun word => (word, shapeWordInputs source word)) ++
-      shapeShortPrefixes source plans choices).eraseDups
-    unless prefixes.all (fun (word, inputs) => (shapeReplayStates source plans word inputs).isSome) do
-      throw (IO.userError s!"shape {input.name}: source prefix has no accepted occurrence execution")
+      shortPrefixes).eraseDups
     let output : ShapeOutput ← shapeRead (System.FilePath.mk outputPath / s!"{input.name}.json")
     unless output.attempts.all (fun a => a.prefix.length == a.prefixChoices.length &&
         a.prefixChoices.all (fun choice => choice == choice.eraseDups.mergeSort (· ≤ ·) &&
@@ -1353,7 +1643,11 @@ def main (args : List String) : IO UInt32 := do
     unless input.name == output.name && actualKeys == expectedKeys do
       let different := (actualKeys.zip expectedKeys).find? fun (actual, expected) => actual != expected
       throw (IO.userError s!"shape {input.name}: incomplete probe inventory; actual={actualKeys.length} expected={expectedKeys.length} first_difference={repr different}")
-    for (word, attempts) in shapeAttemptGroups output.attempts.toList do
+    let attemptGroups := shapeAttemptGroups output.attempts.toList
+    let mut groups : Array ShapeQueryGroup := #[]
+    for (word, inputs) in prefixes do
+      groups := groups.push (word, some inputs, [none])
+    for (word, attempts) in attemptGroups do
       let some first := attempts.head?
         | throw (IO.userError "empty prefix group")
       unless attempts.all (fun attempt => attempt.prefixChoices == first.prefixChoices) &&
@@ -1361,19 +1655,62 @@ def main (args : List String) : IO UInt32 := do
             choice == choice.eraseDups.mergeSort (· ≤ ·) &&
               choice.all (· < input.resolvers)) do
         throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
-      let some states := shapeReplayStates source plans word first.prefixChoices
-        | throw (IO.userError s!"shape {input.name}: replayed inputs have no coherent source execution")
-      -- Mutation control: preserve the exact original probe inventory, then
-      -- compare with a source that omits only its outer sequential dependency.
-      let permits : ShapeAttempt → Bool := if weakenRoot then
-        let altered := match source with | .seq a b => .par a b | _ => source
-        let alternate := (shapeReplayStates altered ((shapePlans altered).map ShapePlan.of)
-          word first.prefixChoices).getD []
-        fun attempt => shapePermits alternate attempt.choice attempt.event attempt.receive
-      else fun attempt => shapePermits states attempt.choice attempt.event attempt.receive
+      let mut requests : Array (Option ShapeRequest) := #[none]
       for attempt in attempts do
         unless attempt.prefix == word do throw (IO.userError "inconsistent prefix group")
-        let permitted := permits attempt
+        requests := requests.push (some (attempt.choice, attempt.event, attempt.receive))
+        match attempt.parked with
+        | [] => pure ()
+        | [(label, _)] =>
+            unless label < 256 do
+              throw (IO.userError s!"shape {input.name}: invalid parked preview label")
+            if attempt.receive && (shapeMessage? source attempt.event).any
+                (fun message => message.sender == message.receiver) then
+              requests := requests.push (some (attempt.choice, attempt.event, false))
+        | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
+      groups := groups.push (word, some first.prefixChoices, requests.toList)
+    let answers := shapeGroupAnswers source candidates groups.toList
+    let (prefixAnswers, observedAnswers) := answers.splitAt prefixes.length
+    unless prefixAnswers.length == prefixes.length && observedAnswers.length == attemptGroups.length do
+      throw (IO.userError "incomplete source query answers")
+    unless prefixAnswers.all (· == [true]) do
+      throw (IO.userError s!"shape {input.name}: source prefix has no accepted occurrence execution")
+    -- The defect control changes only the outer dependency. Prefix validity
+    -- and parked local receives still use the original accepted source.
+    let comparisonAnswers := if weakenRoot then
+      let altered := match source with | .seq a b => .par a b | _ => source
+      shapeGroupAnswers altered (shapePlans altered) (groups.toList.drop prefixes.length)
+    else observedAnswers
+    unless comparisonAnswers.length == attemptGroups.length do
+      throw (IO.userError "incomplete comparison query answers")
+    for ((_, attempts), (original, comparison)) in
+        attemptGroups.zip (observedAnswers.zip comparisonAnswers) do
+      let (valid, original) ← match original with
+        | valid :: rest => pure (valid, rest)
+        | [] => throw (IO.userError "missing source-prefix answer")
+      unless valid do
+        throw (IO.userError s!"shape {input.name}: replayed inputs have no coherent source execution")
+      let comparison ← match comparison with
+        | _ :: rest => pure rest
+        | [] => throw (IO.userError "missing comparison-prefix answer")
+      unless original.length == comparison.length do
+        throw (IO.userError "query answer lengths differ")
+      let mut remaining := original.zip comparison
+      for attempt in attempts do
+        let (answer, rest) ← match remaining with
+          | answer :: rest => pure (answer, rest)
+          | [] => throw (IO.userError "missing operation query answer")
+        remaining := rest
+        let permitted := answer.2
+        let localPreview ← if !attempt.parked.isEmpty && attempt.receive &&
+            (shapeMessage? source attempt.event).any
+              (fun message => message.sender == message.receiver) then
+          match remaining with
+          | answer :: rest =>
+              remaining := rest
+              pure answer.1
+          | [] => throw (IO.userError "missing parked local query answer")
+        else pure false
         checked := checked + 1
         if !attempt.prefix.isEmpty then continuations := continuations + 1
         if permitted != attempt.accepted then
@@ -1393,7 +1730,7 @@ def main (args : List String) : IO UInt32 := do
               | some message =>
                   if attempt.receive && message.sender == message.receiver then
                     message.label == previewLabel &&
-                      shapePermits states attempt.choice attempt.event false
+                      localPreview
                   else permitted
               | none => false
             parkedChecked := parkedChecked + 1
@@ -1404,6 +1741,7 @@ def main (args : List String) : IO UInt32 := do
               else parkedModelOnly := parkedModelOnly + 1
               if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
         | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
+      unless remaining.isEmpty do throw (IO.userError "extra operation query answers")
     unless parkedRuntimeOnly == 0 && parkedModelOnly == 0 do
       IO.println s!"Parked previews/source mismatch: runtime-only={parkedRuntimeOnly} model-only={parkedModelOnly}"
     unless runtimeOnly == 0 && modelOnly == 0 do

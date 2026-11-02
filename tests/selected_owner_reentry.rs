@@ -105,6 +105,59 @@ fn a_disjoint_parallel_component_needs_no_resource_permission() {
 }
 
 #[test]
+fn an_inner_roll_can_revisit_four_times_before_its_parent_continues() {
+    type Loan = g::Msg<0, Endpoint<'static, 3>>;
+    type Work = g::Msg<1, ()>;
+    type Echo = g::Msg<2, ()>;
+    type Return = g::Msg<3, Endpoint<'static, 3>>;
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::par(
+                g::send::<3, 2, Work>(),
+                g::send::<1, 0, Echo>().roll(),
+            )
+            .roll(),
+            g::send::<1, 0, Return>(),
+        ),
+    );
+    assert!(g::diagnose(&global).is_none());
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let mut slab = [0; 65536];
+    let mut storage = SessionKitStorage::uninit();
+    let kit = storage
+        .init()
+        .rendezvous(&mut slab, common::TestTransport::new())
+        .unwrap();
+    let sid = SessionId::new(173);
+    let mut owner = kit.enter(sid, &p0).unwrap();
+    let mut worker = kit.enter(sid, &p1).unwrap();
+    let mut service = kit.enter(sid, &p2).unwrap();
+    let initial = kit.enter(sid, &p3).unwrap();
+    let operation = pin!(async {
+        owner.send::<Loan>(initial).await?;
+        let mut resource = worker.recv::<Loan>().await?;
+        resource.send::<Work>(&()).await?;
+        service.recv::<Work>().await?;
+        for _ in 0..4 {
+            worker.send::<Echo>(&()).await?;
+            owner.recv::<Echo>().await?;
+        }
+        worker.send::<Return>(resource).await?;
+        let returned = owner.recv::<Return>().await?;
+        drop(returned);
+        Ok::<_, hibana::EndpointError>(())
+    });
+    match operation.poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(Ok(())) => {}
+        result => panic!("unequal nested visits did not complete: {result:?}"),
+    }
+}
+
+#[test]
 fn a_retained_loan_resumes_after_a_choice_that_keeps_its_owner() {
     type Loan = g::Msg<1, Endpoint<'static, 3>>;
     type Keep = g::Msg<2, ()>;
