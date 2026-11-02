@@ -51,7 +51,7 @@ def bodies (delegated : Bool) (budget : Nat) : List (Nat × Expansion (body dele
         [(weight + more + 1, after delegated withTail (more + 1)),
           (weight + more + 1,
             ⟨.seq first.1 (.par next.1 (message 0 1 237).oneCopy),
-              .resumeAlongsideContinuation .hole first.2 next.2 (.oneCopy _)⟩)]
+              .resumeAlongsideContinuation .hole .hole first.2 next.2 (.oneCopy _)⟩)]
     parts.map fun (cost, part) =>
       (cost, ⟨.seq (message 0 1 231).oneCopy part.1, .seq (.oneCopy _) part.2⟩)
 
