@@ -13,6 +13,4 @@ check_trusted_proof_sources 'live descendant preview trusted proof declarations'
 lean --version | bash "$(cd "$(dirname "$0")/../../../.." && pwd)/.github/scripts/lib/supplemental_proofs_tool.sh" version
 lean "$PROOFS/LiveDescendantPreview.lean" > "$EVIDENCE/lean.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 14
-z3 "$PROOFS/LiveDescendantPreview.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/z3.log" 2 8
-printf 'Live descendant preview: 14 Lean theorems; Z3 8 UNSAT and 2 historical SAT witnesses. Evidence: %s\n' "$EVIDENCE"
+printf '%s\n' 'live-descendant-preview: Lean checks passed'

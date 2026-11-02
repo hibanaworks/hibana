@@ -15,10 +15,4 @@ cat > "$proof_evidence/lean.expected" <<'EOF'
 'Hibana.ImmutableAdmission.excluded_context_needs_no_admission' depends on axioms: [propext]
 EOF
 diff -u "$proof_evidence/lean.expected" "$proof_evidence/lean.log"
-z3 "$proof_dir/Admission.smt2" | tee "$proof_evidence/z3.log"
-printf 'sat\nunsat\nunsat\nunsat\nunsat\nunsat\nunsat\nsat\nsat\nsat\n' > "$proof_evidence/z3.expected"
-diff -u "$proof_evidence/z3.expected" "$proof_evidence/z3.log"
-z3 "$proof_dir/CandidateSearch.smt2" | tee "$proof_evidence/candidates.log"
-printf 'sat\nunsat\nunsat\nsat\nsat\n' > "$proof_evidence/candidates.expected"
-diff -u "$proof_evidence/candidates.expected" "$proof_evidence/candidates.log"
-printf 'Immutable event admission: Lean 6 theorems; Z3 8 UNSAT, 7 SAT premises/witnesses. Evidence: %s\n' "$proof_evidence"
+printf 'Immutable event admission: 6 Lean theorems. Evidence: %s\n' "$proof_evidence"

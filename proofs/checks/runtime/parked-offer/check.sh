@@ -13,6 +13,4 @@ check_trusted_proof_sources 'parked receive lane exclusion' "$PROOFS/Receive.lea
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 lean "$PROOFS/Receive.lean" > "$EVIDENCE/lean.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 9
-z3 "$PROOFS/Receive.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/z3.log" sat unsat sat unsat sat unsat sat unsat sat unsat sat
-printf 'Parked receive: 9 Lean theorems; 5 paired Z3 checks and a SAT negative control. Evidence: %s\n' "$EVIDENCE"
+printf '%s\n' 'parked-offer: Lean checks passed'

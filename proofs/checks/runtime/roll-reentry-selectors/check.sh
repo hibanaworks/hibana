@@ -5,4 +5,4 @@ cd "$ROOT/proofs/lean"
 lake build Hibana.StaticProjectability
 lake env lean "$ROOT/proofs/checks/runtime/roll-reentry-selectors/Check.lean"
 cd "$ROOT"
-bash .github/scripts/check_smt2.sh proofs/checks/runtime/roll-reentry-selectors/selectors.smt2
+printf '%s\n' 'roll-reentry-selectors: Lean checks passed'

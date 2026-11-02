@@ -65,7 +65,7 @@ def tail : Message := ⟨⟨0, 0⟩, ⟨0, 1⟩, 2, .wire 0⟩
 def source : Source := .seq (.roll (.send ping)) (.send tail)
 def expanded : Source := .seq (.seq (.send ping) (.send tail)) (.send ping)
 def unfolding : SourceUnfolding source expanded :=
-  .resumeAfterContinuation (.seq (.rollOnce (.send ping)) (.send tail)) (.send ping)
+  .resumeAfterContinuation .hole (.seq (.rollOnce (.send ping)) (.send tail)) (.send ping)
 
 theorem the_occurrence_model_preserves_the_same_continuation_then_body_order :
     unfolding.origins 0 = [0, 1, 0] ∧ (normalize expanded).isSome = true := by decide

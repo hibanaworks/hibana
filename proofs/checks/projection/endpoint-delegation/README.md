@@ -13,8 +13,8 @@ the physical holder changes.
 `compiler/` builds the production validator with read-only proof observations.
 Its output is checked by `Knowledge.lean`, `Causality.lean` and the generated
 Lean claims. The [Kani gate](../../../kani/README.md) checks production
-ownership-equation operations. `check.sh`
-runs every `.smt2` file in this directory against its declared `EXPECT` results.
+ownership-equation operations. `check.sh` checks the remaining word-representation
+models against their declared results; protocol rules have one Lean source.
 
 `OrderFilter.lean` and `OrderFilter.smt2` check dependency bounds used by the
 word-batched source-order comparison. Required source choices of either row
@@ -62,8 +62,8 @@ Ownership queries reuse the initial-owner equations already inferred for the
 source. When both arms reduce to the same owner, the join retains that owner
 without enumerating another choice. Ownership compilation retains its checked
 equations and message rows alongside the actor bindings. Reentry checks borrow
-those facts and index source messages directly. `OwnerJoin.lean` and
-`OwnerJoin.smt2` state the normalization and join rules. Kani checks normalization
+those facts and index source messages directly. `OwnerJoin.lean` states the
+normalization and join rules. Kani checks normalization
 against production union equations over symbolic complete keys, including aliases
 and independent unbound keys.
 

@@ -19,6 +19,3 @@ for model in Dispatch OfferLinks; do
   bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$evidence/$model.log" "$claims"
 done
 cargo +"${TOOLCHAIN:-stable}" run --quiet --locked -p hibana-ci-tests --bin dispatch-model
-bash .github/scripts/check_smt2.sh proofs/checks/image/dispatch-subtree/Dispatch.smt2
-bash .github/scripts/check_smt2.sh proofs/checks/image/dispatch-subtree/OfferLinks.smt2
-bash .github/scripts/check_smt2.sh proofs/checks/image/dispatch-subtree/TargetPath.smt2

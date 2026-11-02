@@ -85,40 +85,19 @@ fn main() {
     let build = &scratch.0;
     let version = run(&lean, &["--version"], &repo, build, false);
     assert!(version.contains("version 4.30.0"), "Lean 4.30.0 required");
-    for (directory, leans, models) in [
-        (
-            "compiler-participant-mask",
-            vec!["ParticipantMask"],
-            vec!["ParticipantMask", "ActorParticipants"],
-        ),
-        (
-            "passive-child-window",
-            vec!["PassiveChildWindow"],
-            vec!["PassiveChildWindow"],
-        ),
-        (
-            "projection-conflict-reuse",
-            vec!["ConflictReuse"],
-            vec!["ConflictReuse"],
-        ),
+    for (directory, module) in [
+        ("compiler-participant-mask", "ParticipantMask"),
+        ("passive-child-window", "PassiveChildWindow"),
+        ("projection-conflict-reuse", "ConflictReuse"),
     ] {
         let root = repo.join("proofs/checks/projection").join(directory);
-        let replay = build.join(directory);
-        fs::create_dir(&replay).unwrap();
-        for module in leans {
-            run(
-                &lean,
-                &[root.join(format!("{module}.lean")).to_str().unwrap()],
-                &root,
-                build,
-                true,
-            );
-        }
-        for model in models {
-            let file = format!("{model}.smt2");
-            fs::copy(root.join(&file), replay.join(&file)).unwrap();
-            smt(&replay.join(file), build);
-        }
+        run(
+            &lean,
+            &[root.join(format!("{module}.lean")).to_str().unwrap()],
+            &root,
+            build,
+            true,
+        );
     }
     for model in [
         "lane-allocation/RouteAlignment.smt2",

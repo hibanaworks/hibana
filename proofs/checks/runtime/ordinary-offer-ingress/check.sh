@@ -13,6 +13,4 @@ check_trusted_proof_sources 'ordinary offer ingress trusted declarations' "$PROO
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 lean "$PROOFS/Check.lean" > "$EVIDENCE/lean.log" 2>&1
 bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$EVIDENCE/lean.log" 8
-z3 "$PROOFS/Check.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/z3.log" unsat unsat unsat unsat unsat unsat unsat unsat sat
-printf 'Ordinary offer ingress: 8 Lean theorems; Z3 8 UNSAT and 1 historical SAT. Evidence: %s\n' "$EVIDENCE"
+printf '%s\n' 'ordinary-offer-ingress: Lean checks passed'

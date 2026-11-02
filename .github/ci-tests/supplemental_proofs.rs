@@ -6,59 +6,6 @@ use std::{
     io::{self, Read},
     path::Path,
 };
-// Admission.smt2 prints one named premise/witness group before each query group.
-// The nine premise groups assert a satisfiable premise, then its impossible
-// violation; the other five groups assert concrete satisfiable witnesses.
-const ADMISSION_GROUPS: &[(&str, &[&str])] = &[
-    (
-        "unfinished current event admitted: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "committed branch respected: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "completed event requires reentry: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "completed roll requires reentry: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "explicit reentry requires its head: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "automatic reentry preserves completed events: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "selected requires every descriptor guard: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "selection is unique: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    (
-        "unique eligible candidate is selected: premises SAT, violation UNSAT",
-        &["sat", "unsat"],
-    ),
-    ("unfinished receive beyond lookup head: SAT", &["sat"]),
-    ("parked unfinished receive: SAT", &["sat"]),
-    ("authorized fresh head replaces old choice: SAT", &["sat"]),
-    ("authorized elastic head positive: SAT", &["sat"]),
-    ("ambiguity rejects: SAT", &["sat"]),
-];
-fn admission(output: &str) -> AuditResult<()> {
-    let expected = ADMISSION_GROUPS
-        .iter()
-        .flat_map(|(label, outcomes)| std::iter::once(*label).chain(outcomes.iter().copied()))
-        .collect::<Vec<_>>();
-    smt(output, &expected, false)
-}
 fn smt(output: &str, expected: &[&str], counts: bool) -> AuditResult<()> {
     let actual = output.lines().collect::<Vec<_>>();
     if counts {
@@ -126,10 +73,6 @@ fn run(args: &[String]) -> AuditResult<()> {
     require(args.len() >= 3, "missing evidence path")?;
     let text = read(Path::new(&args[2]))?;
     match args[1].as_str() {
-        "smt-admission" => {
-            require(args.len() == 3, "admission requires only the evidence path")?;
-            admission(&text)
-        }
         "smt-counts" | "smt-sequence" => smt(
             &text,
             &args[3..].iter().map(String::as_str).collect::<Vec<_>>(),
@@ -168,39 +111,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn admission_labels_and_outcomes_are_exact() {
-        let expected = ADMISSION_GROUPS
-            .iter()
-            .flat_map(|(label, outcomes)| std::iter::once(*label).chain(outcomes.iter().copied()))
-            .collect::<Vec<_>>();
-        assert_eq!(expected.iter().filter(|&&line| line == "sat").count(), 14);
-        assert_eq!(expected.iter().filter(|&&line| line == "unsat").count(), 9);
-        let valid = expected.join("\n") + "\n";
-        assert!(admission(&valid).is_ok());
-        for index in 0..expected.len() {
-            let mut missing = expected.clone();
-            missing.remove(index);
-            assert!(admission(&missing.join("\n")).is_err());
-            let mut duplicate = expected.clone();
-            duplicate.insert(index, expected[index]);
-            assert!(admission(&duplicate.join("\n")).is_err());
-            for replacement in [
-                "unknown",
-                "(error \"solver failed\")",
-                "unexpected label",
-                "",
-            ] {
-                let mut altered = expected.clone();
-                altered[index] = replacement;
-                assert!(admission(&altered.join("\n")).is_err());
-            }
-        }
-        let mut swapped = expected.clone();
-        swapped.swap(1, 2); // Same global counts, wrong premise/violation results.
-        assert!(admission(&swapped.join("\n")).is_err());
-        assert!(admission(&(valid + "sat\n")).is_err());
-    }
     #[test]
     fn verdict_mutants() {
         assert!(smt("sat\nunsat\n", &["1", "1"], true).is_ok());

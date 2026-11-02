@@ -69,8 +69,8 @@ Run a directory's `check.sh` from the repository root through the resource guard
 The rolled-route check also compares all 128 combinations of completion bits,
 retained child completions and entry positions for a three-message parallel
 fixture. Its Rust cursor results are compared with `completeAt` in
-`ResetAlignment.lean`. The same Lean function generates the SMT truth tables;
-overly strict and overly permissive rules must produce counterexamples.
+`ResetAlignment.lean`. The same executable checker requires counterexamples
+to both overly strict and overly permissive rules.
 This finite comparison supplements the general model lemmas and public
 Endpoint tests; it does not establish correspondence for every protocol.
 

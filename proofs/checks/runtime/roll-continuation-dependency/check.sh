@@ -10,9 +10,4 @@ fi
 cd "$ROOT/proofs/lean"
 lake build Hibana.GlobalSemantics
 lake env lean "$ROOT/proofs/checks/runtime/roll-continuation-dependency/Check.lean"
-cd "$ROOT"
-output=$(mktemp)
-trap 'rm -f "$output"' EXIT
-z3 proofs/checks/runtime/roll-continuation-dependency/Check.smt2 > "$output"
-cat "$output"
-bash .github/scripts/lib/supplemental_proofs_tool.sh smt-sequence "$output" sat unsat sat unsat sat unsat
+printf '%s\n' 'roll-continuation-dependency: Lean checks passed'

@@ -24,14 +24,9 @@ def observedCompletion (o : CompletionObservation) : Bool :=
 def observedCredit (o : CompletionObservation) (child : Nat) : Bool :=
   o.credits / 2 ^ child % 2 == 1 || observedCompletion o
 
-def smtTable (name : String) (values : Array Bool) : String :=
-  let terms := values.toList.zipIdx.filterMap fun (value, index) =>
-    if value then some s!"(= index {index})" else none
-  s!"(define-fun {name} () Bool (or false {String.intercalate " " terms}))\n"
-
 def main (args : List String) : IO UInt32 := do
-  let [input, output] := args
-    | throw (IO.userError "usage: CheckCompletion OBSERVATIONS.jsonl OUTPUT.smt2")
+  let [input] := args
+    | throw (IO.userError "usage: CheckCompletion OBSERVATIONS.jsonl")
   let lines := (← IO.FS.readFile input).splitOn "\n"
   unless lines.getLast! == "" && lines.length == 129 do
     throw (IO.userError "missing or extra completion observation")
@@ -55,19 +50,6 @@ def main (args : List String) : IO UInt32 := do
       (fun _ _ => true) o.entry
   unless complete != strict && complete != loose do
     throw (IO.userError "completion inventory cannot detect both incorrect rules")
-  let mut smt := "(set-logic QF_LIA)\n(declare-const index Int)\n(assert (and (<= 0 index) (< index 128)))\n"
-  for (name, values) in [
-      ("observed", actual.map (·.complete)), ("model", complete),
-      ("observedA", actual.map (·.retainA)), ("modelA", actual.map (observedCredit · 0)),
-      ("observedB", actual.map (·.retainB)), ("modelB", actual.map (observedCredit · 1)),
-      ("strict", strict), ("loose", loose)] do
-    smt := smt ++ smtTable name values
-  for (left, right) in [("observed", "model"), ("observedA", "modelA"),
-      ("observedB", "modelB"), ("strict", "model"), ("loose", "model")] do
-    smt := smt ++ s!"(push)\n(assert (distinct {left} {right}))\n(check-sat)\n(pop)\n"
-  -- The SMT truth tables are evaluated from this same executable Lean model;
-  -- no separate SMT expression restates the completion rule.
-  IO.FS.writeFile output smt
   for (o, index) in actual.toList.zipIdx do
     unless o.complete == observedCompletion o &&
         o.retainA == observedCredit o 0 && o.retainB == observedCredit o 1 do

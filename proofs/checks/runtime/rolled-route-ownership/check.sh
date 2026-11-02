@@ -27,18 +27,5 @@ HIBANA_ROLL_COMPLETION_OBSERVATIONS="$EVIDENCE/completion.jsonl" \
   > "$EVIDENCE/completion-rust.log" 2>&1
 LEAN_PATH="$EVIDENCE:$ROOT/proofs/lean/.lake/build/lib/lean" \
   lean --run "$PROOFS/CheckCompletion.lean" "$EVIDENCE/completion.jsonl" \
-  "$EVIDENCE/completion.smt2" > "$EVIDENCE/completion-lean.log" 2>&1
-z3 "$EVIDENCE/completion.smt2" > "$EVIDENCE/completion-z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence \
-  "$EVIDENCE/completion-z3.log" unsat unsat unsat sat sat
-z3 "$PROOFS/Admission.smt2" > "$EVIDENCE/z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-admission "$EVIDENCE/z3.log"
-z3 "$PROOFS/SendContinuation.smt2" > "$EVIDENCE/send-continuation-z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-counts "$EVIDENCE/send-continuation-z3.log" 5 3
-z3 "$PROOFS/SendEntry.smt2" > "$EVIDENCE/send-entry-z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/send-entry-z3.log" sat unsat sat unsat sat
-z3 "$PROOFS/NestedVisit.smt2" > "$EVIDENCE/nested-visit-z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/nested-visit-z3.log" sat unsat sat unsat sat unsat sat unsat
-z3 "$PROOFS/SharedSuffix.smt2" > "$EVIDENCE/shared-suffix-z3.log"
-bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" smt-sequence "$EVIDENCE/shared-suffix-z3.log" sat unsat sat unsat sat unsat sat unsat sat sat sat sat unsat sat unsat
-printf 'Rolled-route proofs passed: Lean 4.30.0, 10 proof files; 384 Rust/model comparisons; Z3 27 UNSAT obligations, 37 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"
+  > "$EVIDENCE/completion-lean.log" 2>&1
+printf 'Rolled-route proofs passed: 10 Lean proof files; 384 Rust/model comparisons and both defect controls. Logs: %s\n' "$EVIDENCE"

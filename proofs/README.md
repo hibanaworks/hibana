@@ -5,6 +5,13 @@ tests to check protocol projection and execution. The models state assumptions
 about codecs, transports and participant behavior. They do not verify arbitrary
 Rust programs or arbitrary implementations of `Transport`.
 
+Lean states protocol rules. Endpoint tests compare Rust with those rules;
+EPF checks saved observations. These checks do not replace the general proofs.
+SMT is reserved for distinct fixed-width representation obligations not yet covered
+by those checks. Do not keep a second SMT restatement of a Lean property.
+Necessary generated solver inputs belong in the check's output directory,
+alongside their input hashes, rather than in the source tree.
+
 ## Layout
 
 | Directory | Contents |

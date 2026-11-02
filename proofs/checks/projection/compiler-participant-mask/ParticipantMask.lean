@@ -4,7 +4,7 @@ import Std
 collect the union of every event's sender and receiver, then omit globally
 absent roles from the existing ascending observer-validation loop. No runtime
 authority, projection admission, descriptor bytes, or validation stage changes.
-The arbitrary-list proof is supplemented by concrete 32-byte Z3 bit operations.
+The byte representation below refines the same arbitrary-list model.
 -/
 namespace Hibana.ParticipantMask
 
@@ -294,6 +294,65 @@ theorem byte_index_bounds (role : Role) :
   have h := role.isLt
   omega
 
+abbrev Bytes := Nat → BitVec 8
+
+def byteMember (bytes : Bytes) (role : Role) : Bool :=
+  (bytes (role.val / 8)).getLsbD (role.val % 8)
+
+def byteInsert (bytes : Bytes) (role : Role) : Bytes :=
+  fun word => if word = role.val / 8 then
+    bytes word ||| BitVec.twoPow 8 (role.val % 8) else bytes word
+
+/-- The concrete byte update implements the abstract insertion for every
+existing mask and every role, including receiver-only role 255. -/
+theorem byte_insert_exact (bytes : Bytes) (role query : Role) :
+    byteMember (byteInsert bytes role) query =
+      (byteMember bytes query || decide (role = query)) := by
+  by_cases word : query.val / 8 = role.val / 8
+  · have inside : role.val % 8 < 8 := Nat.mod_lt _ (by decide)
+    have same : (role.val % 8 = query.val % 8) ↔ role = query := by
+      constructor
+      · intro bit
+        apply Fin.ext
+        omega
+      · intro equal
+        subst query
+        rfl
+    simp [byteMember, byteInsert, word, BitVec.getLsbD_or,
+      BitVec.getLsbD_twoPow, inside, same]
+  · have different : role ≠ query := by
+      intro equal
+      subst query
+      exact word rfl
+    simp [byteMember, byteInsert, word, different]
+
+/-- The nonzero masked-word test used in Rust is exactly the indexed bit. -/
+theorem byte_mask_test_exact (value : BitVec 8) (bit : Fin 8) :
+    (value &&& BitVec.twoPow 8 bit.val ≠ 0) ↔ value.getLsbD bit.val = true := by
+  have zero_iff : value &&& BitVec.twoPow 8 bit.val = 0 ↔
+      value.getLsbD bit.val = false := by
+    constructor
+    · intro zero
+      have atBit := congrArg (fun word : BitVec 8 => word.getLsbD bit.val) zero
+      simpa [BitVec.getLsbD_and, BitVec.getLsbD_twoPow, bit.isLt] using atBit
+    · intro clear
+      apply BitVec.eq_of_getLsbD_eq
+      intro index _
+      by_cases same : bit.val = index
+      · subst index
+        simp only [BitVec.getLsbD_and, clear, Bool.false_and]
+        exact (BitVec.getLsbD_zero (w := 8) (i := bit.val)).symm
+      · simp only [BitVec.getLsbD_and, BitVec.getLsbD_twoPow, same, decide_false,
+          Bool.and_false]
+        exact (BitVec.getLsbD_zero (w := 8) (i := index)).symm
+  rw [Ne, zero_iff]
+  cases value.getLsbD bit.val <;> decide
+
+theorem byte_insertion_refines_mask (bytes : Bytes) (role : Role) :
+    byteMember (byteInsert bytes role) = insert (byteMember bytes) role := by
+  funext query
+  exact byte_insert_exact bytes role query
+
 theorem full_domain_counter_no_u8_wrap : 255 + 1 = (256 : Nat) ∧ 256 < 2 ^ 32 := by decide
 example : (255 : Nat) / 8 = 31 ∧ (255 : Nat) % 8 = 7 := by decide
 
@@ -305,4 +364,7 @@ example : (255 : Nat) / 8 = 31 ∧ (255 : Nat) % 8 = 7 := by decide
 #print axioms participant_below_bound
 #print axioms byte_index_bounds
 #print axioms correlated_presence_filter_exact
+#print axioms byte_insert_exact
+#print axioms byte_mask_test_exact
+#print axioms byte_insertion_refines_mask
 end Hibana.ParticipantMask

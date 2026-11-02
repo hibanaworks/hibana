@@ -27,9 +27,3 @@ bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" lean "$topology_log
 rustc +stable --edition=2024 -O "$HERE/source_shape_check.rs" \
   -o "$topology_evidence/source-shape-check"
 "$topology_evidence/source-shape-check"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteIndex.smt2"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteAncestry.smt2"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/ScopeParent.smt2"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RouteTopology.smt2"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/RetainedRange.smt2"
-bash "$ROOT/.github/scripts/check_smt2.sh" "$HERE/CanonicalChain.smt2"
