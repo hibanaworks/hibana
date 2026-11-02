@@ -14,6 +14,8 @@ private theorem unfolding_keeps_resource_membership
   | route resolver first second left right =>
     simpa only [Source.resources, List.mem_eraseDups, List.mem_append] using or_congr left right
   | rollOnce body ih => exact ih
+  | rollParallel first second left right =>
+    simpa only [Source.resources, List.mem_eraseDups, List.mem_append] using or_congr left right
   | rollMore earlier next left right =>
     simp only [Source.resources, List.mem_eraseDups, List.mem_append, left, right, or_self]
   | resumeAfterContinuation context earlier next left right =>

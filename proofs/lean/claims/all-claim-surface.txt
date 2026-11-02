@@ -272,6 +272,79 @@ Hibana.EndpointDelegation.withOwner_same : ∀ (owners : Hibana.EndpointDelegati
   @Hibana.EndpointTransfer.Step View Frame action before after →
     @LE.le.{0} Nat instLENat (@Hibana.EndpointTransfer.Observation.authorityCount View Frame after)
       (@Hibana.EndpointTransfer.Observation.authorityCount View Frame before)
+Hibana.IndependentParallelVisits.a_disjoint_branch_can_revisit_after_the_resource_returns : @Eq.{1} Bool
+  ((@Hibana.SourceOccurrenceCut.ready Hibana.source✝
+        (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.prefixPoints✝)
+        (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))))).and
+    (@Hibana.SourceOccurrenceCut.resumptionReady Hibana.source✝
+      (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.prefixPoints✝)
+      (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))))))
+  true
+Hibana.IndependentParallelVisits.another_visit_does_not_reuse_the_first_occurrence : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.ready Hibana.source✝
+    (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.prefixPoints✝)
+    (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))))
+  false
+Hibana.IndependentParallelVisits.delegated_aliases_do_not_establish_physical_separation : @Eq.{1} Bool
+  ({ first := @List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) (@List.nil.{0} Nat),
+        second :=
+          @List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))) (@List.nil.{0} Nat) }.check
+    (@List.cons.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+      (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding
+        (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+        { message := Hibana.work✝, senderActor := @OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)),
+          receiverActor := @OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)) })
+      (@List.cons.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding
+          (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+          {
+            message :=
+              {
+                sender :=
+                  { component := @OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)),
+                    role := @OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)) },
+                receiver :=
+                  { component := @OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)),
+                    role := @OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)) },
+                label := @OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9)),
+                payload :=
+                  Hibana.EndpointDelegation.Payload.wire
+                    (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) },
+            senderActor := @OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)),
+            receiverActor := @OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)) })
+        (@List.nil.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)))))
+  false
+Hibana.IndependentParallelVisits.the_resource_return_prefix_is_legal_with_unequal_parallel_visits : @Eq.{1} Bool
+  (@List.all.{0} (Prod.{0, 0} Hibana.SourcePoint Nat)
+    (@List.zipIdx.{0} Hibana.SourcePoint Hibana.prefixPoints✝
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    fun x =>
+    Hibana.IndependentParallelVisits.the_resource_return_prefix_is_legal_with_unequal_parallel_visits.match_1.{1}
+      (fun x => Bool) x fun point index =>
+      @Hibana.SourceOccurrenceCut.ready Hibana.source✝
+        (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝
+          (@List.take.{0} Hibana.SourcePoint index Hibana.prefixPoints✝))
+        point)
+  true
+Hibana.IndependentParallelVisits.unequal_visits_keep_the_original_source_and_resource_actor : And
+  (@Eq.{1} (List.{0} Nat)
+    (@Hibana.SourceUnfolding.origins Hibana.source✝ Hibana.expanded✝ Hibana.unfolding✝
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+        (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+            (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))) (@List.nil.{0} Nat)))))))
+  (@Eq.{1} (Option.{0} Nat)
+    (@Option.map.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding) Nat
+      (fun entry => (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.Binding entry).senderActor)
+      (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (fun entry =>
+          @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+            (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry)
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+        (@Hibana.SourceOccurrenceCut.path Hibana.source✝ Hibana.plan✝).bindings))
+    (@some.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
 @Hibana.OwnedFutureInventory.a_complete_future_history_covers_every_private_payload : ∀ {View Frame Borrow : Type}
   {initialValue : View} {state : Hibana.EndpointTransfer.Observation View Frame}
   {requests : List.{0} (Hibana.OwnedFutureInventory.Request View Borrow)},
@@ -5458,6 +5531,15 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
   (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.Normalization)
     (Hibana.EndpointDelegation.normalize (Hibana.body✝.par Hibana.continuation✝))
     (@none.{0} Hibana.EndpointDelegation.Normalization))
+@Hibana.a_selected_parallel_visit_has_its_physical_separation : ∀ {source : Hibana.EndpointDelegation.Source}
+  (plan : Hibana.SourceOccurrenceCut source) (visits : Hibana.SourceParallelVisits),
+  @Membership.mem.{0, 0} Hibana.SourceParallelVisits (List.{0} Hibana.SourceParallelVisits)
+      (@List.instMembership.{0} Hibana.SourceParallelVisits)
+      (@Hibana.SourceUnfolding.parallelVisits source (@Hibana.SourceOccurrenceCut.expanded source plan)
+        (@Hibana.SourceOccurrenceCut.unfolding source plan)
+        (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+      visits →
+    @Eq.{1} Bool (visits.check (@Hibana.SourceOccurrenceCut.path source plan).bindings) true
 @Hibana.a_selected_visit_execution_has_its_same_physical_execution : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {first last : Hibana.DistributedSourceCut}
   {word : List.{0} Hibana.DistributedCallBoundary} {entries : List.{0} Hibana.SourceAcceptance}
@@ -11651,6 +11733,24 @@ Hibana.independent_parallel_sibling_has_no_join_dependency : ∀ (regions : List
         @LE.le.{0} Nat instLENat (Hibana.ParallelRegion.split✝ region) current →
           @LT.lt.{0} Nat instLTNat current (Hibana.ParallelRegion.stop✝ region) →
             @Eq.{1} Bool (Hibana.parallelJoinApplies✝ regions joinStart joinStop current false) false
+@Hibana.independent_parallel_visits_have_disjoint_physical_participants : ∀ {visits : Hibana.SourceParallelVisits}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)} {firstEvent secondEvent : Nat}
+  {first second : Hibana.EndpointDelegation.Binding},
+  @Eq.{1} Bool (visits.check bindings) true →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+        (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) bindings
+        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding firstEvent first) →
+      @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) visits.first firstEvent →
+        @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+            (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+            (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)) bindings
+            (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding secondEvent second) →
+          @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) visits.second secondEvent →
+            And (@Ne.{1} Nat first.senderActor second.senderActor)
+              (And (@Ne.{1} Nat first.senderActor second.receiverActor)
+                (And (@Ne.{1} Nat first.receiverActor second.senderActor)
+                  (@Ne.{1} Nat first.receiverActor second.receiverActor)))
 Hibana.initial_global_invariant : ∀ (session roleCount : Nat) (choreo : Hibana.Choreo),
   @LT.lt.{0} Nat instLTNat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) roleCount →
     Hibana.GlobalProgramWellFormed roleCount choreo →
@@ -13018,7 +13118,7 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
     (@Hibana.SourceOccurrenceCut.resumptionReady source
       (@Hibana.SourceOccurrenceCut.mk source (@Hibana.SourceOccurrenceCut.original source plan) ⋯
         (@Hibana.SourceOccurrenceCut.expanded source plan) (@Hibana.SourceOccurrenceCut.unfolding source plan)
-        (@Hibana.SourceOccurrenceCut.normalized source plan) ⋯ ⋯ (@Hibana.SourceOccurrenceCut.path source plan) ⋯ ⋯
+        (@Hibana.SourceOccurrenceCut.normalized source plan) ⋯ ⋯ (@Hibana.SourceOccurrenceCut.path source plan) ⋯ ⋯ ⋯
         observed)
       point)
 @Hibana.prepared_roll_is_source_prefix : ∀ {state : Hibana.CommitState} {roll : Hibana.RollInfo}

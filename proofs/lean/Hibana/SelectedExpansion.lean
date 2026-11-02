@@ -28,6 +28,7 @@ private def plan : SourceOccurrenceCut source := {
   sameIssuance := by decide
   path := normalized.paths[0]'(by decide)
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun _ => false
 }

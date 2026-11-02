@@ -18,6 +18,13 @@ executes the production Rust validator and checks its output independently.
 `SourceOccurrenceProjection` and `SourceOccurrenceProgress` describe finite
 unfoldings in which each send, publication and receive has its own occurrence.
 Independent roles and parallel fragments need not advance repetitions together.
+For `roll(par(A, B))`, the occurrence model also admits separate finite
+unfoldings of the two children when their selected physical participants are
+disjoint. Every selected cut checks this separation after delegation binding;
+different logical role names do not establish it. `IndependentParallelVisits`
+checks the resource-return regression against this rule and retains the
+original resource actor and source positions. This does not establish that a
+bounded candidate enumerator includes every legal finite prefix.
 
 `GlobalSemantics` and `DistributedProgress` also contain a model with a common
 repetition boundary. Results using that boundary have that explicit scope.

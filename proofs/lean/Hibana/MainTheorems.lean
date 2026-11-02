@@ -22,6 +22,7 @@ import Hibana.PublicAdmissionCustody
 import Hibana.ResourceHeaderOrigin
 import Hibana.ActorVisitProgress
 import Hibana.SourceOccurrenceProgress
+import Hibana.IndependentParallelVisits
 import Hibana.SelectedExpansion
 import Hibana.SelectedContinuation
 import Hibana.PendingAcceptance

@@ -45,11 +45,13 @@ def checkedPlans (source expanded : Source) (unfolding : SourceUnfolding source 
     | some normalized =>
       if same : normalized.issuance = original.issuance then
         normalized.paths.attach.filterMap fun path =>
-          if guarded : unfolding.guardsCompatible normalized.issuance path.val.bindings = true then
-            some {
-              original, originalAccepted := originalAt, expanded, unfolding,
-              normalized, accepted := expandedAt, sameIssuance := same,
-              path := path.val, selected := path.property, guarded, observed := fun _ => false }
+          if separated : unfolding.parallelCompatible path.val.bindings = true then
+            if guarded : unfolding.guardsCompatible normalized.issuance path.val.bindings = true then
+              some {
+                original, originalAccepted := originalAt, expanded, unfolding,
+                normalized, accepted := expandedAt, sameIssuance := same,
+                path := path.val, selected := path.property, separated, guarded, observed := fun _ => false }
+            else none
           else none
       else []
   | none => []

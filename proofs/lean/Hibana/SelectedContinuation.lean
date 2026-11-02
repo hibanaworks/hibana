@@ -30,6 +30,7 @@ private def overlappingPlan : SourceOccurrenceCut source := {
   sameIssuance := by decide
   path := overlappingNormalization.paths[0]'(by decide)
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun _ => false
 }
@@ -53,6 +54,7 @@ private def interruptedPlan : SourceOccurrenceCut source := {
   sameIssuance := by decide
   path := interruptedNormalization.paths[1]'(by decide)
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun _ => false
 }

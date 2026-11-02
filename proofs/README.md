@@ -403,6 +403,16 @@ Repeated protocols use complete traces with two visits at each nested `roll`.
 Admission plans allow one or two visits independently at those dynamic sites,
 a third visit at one site, and one elastic reentry alongside its continuation.
 Each expansion carries a witness from the source occurrence semantics.
+For a roll directly over parallel children, admission plans also allow unequal
+child visit counts after checking that the selected physical participant sets
+are disjoint. This check includes delegated actors. It permits an independent
+ordinary branch to revisit after the resource branch returns its Endpoint;
+equal whole-body visit counts cannot express that prefix. The checker retains
+both the original issuance and its existing actor and resumption checks.
+The finite candidate horizon is not a completeness argument: a prefix produced
+with two nested visits can require a differently grouped expansion for its
+next operation. That candidate-coverage issue remains separate from the
+physical-separation rule.
 An elastic visit may come from a roll inside sequential or parallel children,
 not just a roll immediately before that continuation. The context preserves
 the original message positions and resources. Reentry through an enclosing

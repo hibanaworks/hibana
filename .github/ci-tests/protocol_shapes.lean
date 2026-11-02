@@ -411,6 +411,12 @@ def shapeTwoCopyUnfolding : (source : Source) → SourceUnfolding source (shapeT
   | .route resolver left right => .route resolver (shapeTwoCopyUnfolding left) (shapeTwoCopyUnfolding right)
   | .roll body => .rollMore (.rollOnce (shapeTwoCopyUnfolding body)) (shapeTwoCopyUnfolding body)
 
+def shapeRollUnfoldings (cuts : List (Σ expanded : Source, SourceUnfolding body expanded)) :
+    List (Σ expanded : Source, SourceUnfolding (.roll body) expanded) :=
+  cuts.map (fun cut => ⟨cut.1, .rollOnce cut.2⟩) ++
+    cuts.flatMap fun first => cuts.map fun second =>
+      ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩
+
 def shapeBoundedUnfoldings :
     (source : Source) → List (Σ expanded : Source, SourceUnfolding source expanded)
   | .send message => [⟨.send message, .send message⟩]
@@ -426,11 +432,12 @@ def shapeBoundedUnfoldings :
       (shapeBoundedUnfoldings left).flatMap fun first =>
         (shapeBoundedUnfoldings right).map fun second =>
           ⟨.route resolver first.1 second.1, .route resolver first.2 second.2⟩
-  | .roll body =>
-      let cuts := shapeBoundedUnfoldings body
-      cuts.map (fun cut => ⟨cut.1, .rollOnce cut.2⟩) ++
-      cuts.flatMap fun first => cuts.map fun second =>
-        ⟨.seq first.1 second.1, .rollMore (.rollOnce first.2) second.2⟩
+  | .roll (.par left right) =>
+      shapeRollUnfoldings (shapeBoundedUnfoldings (.par left right)) ++
+        (shapeRollUnfoldings (shapeBoundedUnfoldings left)).flatMap fun first =>
+          (shapeRollUnfoldings (shapeBoundedUnfoldings right)).map fun second =>
+            ⟨.par first.1 second.1, .rollParallel first.2 second.2⟩
+  | .roll body => shapeRollUnfoldings (shapeBoundedUnfoldings body)
 
 def shapeExtraUnfoldings :
     (source : Source) → List (Σ expanded : Source, SourceUnfolding source expanded)
@@ -602,6 +609,28 @@ def shapePlans : (source : Source) → List (SourceOccurrenceCut source)
       -- resource operation could disappear from this actor's prerequisites,
       -- incorrectly releasing its following ordinary send.
       (cuts.flatMap fun cut => checkedPlans source cut.1 cut.2).filter shapeOriginalActorsMatch
+
+private def disjointReturnedBranch : Source := .seq
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .endpoint ⟨0, 3⟩⟩)
+  (.seq (.roll (.par
+    (.send ⟨⟨0, 3⟩, ⟨0, 2⟩, 1, .wire 0⟩)
+    (.send ⟨⟨0, 4⟩, ⟨0, 5⟩, 2, .wire 0⟩)))
+    (.send ⟨⟨0, 1⟩, ⟨0, 0⟩, 3, .endpoint ⟨0, 3⟩⟩))
+
+theorem shape_checker_keeps_a_disjoint_branch_after_resource_return :
+    shapePermits (shapeStates disjointReturnedBranch
+      ((shapePlans disjointReturnedBranch).map ShapePlan.of) [0, 1, 2, 3, 4, 5, 6, 7])
+      [] 2 false = true := by decide
+
+-- Equal whole-body visit counts are insufficient even for this two-leaf par.
+-- The control uses valid existing unfoldings, rather than changed Rust results.
+theorem a_shared_whole_body_unfolding_misses_the_disjoint_revisit :
+    let one := SourceUnfolding.oneCopy disjointReturnedBranch
+    let two := shapeTwoCopyUnfolding disjointReturnedBranch
+    let plans := (checkedPlans disjointReturnedBranch _ one ++
+      checkedPlans disjointReturnedBranch _ two).filter shapeOriginalActorsMatch
+    shapePermits (shapeStates disjointReturnedBranch (plans.map ShapePlan.of)
+      [0, 1, 2, 3, 4, 5, 6, 7]) [] 2 false = false := by decide
 
 private def nestedRollCuts : Source := .roll (.seq
   (.roll (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 0, .wire 0⟩))

@@ -91,6 +91,12 @@ inductive SourceUnfolding : Source → Source → Type where
   | rollOnce : SourceUnfolding body expanded → SourceUnfolding (.roll body) expanded
   | rollMore : SourceUnfolding (.roll body) earlier → SourceUnfolding body next →
       SourceUnfolding (.roll body) (.seq earlier next)
+  /-- Physically disjoint parallel participants may take different numbers of
+  visits. A selected cut must check the separation of the expanded actors;
+  logical role names alone are insufficient after Endpoint delegation. -/
+  | rollParallel : SourceUnfolding (.roll left) first →
+      SourceUnfolding (.roll right) second →
+      SourceUnfolding (.roll (.par left right)) (.par first second)
   | resumeAfterContinuation (context : RollContext) :
       SourceUnfolding (.seq (context.plug (.roll body)) continuation) earlier →
       SourceUnfolding body next →
@@ -138,6 +144,8 @@ def SourceUnfolding.occurrences : {source expanded : Source} →
       first.occurrences start ++ second.occurrences (start + left.eventCount)
   | _, _, .rollOnce body, start => body.occurrences start
   | _, _, .rollMore earlier next, start => earlier.occurrences start ++ next.occurrences start
+  | .roll (.par left _), _, .rollParallel first second, start =>
+      first.occurrences start ++ second.occurrences (start + left.eventCount)
   | _, _, .resumeAfterContinuation context earlier next, start =>
       earlier.occurrences start ++ next.occurrences (start + context.offset)
   | _, _, @resumeAlongsideContinuation body _ _ _ _ context insertion earlier next tail, start
@@ -177,6 +185,11 @@ theorem source_unfolding_preserves_original_messages
     rcases List.mem_append.mp present with before | after
     · exact left start entry before
     · exact right start entry after
+  | rollParallel first second left right =>
+    intro entry present
+    rcases List.mem_append.mp present with earlier | later
+    · exact List.mem_append_left _ (left start entry earlier)
+    · exact List.mem_append_right _ (right _ entry later)
   | resumeAfterContinuation context earlier next left right =>
     intro entry present
     rcases List.mem_append.mp present with before | after
@@ -211,6 +224,8 @@ theorem source_unfolding_has_one_origin_per_occurrence
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
   | rollOnce body ih => exact ih start
   | rollMore earlier next left right =>
+    simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
+  | rollParallel first second left right =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
   | resumeAfterContinuation context earlier next left right =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
@@ -249,6 +264,8 @@ private def SourceUnfolding.copyRanges : {body expanded : Source} →
       earlier.copyRanges start ++
         [(start + earlierExpanded.eventCount,
           start + earlierExpanded.eventCount + nextExpanded.eventCount)]
+  | _, .par first second, .rollParallel _ _, start =>
+      [(start, start + first.eventCount + second.eventCount)]
 
 -- Structural witnesses locate the focus in the last enclosing roll copy.
 -- They retain scope nesting even when two rolls have the same event bounds.
@@ -285,6 +302,8 @@ def SourceUnfolding.resumptions : {source expanded : Source} →
   | _, _, .rollOnce body, start => body.resumptions start
   | _, .seq first _, .rollMore earlier next, start =>
       earlier.resumptions start ++ next.resumptions (start + first.eventCount)
+  | _, .par first _, .rollParallel left right, start =>
+      left.resumptions start ++ right.resumptions (start + first.eventCount)
   | _, .seq first nextSource, .resumeAfterContinuation context earlier next, start =>
       let nextStart := start + first.eventCount
       let nextEnd := nextStart + nextSource.eventCount
@@ -309,6 +328,71 @@ def SourceUnfolding.resumptions : {source expanded : Source} →
       let shift := fun event => if nextStart ≤ event then event + second.eventCount else event
       scopes ++ earlier.resumptions start ++ next.resumptions nextStart ++
         (tail.resumptions tailStart).map (fun scope => scope.mapEvents shift)
+
+/-- Expanded source positions whose participants visit a parallel roll
+independently. The selected physical bindings must separate these two sets. -/
+structure SourceParallelVisits where
+  first : List Nat
+  second : List Nat
+  deriving Repr, DecidableEq
+
+def SourceParallelVisits.mapEvents (visits : SourceParallelVisits)
+    (f : Nat → Nat) : SourceParallelVisits :=
+  ⟨visits.first.map f, visits.second.map f⟩
+
+def SourceParallelVisits.check (visits : SourceParallelVisits)
+    (bindings : List (Nat × Binding)) : Bool :=
+  bindings.all fun (event, first) =>
+    !visits.first.contains event || bindings.all fun (other, second) =>
+      !visits.second.contains other ||
+        (first.senderActor != second.senderActor && first.senderActor != second.receiverActor &&
+          first.receiverActor != second.senderActor && first.receiverActor != second.receiverActor)
+
+def SourceUnfolding.parallelVisits : {source expanded : Source} →
+    SourceUnfolding source expanded → Nat → List SourceParallelVisits
+  | _, _, .send _, _ => []
+  | _, .seq first _, .seq left right, start
+  | _, .par first _, .par left right, start
+  | _, .route _ first _, .route _ left right, start =>
+      left.parallelVisits start ++ right.parallelVisits (start + first.eventCount)
+  | _, _, .rollOnce body, start => body.parallelVisits start
+  | _, .seq first _, .rollMore earlier next, start =>
+      earlier.parallelVisits start ++ next.parallelVisits (start + first.eventCount)
+  | _, .par first second, .rollParallel left right, start =>
+      ⟨List.range' start first.eventCount,
+        List.range' (start + first.eventCount) second.eventCount⟩ ::
+        (left.parallelVisits start ++ right.parallelVisits (start + first.eventCount))
+  | _, .seq first _, .resumeAfterContinuation _ earlier next, start =>
+      earlier.parallelVisits start ++ next.parallelVisits (start + first.eventCount)
+  | _, _, @resumeAlongsideContinuation _ _ first second _ _ insertion earlier next tail, start
+  | _, _, @resumeBeforeContinuation _ _ first second _ _ insertion earlier next tail, start =>
+      let tailStart := start + first.eventCount
+      let nextStart := tailStart + insertion.offset
+      let shift := fun event => if nextStart ≤ event then event + second.eventCount else event
+      earlier.parallelVisits start ++ next.parallelVisits nextStart ++
+        (tail.parallelVisits tailStart).map (fun visits => visits.mapEvents shift)
+
+def SourceUnfolding.parallelCompatible (unfolding : SourceUnfolding source expanded)
+    (bindings : List (Nat × Binding)) : Bool :=
+  (unfolding.parallelVisits 0).all (fun visits => visits.check bindings)
+
+/-- Independent visit counts cannot silently share a physical sender or
+receiver, including when a logical resource is currently held by another role. -/
+theorem independent_parallel_visits_have_disjoint_physical_participants
+    {visits : SourceParallelVisits} {bindings : List (Nat × Binding)}
+    {firstEvent secondEvent : Nat} {first second : Binding}
+    (checked : visits.check bindings = true)
+    (firstAt : (firstEvent, first) ∈ bindings) (firstInside : firstEvent ∈ visits.first)
+    (secondAt : (secondEvent, second) ∈ bindings) (secondInside : secondEvent ∈ visits.second) :
+    first.senderActor ≠ second.senderActor ∧ first.senderActor ≠ second.receiverActor ∧
+      first.receiverActor ≠ second.senderActor ∧ first.receiverActor ≠ second.receiverActor := by
+  have row := List.all_eq_true.mp checked (firstEvent, first) firstAt
+  have inside := List.contains_iff_mem.mpr firstInside
+  simp only [inside, Bool.not_true, Bool.false_or] at row
+  have other := List.all_eq_true.mp row (secondEvent, second) secondAt
+  have alsoInside := List.contains_iff_mem.mpr secondInside
+  simpa only [alsoInside, Bool.not_true, Bool.false_or, Bool.and_eq_true, bne_iff_ne,
+    and_assoc] using other
 
 /-- Ownership at a source boundary, derived from immutable selected bindings.
 Ordinary participants keep their role identity; transfers update only their
@@ -407,8 +491,15 @@ structure SourceOccurrenceCut (source : Source) where
   sameIssuance : normalized.issuance = original.issuance
   path : NormalizedPath
   selected : path ∈ normalized.paths
+  separated : unfolding.parallelCompatible path.bindings = true
   guarded : unfolding.guardsCompatible normalized.issuance path.bindings = true
   observed : SourcePoint → Bool
+
+theorem a_selected_parallel_visit_has_its_physical_separation
+    (plan : SourceOccurrenceCut source) (visits : SourceParallelVisits)
+    (present : visits ∈ plan.unfolding.parallelVisits 0) :
+    visits.check plan.path.bindings = true :=
+  List.all_eq_true.mp plan.separated visits present
 
 /-- A resumed operation in a selected path has a selected anchor for every
 enclosing choice/visit guard. A previous, unselected arm cannot supply it. -/
@@ -549,6 +640,7 @@ private def pipelineCut : SourceOccurrenceCut (.roll (.send pipelineMessage)) :=
   sameIssuance := rfl
   path := ⟨[], pipelineBindings⟩
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := firstSendPublished
 }
@@ -592,6 +684,7 @@ private def unevenCut : SourceOccurrenceCut unevenSource := {
   sameIssuance := rfl
   path := ⟨[], unevenBindings⟩
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun point => point = .accepted 0 || point = .committed ⟨0, .send⟩ ||
     point = .accepted 1 || point = .committed ⟨1, .send⟩
@@ -638,6 +731,7 @@ private def loanCut : SourceOccurrenceCut (.roll loanBody) := {
   sameIssuance := rfl
   path := ⟨[], loanBindings 0 ++ loanBindings 4⟩
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun point => match point with
     | .accepted event => event < 4
@@ -678,6 +772,7 @@ private def resumedLoanCut : SourceOccurrenceCut loanWithContinuation := {
   sameIssuance := rfl
   path := ⟨[], resumedLoanBindings⟩
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun point => match point with
     | .accepted event => event < 5
@@ -724,6 +819,7 @@ private def exchangePlan : SourceOccurrenceCut exchangeSource := {
   sameIssuance := rfl
   path := ⟨[], exchangeBindings⟩
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun _ => false
 }
@@ -762,6 +858,7 @@ private def exchangeAfterContinuation : SourceOccurrenceCut exchangeSource := {
     (2, ⟨exchangeFinish, 1, 0⟩), (3, ⟨exchangeStart, 0, 1⟩),
     (4, ⟨exchangeAck, 1, 0⟩)]⟩
   selected := by decide
+  separated := by decide
   guarded := by decide
 }
 
@@ -807,6 +904,7 @@ private def choiceCut : SourceOccurrenceCut (.roll choiceBody) := {
   sameIssuance := rfl
   path := choicePath .left .right
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := firstSendPublished
 }
