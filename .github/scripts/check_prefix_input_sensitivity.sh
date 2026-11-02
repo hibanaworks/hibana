@@ -23,7 +23,18 @@ for mutation in forget-inputs choose-future; do
       ;;
     choose-future)
       # Retaining every fresh choice would incorrectly fix later roll visits.
-      perl -0pe 's/shapeScopeEntered scope before \|\| !shapeScopeEntered scope after \|\|/shapeScopeEntered scope before ||/g == 1 or die "missing scope-entry check\n"' \
+      # The pure predicate is shared by prepared queries and the source rule.
+      # Its fresh-entry lemma remains true under the stronger, incorrect
+      # predicate; adapt that proof so the control fails at the concrete
+      # future-choice claim rather than at a stale proof expression.
+      perl -0pe '
+        s/!shapeResolverEnteredFrom originals occurrences scope id after \|\|\s+//g == 1
+          or die "missing prepared scope-entry check\n";
+        s/change \(shapeResolverEntered plan scope id before \|\|\n    !shapeResolverEntered plan scope id after \|\| _\) = true at scopeChecked/change (shapeResolverEntered plan scope id before || _) = true at scopeChecked/g == 1
+          or die "missing fresh-entry proof\n";
+        s/\[fresh, entered, Bool\.not_true, Bool\.false_or\]/[fresh, Bool.false_or]/g == 1
+          or die "missing fresh-entry simplification\n";
+      ' \
         "${OUTPUT}/original.lean" > "${OUTPUT}/${mutation}.lean"
       expected=replay_does_not_choose_a_future_resolver_before_entry
       ;;
