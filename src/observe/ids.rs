@@ -226,7 +226,8 @@ pub const PROJECTED_INITIAL_ACTOR: u16 = 0x0317;
 ///
 /// Endpoint facts use `ENDPOINT_*`, transport facts use `TRANSPORT_*`, lane
 /// lifecycle facts use `LANE_*`, and dynamic route authority decisions use this
-/// event. It is emitted once per dynamic resolver decision.
+/// event. It is emitted when each dynamic resolver call returns its decision,
+/// including a successful offer whose preview is subsequently dropped.
 ///
 /// - `arg0`: full [`SessionId`](crate::runtime::ids::SessionId) raw value
 /// - `arg1`: route_site<<16 | resolver_id

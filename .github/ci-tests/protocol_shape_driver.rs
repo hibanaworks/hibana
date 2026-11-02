@@ -328,6 +328,16 @@ async fn replay(
         vec![0; 128 * 1024],
     ];
     let [slab0, slab1, slab2, slab3] = &mut slabs;
+    let resolver_calls = std::cell::Cell::new(0usize);
+    let resolver_audits = std::cell::Cell::new(0usize);
+    let resolver_input = (decisions, &resolver_calls);
+    let capture = |event: hibana::runtime::tap::TapEvent| {
+        if event.id() == hibana::runtime::tap::RESOLVER_AUDIT {
+            resolver_audits.set(resolver_audits.get() + 1);
+            assert_eq!(resolver_audits.get(), resolver_calls.get(),
+                "an audit must describe an actual resolver call, not a later commit");
+        }
+    };
     let mut storage0 = SessionKitStorage::uninit();
     let mut storage1 = SessionKitStorage::uninit();
     let mut storage2 = SessionKitStorage::uninit();
@@ -336,6 +346,9 @@ async fn replay(
     let rv1 = storage1.init().rendezvous(slab1, network.clone()).unwrap();
     let rv2 = storage2.init().rendezvous(slab2, network.clone()).unwrap();
     let rv3 = storage3.init().rendezvous(slab3, network).unwrap();
+    for rv in [&rv0, &rv1, &rv2, &rv3] {
+        rv.observe(&capture);
+    }
     macro_rules! register {
         ($id:literal) => {
             if resolver_count > $id {
@@ -351,8 +364,9 @@ async fn replay(
                             {
                                 rv.set_resolver(
                                     $program.as_ref().unwrap(),
-                                    ResolverRef::<$id>::decision_state(decisions, |c| {
-                                        Ok(c.choose($id))
+                                    ResolverRef::<$id>::decision_state(&resolver_input, |input| {
+                                        input.1.set(input.1.get() + 1);
+                                        Ok(input.0.choose($id))
                                     }),
                                 )
                                 .unwrap();
@@ -405,7 +419,10 @@ async fn replay(
         if park_before_last && index + 1 == commands.len() {
             macro_rules! park {
                 ($endpoint:expr) => {{
-                    match in_process::timeout(core::time::Duration::from_millis(1), $endpoint.offer()).await {
+                    let offered = in_process::timeout(core::time::Duration::from_millis(1), $endpoint.offer()).await;
+                    assert_eq!(resolver_audits.get(), resolver_calls.get(),
+                        "offering a generated branch must record each resolver call");
+                    match offered {
                         Ok(Ok(branch)) => {
                             parked_label = Some(branch.label());
                             drop(branch);
@@ -548,6 +565,8 @@ async fn replay(
             0 => dispatch_labels!(),
             _ => panic!("generated message contract outside dispatch inventory"),
         };
+        assert_eq!(resolver_audits.get(), resolver_calls.get(),
+            "generated typed operations must preserve resolver observations");
         for count in [
             views0.iter().filter(|value| value.is_some()).count(),
             views1.iter().filter(|value| value.is_some()).count(),

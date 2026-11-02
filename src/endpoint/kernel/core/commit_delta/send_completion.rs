@@ -4,8 +4,7 @@
 use super::*;
 use crate::endpoint::kernel::core::{
     PendingSendIo, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendInitOutcome,
-    SendKernelEndpoint, SendPreview, SendProgressCommitPlan, SendRouteAudit, SendRouteAuthority,
-    SendRuntimeDesc, SendState, kernel_send,
+    SendKernelEndpoint, SendPreview, SendRouteAuthority, SendRuntimeDesc, SendState, kernel_send,
 };
 use crate::endpoint::kernel::lane_port;
 use crate::endpoint::{SendError, SendResult};
@@ -100,16 +99,13 @@ fn observe_admission(boundary: ResultClass, admission: ResultClass) -> Observati
     let plan = SendCommitPlan {
         proof: SendCommitProof {
             transfer: None,
-            progress: SendProgressCommitPlan {
-                delta: PreparedCommitDelta {
-                    event: None,
-                    selected_routes: PreparedRouteCommitRows::empty(),
-                    fresh_route_start: PreparedCommitDelta::NO_FRESH_ROUTE,
-                    lane_relocation: None,
-                    cursor_after: StateIndex::new(0),
-                    body_reentry: ScopeId::none(),
-                },
-                route_audit: SendRouteAudit::None,
+            progress: PreparedCommitDelta {
+                event: None,
+                selected_routes: PreparedRouteCommitRows::empty(),
+                fresh_route_start: PreparedCommitDelta::NO_FRESH_ROUTE,
+                lane_relocation: None,
+                cursor_after: StateIndex::new(0),
+                body_reentry: ScopeId::none(),
             },
             _borrow: core::marker::PhantomData,
         },

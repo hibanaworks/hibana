@@ -2,7 +2,7 @@
 use super::{Protocol, localside};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) const COUNT: usize = 14;
+pub(super) const COUNT: usize = 15;
 pub(super) const VARIANTS: usize = 4;
 
 /// Source positions whose sends have the same public selector in opposite
@@ -144,6 +144,17 @@ pub(super) fn protocol(rank: usize) -> Protocol {
         owned,
     };
     let seq = |left, right| Protocol::Seq(Box::new(left), Box::new(right));
+    if rank == 14 {
+        return Protocol::Resolved(
+            Box::new(Protocol::Resolved(
+                Box::new(message(0, 0, false)),
+                Box::new(message(0, 0, false)),
+                0,
+            )),
+            Box::new(message(0, 0, false)),
+            0,
+        );
+    }
     if rank == 12 {
         let body = seq(
             message(0, 1, true),

@@ -56,11 +56,7 @@ where
     }
 
     #[inline(never)]
-    pub(super) fn commit_send_route_evidence_delta(
-        &mut self,
-        delta: &CommittedCommitDelta,
-        begin_route_start: Option<usize>,
-    ) {
+    pub(super) fn commit_send_route_evidence_delta(&mut self, delta: &CommittedCommitDelta) {
         let routes = delta.selected_routes();
         if routes.len() == 0 {
             return;
@@ -69,49 +65,7 @@ where
         let mut idx = 0usize;
         while idx < routes.len() {
             let route_row = crate::invariant_some(routes.get(&self.progress.cursor, idx));
-            // A resolver's fresh selection may contain message-based choices.
-            // Only rows with a resolver publish resolver success evidence.
-            if begin_route_start.is_some_and(|start| idx >= start)
-                && self
-                    .progress
-                    .cursor
-                    .route_scope_resolver(route_row.scope())
-                    .is_some()
-                && !delta.route_is_fresh(idx)
-            {
-                crate::invariant();
-            }
             self.commit_send_route_row_evidence(route_row, route_lane);
-            idx += 1;
-        }
-    }
-
-    #[inline(never)]
-    pub(super) fn publish_send_resolver_success_audits_from(
-        &self,
-        delta: &CommittedCommitDelta,
-        start: u16,
-    ) {
-        let routes = delta.selected_routes();
-        if routes.len() == 0 {
-            return;
-        }
-        let route_lane = crate::invariant_some(delta.selected_route_lane());
-        let mut idx = start as usize;
-        while idx < routes.len() {
-            let Some(route_row) = routes.get(&self.progress.cursor, idx) else {
-                crate::invariant();
-            };
-            let scope_id = route_row.scope();
-            if let Some(resolver) = self.progress.cursor.route_scope_resolver(scope_id) {
-                let resolver_id = resolver.resolver_id();
-                let arm = match route_row.selected_arm() {
-                    0 => crate::session::cluster::core::DecisionArm::Left,
-                    1 => crate::session::cluster::core::DecisionArm::Right,
-                    _ => crate::invariant(),
-                };
-                self.emit_dynamic_resolver_success_audit(route_lane, scope_id, resolver_id, arm);
-            }
             idx += 1;
         }
     }

@@ -10,7 +10,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         &mut self,
         plan: &mut SendCommitPlan<'r>,
     ) -> Poll<SendResult<()>> {
-        let prepared = &plan.proof.progress.delta;
+        let prepared = &plan.proof.progress;
         let event = prepared.event().ok_or(SendError::PhaseInvariant)?;
         if !self.region.contains(event.eff_index().dense_ordinal()) {
             return Poll::Ready(Err(SendError::PhaseInvariant));
@@ -115,7 +115,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             }
             _ => return Poll::Ready(Err(SendError::PhaseInvariant)),
         }
-        plan.proof.progress.delta = fresh;
+        plan.proof.progress = fresh;
         Poll::Ready(Ok(()))
     }
 }

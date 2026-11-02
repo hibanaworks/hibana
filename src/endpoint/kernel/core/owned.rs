@@ -50,11 +50,11 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 let Some(plan) = pending.commit_plan.as_ref() else {
                     continue;
                 };
-                if plan.proof.progress.delta.body_reentry() != scope {
+                if plan.proof.progress.body_reentry() != scope {
                     continue;
                 }
                 let (Some(transfer), Some(pending_event)) =
-                    (plan.proof.transfer, plan.proof.progress.delta.event())
+                    (plan.proof.transfer, plan.proof.progress.event())
                 else {
                     continue;
                 };

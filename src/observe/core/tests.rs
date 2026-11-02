@@ -36,6 +36,99 @@ fn synchronous_observation_retains_the_prefix_when_the_ring_overwrites() {
 
 struct Immediate;
 
+#[hibana_runtime::main(Immediate)]
+#[test]
+async fn resolver_observations_match_calls_across_offers_and_rolled_visits()
+-> Result<(), core::convert::Infallible> {
+    use crate::{
+        g,
+        runtime::{
+            SessionKitStorage,
+            ids::SessionId,
+            program::project,
+            resolver::{DecisionArm, ResolverRef},
+            tap,
+        },
+    };
+    type Left = g::Msg<1, ()>;
+    type Right = g::Msg<2, ()>;
+    type Continue = g::Msg<3, ()>;
+    let global = g::route(
+        g::seq(g::send::<0, 0, Left>(), g::send::<0, 0, Continue>()),
+        g::seq(g::send::<0, 0, Right>(), g::send::<0, 0, Continue>()),
+    )
+    .resolve::<77>()
+    .roll();
+    let program = project::<0>(&global);
+    for arm in [DecisionArm::Left, DecisionArm::Right] {
+        for mode in 0..3 {
+            let calls = core::cell::Cell::new(0);
+            let input = (&calls, arm);
+            let captured = core::cell::Cell::new(std::vec::Vec::new());
+            let observer = |event| {
+                let mut rows = captured.take();
+                rows.push(event);
+                captured.set(rows);
+            };
+            let mut slab = std::vec![0; 128 * 1024];
+            let mut storage = SessionKitStorage::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(
+                    &mut slab,
+                    crate::test_support::transport::TestTransport::new(),
+                )
+                .unwrap();
+            rv.observe(&observer);
+            rv.set_resolver(
+                &program,
+                ResolverRef::<77>::decision_state(&input, |input| {
+                    input.0.set(input.0.get() + 1);
+                    Ok(input.1)
+                }),
+            )
+            .unwrap();
+            let mut endpoint = rv.enter(SessionId::new(1), &program).unwrap();
+            for visit in 1..=2 {
+                if mode == 1 {
+                    let branch = endpoint.offer().await.unwrap();
+                    assert_eq!(calls.get(), visit);
+                    match arm {
+                        DecisionArm::Left => branch.send::<Left>(&()).await.unwrap(),
+                        DecisionArm::Right => branch.send::<Right>(&()).await.unwrap(),
+                    }
+                } else {
+                    if mode == 2 {
+                        drop(endpoint.offer().await.unwrap());
+                        assert_eq!(calls.get(), visit);
+                    }
+                    match arm {
+                        DecisionArm::Left => endpoint.send::<Left>(&()).await.unwrap(),
+                        DecisionArm::Right => endpoint.send::<Right>(&()).await.unwrap(),
+                    }
+                }
+                endpoint.send::<Continue>(&()).await.unwrap();
+                assert_eq!(
+                    calls.get(),
+                    visit,
+                    "continuation must reuse the chosen branch"
+                );
+            }
+            let rows = captured.take();
+            let audits: std::vec::Vec<_> = rows
+                .iter()
+                .filter(|row| row.id() == tap::RESOLVER_AUDIT)
+                .collect();
+            assert_eq!(audits.len(), calls.get());
+            for audit in audits {
+                assert_eq!(audit.arg1() & 0xffff, 77);
+                assert_eq!(audit.causal_key() & 0xff, u16::from(arm.index()));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl hibana_runtime::Driver for Immediate {
     fn waker(&self) -> core::task::Waker {
         core::task::Waker::noop().clone()

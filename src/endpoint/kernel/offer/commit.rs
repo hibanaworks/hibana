@@ -1,6 +1,5 @@
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::typestate::state_index_to_usize;
-use crate::session::cluster::core::DecisionArm;
 use crate::transport::Transport;
 
 use super::super::authority::{Arm, RouteArmToken};
@@ -131,20 +130,13 @@ where
             }
             if committed.route_is_fresh(route_idx)
                 && self.is_route_controller(row.scope())
-                && let Some(resolver) = self.progress.cursor.route_scope_resolver(row.scope())
+                && self
+                    .progress
+                    .cursor
+                    .route_scope_resolver(row.scope())
+                    .is_some()
             {
-                let arm = match row.selected_arm() {
-                    0 => DecisionArm::Left,
-                    1 => DecisionArm::Right,
-                    _ => crate::invariant(),
-                };
                 let lane = self.offer_lane_for_scope(row.scope());
-                self.emit_dynamic_resolver_success_audit(
-                    lane,
-                    row.scope(),
-                    resolver.resolver_id(),
-                    arm,
-                );
                 self.emit_route_arm_selection(
                     row.scope(),
                     RouteArmToken::from_resolver(Arm::from_raw(row.selected_arm())),

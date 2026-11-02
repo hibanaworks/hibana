@@ -1,7 +1,7 @@
 use super::{
-    CursorInvariantError, OperationKernel, PendingSendIo, Poll, SendCommitOutcome, SendCommitPlan,
-    SendCommitProof, SendError, SendInitOutcome, SendMeta, SendProgressCommitPlan, SendResult,
-    SendRouteAudit, SendRouteAuthority, SendRuntimeDesc, StateIndex, Transport, ids, lane_port,
+    CursorInvariantError, OperationKernel, PendingSendIo, Poll, PreparedCommitDelta,
+    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome, SendMeta,
+    SendResult, SendRouteAuthority, SendRuntimeDesc, StateIndex, Transport, ids, lane_port,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -18,7 +18,7 @@ where
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
         route_authority: SendRouteAuthority,
-    ) -> SendResult<SendProgressCommitPlan> {
+    ) -> SendResult<PreparedCommitDelta> {
         if !self.region.contains(meta.eff_index.dense_ordinal()) {
             return Err(SendError::PhaseInvariant);
         }
@@ -29,10 +29,7 @@ where
         let preview_conflict = self.progress.cursor.event_conflict_for_index(preview_idx);
         let route_rows = match route_authority {
             SendRouteAuthority::None => super::SelectedRouteCommitRowsRef::EMPTY,
-            SendRouteAuthority::Direct {
-                lane,
-                audit_start: _,
-            } => {
+            SendRouteAuthority::Direct { lane } => {
                 let selected_routes = self.build_send_selected_route_rows(preview_idx, meta)?;
                 if lane != meta.lane || selected_routes.selected_lane() != Some(lane) {
                     return Err(SendError::PhaseInvariant);
@@ -43,7 +40,6 @@ where
                 self.build_send_selected_route_rows(preview_idx, meta)?
             }
         };
-        let route_audit = route_authority.route_audit();
         let mut selected_arm = |scope, view| {
             if matches!(view, crate::global::typestate::EventArmView::Committed) {
                 return self.selected_arm_for_scope(scope);
@@ -104,27 +100,21 @@ where
             Ok(delta) => delta,
             Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
         };
-        Ok(SendProgressCommitPlan { delta, route_audit })
+        Ok(delta)
     }
 
     #[inline(never)]
     fn publish_send_progress_commit_plan(
         &mut self,
-        plan: SendProgressCommitPlan,
+        plan: PreparedCommitDelta,
         transfer: Option<crate::endpoint::transfer::EndpointTransfer>,
     ) {
         let (committed, owner) =
-            self.commit_prepared_delta(plan.delta, transfer.map(super::PreparedViewCommit::Retire));
+            self.commit_prepared_delta(plan, transfer.map(super::PreparedViewCommit::Retire));
         if owner.is_some() {
             crate::invariant();
         }
-        match plan.route_audit {
-            SendRouteAudit::DirectPreview { start } => {
-                self.publish_send_resolver_success_audits_from(&committed, start)
-            }
-            SendRouteAudit::None => {}
-        }
-        self.commit_send_route_evidence_delta(&committed, plan.route_audit.fresh_route_start());
+        self.commit_send_route_evidence_delta(&committed);
         self.emit_send_after_transport_event(&committed);
     }
 
@@ -301,8 +291,7 @@ where
         let lane_wire = pending.lane_wire();
         let prepared = &crate::invariant_some(pending.commit_plan.as_ref())
             .proof
-            .progress
-            .delta;
+            .progress;
         let event = crate::invariant_some(prepared.event());
         let observation = crate::observe::events::send_poll(
             self.progress.cursor.role(),

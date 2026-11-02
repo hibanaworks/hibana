@@ -1,12 +1,5 @@
 use super::commit_delta::PreparedCommitDelta;
-use super::{
-    Lane, LaneGuard, Port, ResidentActor, SendResult, SendRouteAudit, Transport, lane_port,
-};
-
-pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
-    pub(crate) delta: PreparedCommitDelta,
-    pub(crate) route_audit: SendRouteAudit,
-}
+use super::{Lane, LaneGuard, Port, ResidentActor, SendResult, Transport, lane_port};
 
 mod commit;
 pub(crate) use commit::{CommitDelta, CommitEventRow, CommitRow};
@@ -14,7 +7,7 @@ pub(crate) use commit::{CommitDelta, CommitEventRow, CommitRow};
 pub(crate) struct SendCommitProof<'rv> {
     pub(in crate::endpoint::kernel::core) transfer:
         Option<crate::endpoint::transfer::EndpointTransfer>,
-    pub(in crate::endpoint::kernel::core) progress: SendProgressCommitPlan,
+    pub(in crate::endpoint::kernel::core) progress: PreparedCommitDelta,
     pub(in crate::endpoint::kernel::core) _borrow: core::marker::PhantomData<&'rv ()>,
 }
 

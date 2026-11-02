@@ -195,7 +195,7 @@ impl OperationIo<'_> {
         let SendState::Sending { pending } = &self.public_send_state else {
             return None;
         };
-        let event = pending.commit_plan.as_ref()?.proof.progress.delta.event()?;
+        let event = pending.commit_plan.as_ref()?.proof.progress.event()?;
         Some((
             event.eff_index().dense_ordinal(),
             event.event_label(),

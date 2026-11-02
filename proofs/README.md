@@ -538,7 +538,7 @@ Elastic reentry negatives also use source witnesses: an unguarded global head
 and a matching send in its sequential continuation, including after a parallel
 join. This classifier does not infer additional local heads from logical roles.
 Rejections outside its proven cases still fail the gate as unclassified.
-The fixed `--contracts 0 14` catalog additionally combines repeated contracts
+The fixed `--contracts 0 15` catalog additionally combines repeated contracts
 with opposite directions, independent parallel fragments, a resolver, repetition
 and actual endpoint delegation. It also exercises an unread selected route arm
 beside an independent receive with the other arm's public contract, both with
@@ -669,6 +669,16 @@ opposite-direction cases must pass on the current source and fail when only
 the resolver send-selection fix is reversed in a separate checkout. It retains
 the exact patch, input hashes and failure, then removes that checkout and its
 build cache.
+Generated replays also count actual resolver callbacks and synchronously
+observed `RESOLVER_AUDIT` records, including outgoing offers, dropped previews
+and later typed operations. Each callback must have one observation before
+the API returns or suspends. `check_resolver_observation_sensitivity.sh`
+separately removes the observation from each resolver invocation path and
+requires these generated executions to fail. Compiler errors do not qualify.
+This connects the Rust observation producers to the audit contract; source
+execution theorems alone do not establish that Rust emitted every required
+record. In particular, a resolver-backed outgoing `offer()` must be recorded
+even when its branch is subsequently sent or dropped without a commit.
 `check_recv_contract_sensitivity.sh` reverses only the unrelated-head retention
 condition. It runs both receive families, including every contract assignment.
 The plain family must fail its required probe inventory: rejecting the receive

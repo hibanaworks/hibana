@@ -21,8 +21,8 @@ where
         if rows.is_empty() {
             return Ok(SendRouteAuthority::none());
         }
-        let audit_start = self.resolve_send_route_preview_rows(meta, rows, preview_idx)?;
-        Ok(SendRouteAuthority::direct(meta.lane, audit_start))
+        self.resolve_send_route_preview_rows(meta, rows, preview_idx)?;
+        Ok(SendRouteAuthority::direct(meta.lane))
     }
 
     pub(crate) fn verify_send_route_authority(
@@ -44,10 +44,7 @@ where
                     Err(SendError::PhaseInvariant)
                 }
             }
-            SendRouteAuthority::Direct {
-                lane,
-                audit_start: _,
-            } => {
+            SendRouteAuthority::Direct { lane } => {
                 if lane != meta.lane || current.is_empty() || current.selected_lane() != Some(lane)
                 {
                     return Err(SendError::PhaseInvariant);
@@ -101,11 +98,7 @@ where
         meta: &SendMeta,
         rows: SelectedRouteCommitRowsRef,
         preview_idx: usize,
-    ) -> SendResult<u16> {
-        if rows.len() > u16::MAX as usize {
-            return Err(SendError::PhaseInvariant);
-        }
-        let mut audit_start = rows.len() as u16;
+    ) -> SendResult<()> {
         let fresh_start = self
             .fresh_route_start_for_rows(rows, preview_idx, Some(meta.lane))
             .map_err(|_| SendError::PhaseInvariant)?;
@@ -129,13 +122,10 @@ where
                 idx += 1;
                 continue;
             };
-            if audit_start as usize == rows.len() {
-                audit_start = idx as u16;
-            }
             self.resolve_dynamic_route_arm_for_send_preview(meta, arm_index, resolver)?;
             idx += 1;
         }
-        Ok(audit_start)
+        Ok(())
     }
 
     fn resolve_dynamic_route_arm_for_send_preview(
@@ -230,7 +220,15 @@ where
             return Err(SendError::SessionFault(kind));
         }
         match resolver_result {
-            Ok(resolution) => Ok(resolution),
+            Ok(resolution) => {
+                self.emit_dynamic_resolver_success_audit(
+                    lane,
+                    scope_id,
+                    resolver.resolver_id(),
+                    resolution,
+                );
+                Ok(resolution)
+            }
             Err(crate::session::cluster::error::ClusterError::ResolverReject { resolver_id }) => {
                 self.emit_dynamic_resolver_reject_audit(lane, scope_id, resolver_id);
                 Err(SendError::ResolverReject { resolver_id })

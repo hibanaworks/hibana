@@ -194,6 +194,53 @@ fn endpoint_events_do_not_emit_resolver_audit_and_retain_latest_twenty_one() {
 }
 
 #[test]
+fn outgoing_offer_records_the_resolver_before_branch_send() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster.rendezvous(slab, transport).expect("rendezvous");
+            let origin_program = simple_route_program::<0>();
+            let target_program = simple_route_program::<1>();
+            rv.set_resolver(
+                &origin_program,
+                ResolverRef::<ROUTE_RESOLVER>::decision_state(&ROUTE_STATE, choose_left),
+            )
+            .expect("install resolver");
+            let sid = SessionId::new(0x0004_0005);
+            let mut origin = rv.enter(sid, &origin_program).expect("origin");
+            let mut target = rv.enter(sid, &target_program).expect("target");
+            let branch = futures::executor::block_on(origin.offer()).expect("outgoing offer");
+            assert_eq!(branch.label(), 11);
+            let before_send = rv.tap().collect::<Vec<_>>();
+            let audit = before_send
+                .iter()
+                .find(|event| event.id() == tap::RESOLVER_AUDIT)
+                .expect("the actual resolver call must be observable before sending");
+            assert_eq!(resolver_id(*audit), u32::from(ROUTE_RESOLVER));
+            assert_eq!(resolver_result(*audit), 0);
+            assert_eq!(audit.arg0(), sid.raw());
+            futures::executor::block_on(branch.send::<Msg<11, ()>>(&())).expect("branch send");
+            futures::executor::block_on(target.recv::<Msg<11, ()>>()).expect("receive");
+            let events = rv.tap().collect::<Vec<_>>();
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event.id() == tap::RESOLVER_AUDIT)
+                    .count(),
+                1,
+                "committing the branch must not invent another resolver call"
+            );
+            for selection in events.iter().filter(|event| {
+                event.id() == tap::ROUTE_ARM_SELECTION && event.causal_key() & 0xff == 2
+            }) {
+                assert!(audit.ts() < selection.ts());
+                assert_eq!(resolver_route_site(*audit), resolver_route_site(*selection));
+            }
+        });
+    });
+}
+
+#[test]
 fn dynamic_resolver_success_emits_one_reversible_audit() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();

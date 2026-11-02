@@ -625,6 +625,12 @@ where
                 | ClusterError::DynamicResolverInvariant { .. },
             ) => return Err(RecvError::PhaseInvariant),
         };
+        self.emit_dynamic_resolver_success_audit(
+            offer_lane,
+            scope_id,
+            resolver.resolver_id(),
+            resolution,
+        );
         let arm = Arm::from_raw(resolution.index());
         Ok(RouteResolveStep::Resolved(arm))
     }
