@@ -1,0 +1,34 @@
+error[E0080]: evaluation panicked: rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll
+ --> src/g.rs
+  |
+  |             diagnostic_message::panic_diagnostic(diagnostic);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<0, hibana::Endpoint<'_, 3>>>, hibana::g::Seq<hibana::g::Roll<hibana::g::Par<hibana::g::Send<3, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<2, ()>>>>, hibana::g::Send<1, 0, hibana::g::Msg<3, hibana::Endpoint<'_, 3>>>>>, 16>::VALIDATION` failed inside this call
+  |
+note: inside `g::diagnostic_message::panic_diagnostic`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_display(&$arg);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/g/diagnostic_message.rs
+  |
+  |         Ok(message) => panic!("{}", message),
+  |                        --------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     let () = ProgramProjection::<Steps, CAPACITY>::VALIDATION;
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/global/role_program/program.rs
+  |
+  |     crate::global::program::bind_projection(program, const { crate::g::project_image::<ROLE, _>() })
+  |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn project::<0, Program<Seq<hibana::g::Send<0, 1, Msg<0, Endpoint<'_, 3>>>, Seq<Roll<Par<hibana::g::Send<3, 2, Msg<1, ()>>, hibana::g::Send<0, 1, Msg<2, ()>>>>, hibana::g::Send<1, 0, Msg<3, Endpoint<'_, 3>>>>>>>`
+  --> tests/ui/g-owned-roll-parallel-holder-reentry.rs:15:13
+   |
+15 |     let _ = project::<0>(&global);
+   |             ^^^^^^^^^^^^^^^^^^^^^

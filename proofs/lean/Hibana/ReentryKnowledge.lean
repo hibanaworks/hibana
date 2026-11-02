@@ -29,6 +29,58 @@ inductive ReentryAuthority (source : Source) (sender receiver : Nat → Nat)
       (prior : ReentryAuthority source sender receiver owner earlier) :
       ReentryAuthority source sender receiver owner event
 
+/-- A repeated parent joins the actions of each participating physical actor,
+including actions through distinct logical views. Sharing an actor couples
+the required visit; it does not supply a causal permission to start it. -/
+inductive ReentryComponent (active resourceUse : Nat → Prop) (sender receiver : Nat → Nat) :
+    Nat → Prop where
+  | resource {event} (present : active event) (uses : resourceUse event) :
+      ReentryComponent active resourceUse sender receiver event
+  | shared {earlier event}
+      (prior : ReentryComponent active resourceUse sender receiver earlier) (present : active event)
+      (actor : sender earlier = sender event ∨ sender earlier = receiver event ∨
+        receiver earlier = sender event ∨ receiver earlier = receiver event) :
+      ReentryComponent active resourceUse sender receiver event
+
+/-- Resource seeding and closure over shared actors include every action in
+the required component, even through a chain of ordinary parallel messages.
+No relation to an actor outside that component is assumed. -/
+theorem resource_and_shared_actor_closure_cover_the_reentry_component
+    {active resourceUse needed : Nat → Prop} {sender receiver : Nat → Nat}
+    (seeds : ∀ event, active event → resourceUse event → needed event)
+    (closed : ∀ earlier event, needed earlier → active event →
+      (sender earlier = sender event ∨ sender earlier = receiver event ∨
+        receiver earlier = sender event ∨ receiver earlier = receiver event) → needed event)
+    {event} (member : ReentryComponent active resourceUse sender receiver event) : needed event := by
+  induction member with
+  | resource present uses => exact seeds _ present uses
+  | shared _ present actor prior => exact closed _ _ prior present actor
+
+/-- An ordinary message received by a resource participant belongs to that
+participant's next parent visit. It cannot be omitted merely because its
+logical endpoints do not name the delegated resource. -/
+theorem a_shared_receiver_couples_an_ordinary_parallel_origin
+    {active resourceUse : Nat → Prop} {sender receiver : Nat → Nat} {resource event}
+    (resourcePresent : active resource) (eventPresent : active event)
+    (uses : resourceUse resource) (same : sender resource = receiver event) :
+    ReentryComponent active resourceUse sender receiver event :=
+  .shared (.resource resourcePresent uses) eventPresent (Or.inr (Or.inl same))
+
+/-- Connectivity cannot manufacture permission. In particular a remote
+ordinary sender parallel to a resource use needs an actual incoming causal
+permission; sharing that use's receiver/holder is insufficient. -/
+theorem a_remote_parallel_origin_has_no_fresh_reentry_authority
+    (resource control : Message) (sender receiver : Nat → Nat) (owner : Nat)
+    (remote : sender 1 ≠ owner) :
+    ¬ ReentryAuthority (.par (.send resource) (.send control)) sender receiver owner 1 := by
+  intro authority
+  cases authority with
+  | owner owns => exact remote owns
+  | @message earlier _ order _ _ =>
+      by_cases left : earlier < 1
+      · simp [Source.before, Source.eventCount, left] at order
+      · simp [Source.before, Source.eventCount, left] at order
+
 /-- The source check follows receive-to-send edges backwards too. Thus every
 incoming witness below also has its originating send in the same needed set.
 An outside prefix is absent from both sets for the fresh visit. -/

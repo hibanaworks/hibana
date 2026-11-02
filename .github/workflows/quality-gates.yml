@@ -286,6 +286,7 @@ jobs:
               bash .github/scripts/check_recv_contract_sensitivity.sh
               bash .github/scripts/check_parked_offer_sensitivity.sh
               bash .github/scripts/check_parked_receive_sensitivity.sh
+              bash .github/scripts/check_reentry_component_sensitivity.sh
               target/debug/protocol-shapes syntax-shrink "$PWD" 3 19011422329217 target/protocol-fuzz-shrink-control \
                 -- "$PWD/target/debug/protocol-shape-controls" --shrink-probe
               target/debug/protocol-shape-controls --check-shrink target/protocol-fuzz-shrink-control
@@ -317,6 +318,7 @@ jobs:
             target/recv-contract-sensitivity/**
             target/parked-offer-sensitivity/**
             target/parked-receive-sensitivity/**
+            target/reentry-component-sensitivity/**
             target/shape-resumption-sensitivity/**
             target/protocol-shapes/*/**/catalog.json
             target/protocol-shapes/*/**/catalog-scope.txt

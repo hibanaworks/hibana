@@ -403,10 +403,13 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
     }
 
     const fn origins(&self, body: &Body<'_>, owner: u8, path: &Context<'_>) -> Result<bool, Scope> {
-        // Two bits per source event denote its send and receive actions. Seed
-        // resource uses, then follow only genuine actor-local and wire edges
-        // backwards. Preorder is a topological enumeration, not a dependency.
+        // A fresh parent visit joins all of an actor's participating views.
+        // Include ordinary par actions connected to a resource participant:
+        // their remote sender must not start that participant after its entry
+        // resource has permanently departed. Disjoint actor components remain
+        // independent. These are compiler facts, not current-owner state.
         let mut needed = [0u8; E];
+        let mut connected = [false; u8::MAX as usize + 1];
         let end = body.start + body.source.event_count();
         let mut event = body.start;
         while event < end {
@@ -416,12 +419,56 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 || matches!(message.payload, Payload::Endpoint(key) if key.same(body.key))
             {
                 match Self::present(body.source, body.start, event, path) {
-                    Ok(true) => needed[event] = 3,
+                    Ok(true) => {
+                        needed[event] = 3;
+                        let sender = match self.side(event, 0, path) {
+                            Ok(actor) => actor,
+                            Err(choice) => return Err(choice),
+                        };
+                        let receiver = match self.side(event, 1, path) {
+                            Ok(actor) => actor,
+                            Err(choice) => return Err(choice),
+                        };
+                        connected[sender as usize] = true;
+                        connected[receiver as usize] = true;
+                    }
                     Ok(false) => (),
                     Err(choice) => return Err(choice),
                 }
             }
             event += 1;
+        }
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let mut event = body.start;
+            while event < end {
+                if needed[event] != 3 {
+                    match Self::present(body.source, body.start, event, path) {
+                        Ok(true) => (),
+                        Ok(false) => {
+                            event += 1;
+                            continue;
+                        }
+                        Err(choice) => return Err(choice),
+                    }
+                    let sender = match self.side(event, 0, path) {
+                        Ok(actor) => actor,
+                        Err(choice) => return Err(choice),
+                    };
+                    let receiver = match self.side(event, 1, path) {
+                        Ok(actor) => actor,
+                        Err(choice) => return Err(choice),
+                    };
+                    if connected[sender as usize] || connected[receiver as usize] {
+                        needed[event] = 3;
+                        changed |= !connected[sender as usize] || !connected[receiver as usize];
+                        connected[sender as usize] = true;
+                        connected[receiver as usize] = true;
+                    }
+                }
+                event += 1;
+            }
         }
         self.permitted_origins(body, owner, needed, path)
     }

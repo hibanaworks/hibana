@@ -197,7 +197,7 @@ fn a_parallel_permit_does_not_authorize_an_independently_enabled_send() {
 
 #[kani::proof]
 #[kani::unwind(4)]
-fn an_unrelated_parallel_sender_needs_no_resource_permit() {
+fn parallel_reentry_checks_the_physical_participant_component() {
     let (holder, _) = actors();
     let image = ActorImage::<2, 0>::causal_fixture(&[[holder.into(), 4], [6, 7]], &[]);
     assert_eq!(
@@ -215,7 +215,7 @@ fn an_unrelated_parallel_sender_needs_no_resource_permit() {
             holder,
             &Context::new(&[]),
         ),
-        Ok(true)
+        Ok(holder != 7)
     );
 }
 

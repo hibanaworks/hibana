@@ -10,6 +10,98 @@ fn pair<'a>(left: &'a Source<'a>, right: &'a Source<'a>, shape: u8) -> Source<'a
 }
 
 #[test]
+fn a_parallel_receiver_that_holds_the_resource_couples_its_remote_origin() {
+    let key = EndpointKey {
+        component: 0,
+        role: 10,
+    };
+    let wire = |from, to| {
+        Source::Send(Message {
+            from: EndpointKey {
+                component: 0,
+                role: from,
+            },
+            to: EndpointKey {
+                component: 0,
+                role: to,
+            },
+            label: 1,
+            payload: Payload::Wire { schema: 0 },
+        })
+    };
+    let work = wire(10, 4);
+    let control = wire(6, 7);
+    let body = Source::par(&work, &control);
+    for holder in 0..=u8::MAX {
+        let image = ActorImage::<2, 0>::causal_fixture(&[[holder.into(), 4], [6, 7]], &[]);
+        assert_eq!(
+            Checker::wire_fixture(&body, &image, &wire_events::<2>(&body)).origins(
+                &Body {
+                    source: &body,
+                    start: 0,
+                    key
+                },
+                holder,
+                &Context::new(&[])
+            ),
+            Ok(holder != 7),
+            "holder={holder}"
+        );
+    }
+}
+
+#[test]
+fn participant_coupling_is_transitive_and_does_not_supply_causal_permission() {
+    let key = EndpointKey {
+        component: 0,
+        role: 10,
+    };
+    let wire = |from, to| {
+        Source::Send(Message {
+            from: EndpointKey {
+                component: 0,
+                role: from,
+            },
+            to: EndpointKey {
+                component: 0,
+                role: to,
+            },
+            label: 1,
+            payload: Payload::Wire { schema: 0 },
+        })
+    };
+    let work = wire(10, 4);
+    let first = wire(5, 6);
+    let last = wire(6, 7);
+    for sequential in [false, true] {
+        let chain = if sequential {
+            Source::seq(&first, &last)
+        } else {
+            Source::par(&first, &last)
+        };
+        let body = Source::par(&work, &chain);
+        for holder in 0..=u8::MAX {
+            let image =
+                ActorImage::<3, 0>::causal_fixture(&[[holder.into(), 4], [5, 6], [6, 7]], &[]);
+            let expected = !(5..=7).contains(&holder) || (sequential && holder == 5);
+            assert_eq!(
+                Checker::wire_fixture(&body, &image, &wire_events::<3>(&body)).origins(
+                    &Body {
+                        source: &body,
+                        start: 0,
+                        key
+                    },
+                    holder,
+                    &Context::new(&[])
+                ),
+                Ok(expected),
+                "holder={holder} sequential={sequential}"
+            );
+        }
+    }
+}
+
+#[test]
 fn an_empty_outgoing_seed_set_still_checks_the_resource_return() {
     let key = EndpointKey {
         component: 0,

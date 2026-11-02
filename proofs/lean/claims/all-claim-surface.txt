@@ -5184,6 +5184,13 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                       (@Hibana.SourceOccurrenceCut.ready source (@Hibana.occurrenceCut source plan points)
                         (Hibana.SourcePoint.accepted earlier))
                       false)
+Hibana.a_remote_parallel_origin_has_no_fresh_reentry_authority : ∀
+  (resource control : Hibana.EndpointDelegation.Message) (sender receiver : Nat → Nat) (owner : Nat),
+  @Ne.{1} Nat (sender (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))) owner →
+    Not
+      (Hibana.ReentryAuthority
+        ((Hibana.EndpointDelegation.Source.send resource).par (Hibana.EndpointDelegation.Source.send control)) sender
+        receiver owner (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
 @Hibana.a_resolved_call_has_actual_acceptance_evidence : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {source : Hibana.EndpointDelegation.Source} {plan : Hibana.SourceOccurrenceCut source}
   {word : List.{0} Hibana.DistributedCallBoundary} {calls : Hibana.OccurrenceCalls}
@@ -5465,6 +5472,13 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
     @Eq.{1} (Option.{0} Hibana.TransportState) (transport.send label) (@some.{0} Hibana.TransportState sent) →
       @Exists.{1} Hibana.ElasticAdmissionHistory fun history =>
         Hibana.SendAdmissionTrace choreo session transport history records
+@Hibana.a_shared_receiver_couples_an_ordinary_parallel_origin : ∀ {active resourceUse : Nat → Prop}
+  {sender receiver : Nat → Nat} {resource event : Nat},
+  active resource →
+    active event →
+      resourceUse resource →
+        @Eq.{1} Nat (sender resource) (receiver event) →
+          Hibana.ReentryComponent active resourceUse sender receiver event
 @Hibana.a_source_call_history_checks_every_publication : ∀ {choreo : Hibana.Choreo} {session : Nat}
   {word : List.{0} Hibana.SourceCallBoundary} {accepted pending : List.{0} Hibana.SourceAcceptance}
   {published : List.{0} (Prod.{0, 0} Hibana.SourceAcceptance Hibana.ActorCommitRecord)},
@@ -14083,6 +14097,18 @@ Hibana.resolver_select_never_rejects : ∀ (graph : Hibana.EventGraph) (state : 
                   (∀ (other : Nat),
                     @Ne.{1} Nat other conflict →
                       @Eq.{1} (Option.{0} Hibana.RouteArm) (next.selected other) (base.selected other))))))
+@Hibana.resource_and_shared_actor_closure_cover_the_reentry_component : ∀ {active resourceUse needed : Nat → Prop}
+  {sender receiver : Nat → Nat},
+  (∀ (event : Nat), active event → resourceUse event → needed event) →
+    (∀ (earlier event : Nat),
+        needed earlier →
+          active event →
+            Or (@Eq.{1} Nat (sender earlier) (sender event))
+                (Or (@Eq.{1} Nat (sender earlier) (receiver event))
+                  (Or (@Eq.{1} Nat (receiver earlier) (sender event))
+                    (@Eq.{1} Nat (receiver earlier) (receiver event)))) →
+              needed event) →
+      ∀ {event : Nat}, Hibana.ReentryComponent active resourceUse sender receiver event → needed event
 @Hibana.restricting_a_causal_query_to_its_event_interval_preserves_paths : ∀ {Point : Type}
   {edge : Point → Point → Prop} (position : Point → Nat),
   (∀ {a b : Point}, edge a b → @LE.le.{0} Nat instLENat (position a) (position b)) →

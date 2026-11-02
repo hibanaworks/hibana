@@ -45,6 +45,13 @@ else
   GENERATOR_ARGS=("${BUDGET}" "${SHARD}" "${SHARDS}")
   OUTPUT="${ROOT_DIR}/target/protocol-shapes/operator-budget-${BUDGET}/shard-${SHARD}-of-${SHARDS}"
 fi
+if [[ -n "${HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT:-}" ]]; then
+  if [[ "${HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT}" != /* ]]; then
+    echo 'HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT must be an absolute path' >&2
+    exit 2
+  fi
+  OUTPUT="${HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT}/${OUTPUT#"${ROOT_DIR}/target/protocol-shapes/"}"
+fi
 mkdir -p "${OUTPUT}"
 rm -f "${OUTPUT}/executed-coverage.tsv" "${OUTPUT}/executed-coverage-counts.tsv" \
   "${OUTPUT}/roll-schedule-coverage.tsv"

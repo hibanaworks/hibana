@@ -347,6 +347,12 @@ These boundaries matter when nested repeats can produce the same message sequenc
 Repetition can coexist with a later continuation. Executing that continuation
 does not disable the completed fragment: it can repeat alongside the
 continuation or after it finishes. The continuation itself does not repeat.
+If a continuation transfers a resource away, a new visit that needs its former
+holder must start with that holder's permission. This also applies to ordinary
+messages in the same participant component of the repeated body. A parallel
+message received by the former holder can restart that holder's visit even
+when the message does not carry the resource. Components with disjoint physical
+participants remain independent.
 Projection rejects an
 outgoing operation that could start a repeated fragment and also select that
 continuation through the same role, label, and payload schema. An intervening

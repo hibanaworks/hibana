@@ -179,6 +179,7 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-owned-unselected-resumption.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-reissue.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-unobserved-handoff.rs");
+    compile_fail(&t, "tests/ui/g-owned-roll-parallel-holder-reentry.rs");
     compile_fail(&t, "tests/ui/g-owned-roll-temporary-resource-cycle.rs");
     compile_fail(&t, "tests/ui/g-owned-self-carrier.rs");
     compile_fail(&t, "tests/ui/owned-send-moves-before-poll.rs");

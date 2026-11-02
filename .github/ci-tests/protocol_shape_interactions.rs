@@ -1,5 +1,5 @@
 //! Construct source protocols for nested operator interactions.
-use super::{Protocol, ownership};
+use super::{Protocol, context, ownership};
 
 const CONTEXTS: usize = 9;
 
@@ -28,38 +28,82 @@ pub(super) struct Interaction {
     pub unpermitted_reentry: Option<Protocol>,
 }
 
-// In this catalog, service 2 talks only to the resource view. Independent
-// work uses roles 0 and 1. Inspect all first service actions, including par
-// siblings and both choice arms, without consulting projection diagnostics.
-fn service_initiates(source: &Protocol) -> Option<bool> {
+// Inspect every independently enabled first action of a logical participant.
+// A receive supplies this visit's permission; a par sibling cannot supply it.
+fn participant_initiates(source: &Protocol, role: u8) -> Option<bool> {
     match source {
-        Protocol::Message { from, to, .. } => (*from == 2 || *to == 2).then_some(*from == 2),
-        Protocol::Seq(a, b) => service_initiates(a).or_else(|| service_initiates(b)),
+        Protocol::Message { from, to, .. } => {
+            (*from == role || *to == role).then_some(*from == role)
+        }
+        Protocol::Seq(a, b) => {
+            participant_initiates(a, role).or_else(|| participant_initiates(b, role))
+        }
         Protocol::Par(a, b) | Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
-            match (service_initiates(a), service_initiates(b)) {
+            match (
+                participant_initiates(a, role),
+                participant_initiates(b, role),
+            ) {
                 (None, other) | (other, None) => other,
                 (Some(a), Some(b)) => Some(a || b),
             }
         }
-        Protocol::Roll(body) => service_initiates(body),
+        Protocol::Roll(body) => participant_initiates(body, role),
     }
 }
 
-fn permit_reentry(source: &mut Protocol) -> usize {
+fn owner_after(source: &Protocol, owner: u8) -> u8 {
+    match source {
+        Protocol::Message {
+            from,
+            to,
+            owned: true,
+            ..
+        } => {
+            assert_eq!(*from, owner);
+            *to
+        }
+        Protocol::Message { .. } => owner,
+        Protocol::Seq(a, b) => owner_after(b, owner_after(a, owner)),
+        Protocol::Par(a, b) => {
+            if context::has_transfer(a) {
+                owner_after(a, owner)
+            } else {
+                owner_after(b, owner)
+            }
+        }
+        Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
+            let end = owner_after(a, owner);
+            assert_eq!(owner_after(b, owner), end);
+            end
+        }
+        Protocol::Roll(body) => {
+            assert_eq!(owner_after(body, owner), owner);
+            owner
+        }
+    }
+}
+
+fn permit_reentry(source: &mut Protocol, owner: u8) -> usize {
     match source {
         Protocol::Message { .. } => 0,
-        Protocol::Seq(a, b)
-        | Protocol::Par(a, b)
-        | Protocol::Route(a, b)
-        | Protocol::Resolved(a, b, _) => permit_reentry(a) + permit_reentry(b),
+        Protocol::Seq(a, b) => {
+            let first = permit_reentry(a, owner);
+            first + permit_reentry(b, owner_after(a, owner))
+        }
+        Protocol::Par(a, b) | Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
+            permit_reentry(a, owner) + permit_reentry(b, owner)
+        }
         Protocol::Roll(body) => {
-            let nested = permit_reentry(body);
-            if service_initiates(body) == Some(true) {
-                **body = seq(message(3, 2, false), (**body).clone());
-                nested + 1
-            } else {
-                nested
+            let mut permits = permit_reentry(body, owner);
+            if context::uses_resource(body) {
+                for role in [2, 1, 0] {
+                    if role != owner && participant_initiates(body, role) == Some(true) {
+                        **body = seq(message(3, role, false), (**body).clone());
+                        permits += 1;
+                    }
+                }
             }
+            permits
         }
     }
 }
@@ -67,7 +111,7 @@ fn permit_reentry(source: &mut Protocol) -> usize {
 fn finish(body: Protocol, identity: String) -> Interaction {
     let mut global = seq(message(0, 1, true), seq(body, message(1, 0, true)));
     let mut unpermitted = global.clone();
-    let permits = permit_reentry(&mut global);
+    let permits = permit_reentry(&mut global, 0);
     let unpermitted_reentry = (permits != 0).then(|| {
         super::syntax::number(&mut unpermitted);
         unpermitted
@@ -358,10 +402,35 @@ mod tests {
             let Protocol::Roll(body) = body.as_ref() else {
                 panic!()
             };
-            assert_eq!(service_initiates(body), Some(false));
+            assert_eq!(participant_initiates(body, 2), Some(false));
             assert_eq!(source.operator_count(), unpermitted.operator_count() + 1);
             assert!(ownership::violations(&unpermitted).is_empty());
         }
         assert!(protocol(2, 146).unpermitted_reentry.is_none());
+    }
+
+    #[test]
+    fn a_parallel_control_origin_gets_same_visit_permission_and_keeps_the_raw_negative() {
+        let Interaction {
+            source,
+            unpermitted_reentry,
+            ..
+        } = protocol(4, 12439);
+        let raw = unpermitted_reentry.expect("preserve the uninformed source for compile refusal");
+        for (global, expected) in [(&raw, Some(true)), (&source, Some(false))] {
+            let Protocol::Seq(loan, rest) = global else {
+                panic!()
+            };
+            assert_eq!(owner_after(loan, 0), 1);
+            let Protocol::Seq(roll, _) = rest.as_ref() else {
+                panic!()
+            };
+            let Protocol::Roll(body) = roll.as_ref() else {
+                panic!()
+            };
+            assert_eq!(participant_initiates(body, 0), expected);
+        }
+        assert_eq!(source.operator_count(), raw.operator_count() + 1);
+        assert!(ownership::violations(&raw).is_empty());
     }
 }
