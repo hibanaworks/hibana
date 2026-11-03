@@ -38,7 +38,7 @@ jobs:
           brew list coreutils >/dev/null 2>&1 || brew install coreutils
           brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component rust-src
           rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
           rustup toolchain install "$(cat .github/miri-toolchain)" --profile minimal --component miri --component rust-src
       - uses: ./.github/actions/setup-lean

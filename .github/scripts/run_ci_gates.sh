@@ -12,6 +12,10 @@ hibana_enable_repo_tests_cfg
 hibana_pin_ui_diagnostic_width
 trap hibana_restore_ui_diagnostic_width EXIT
 
+# UI diagnostics include source snippets from the selected compiler's core.
+# Install this input explicitly rather than depending on a warmed host image.
+rustup component add rust-src --toolchain "$TOOLCHAIN"
+
 cargo +"$TOOLCHAIN" fmt --all -- --check
 cargo +"$TOOLCHAIN" test --locked --workspace --all-targets -- --test-threads=1
 cargo +"$TOOLCHAIN" clippy --locked --workspace --all-targets -- -D warnings
