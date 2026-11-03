@@ -74,6 +74,9 @@ and package gates. Generated transition proofs connect concrete internal
 snapshots to the observation model; they are distinct from the public-operation
 conformance contract. Their successful finite examples are not a general Rust
 refinement theorem.
+The additional proof job runs on macOS, including the actual TCP publication
+and Unix-carrier fixtures that use hibana-runtime's macOS host I/O. Portable
+work-count checks and generated public conformance also run on ARM Linux.
 The required Miri boundary checks and the additional Miri checks are disjoint
 selections of the same script; its default still runs both. Likewise, model
 proofs and generated observation proofs are complementary selections of one
