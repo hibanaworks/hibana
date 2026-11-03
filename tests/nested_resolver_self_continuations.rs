@@ -69,6 +69,8 @@ fn assert_no_progress(kit: &RendezvousKit<'_, '_, TestTransport>, expected_calls
     for event in kit.tap() {
         assert_ne!(event.id(), tap::ENDPOINT_SEND);
         assert_ne!(event.id(), tap::ENDPOINT_RECV);
+        assert_ne!(event.id(), tap::ENDPOINT_SESSION);
+        assert_ne!(event.id(), tap::SCOPE_REENTRY);
         assert_ne!(event.id(), tap::ROUTE_ARM_SELECTION);
         if event.id() == tap::RESOLVER_AUDIT {
             calls.push((event.arg1() as u16, event.causal_key() as u8));

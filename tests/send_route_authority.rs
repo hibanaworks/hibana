@@ -300,7 +300,7 @@ fn five_nested_resolved_send_uses_route_rows_without_fixed_proof_cap() {
 }
 
 #[test]
-fn dropping_pending_resolved_send_future_does_not_publish_success_evidence() {
+fn dropping_pending_resolved_send_records_the_call_without_committing_progress() {
     reset_drop_calls();
     with_runtime_workspace(|slab| {
         let transport = PendingCancelTransport::new();
@@ -338,11 +338,30 @@ fn dropping_pending_resolved_send_future_does_not_publish_success_evidence() {
             );
             assert!(
                 after_drop.iter().all(|event| {
-                    event.id() != tap::RESOLVER_AUDIT
-                        && event.id() != tap::ROUTE_ARM_SELECTION
-                        && event.id() != tap::ENDPOINT_SEND
+                    !matches!(
+                        event.id(),
+                        tap::ROUTE_ARM_SELECTION
+                            | tap::SCOPE_REENTRY
+                            | tap::ENDPOINT_SEND
+                            | tap::ENDPOINT_RECV
+                            | tap::ENDPOINT_SESSION
+                    )
                 }),
-                "dropping after transport pending must not publish success evidence: {after_drop:?}"
+                "dropping after transport pending must not commit progress: {after_drop:?}"
+            );
+            let audits = resolver_audits(&after_drop);
+            assert_eq!(
+                audits.len(),
+                drop_calls(),
+                "each actual call remains observable after cancellation"
+            );
+            assert_eq!(resolver_id(audits[0]), u32::from(DROP_ROUTE_RESOLVER));
+            assert_eq!(route_site(audits[0]), 0);
+            assert_eq!(audits[0].arg0(), sid.raw());
+            assert_eq!(
+                audits[0].causal_key(),
+                0,
+                "origin actor selected the left arm"
             );
             drop(peer);
         });
