@@ -19,8 +19,9 @@ are bounded by the 256-value wire lane domain and are compiler scratch.
 
 `GlobalAllocationCorrectness.lean` in the common Lean package proves remapping
 for an arbitrary selected set: injectivity inside the set and exclusion of
-incompatible outside colors prevent new conflicts. `RouteAlignment.smt2`
-checks those conditions and the one-old-lane batch, with failing-rule controls.
+incompatible outside colors prevent new conflicts. The shared `Fields.lean`
+proves exact four-word role intersections and non-aliasing packed row addresses,
+including a negative control for a truncated partial byte.
 The same Lean module shows that compact vertices preserve class injectivity,
 and that whole-class confirmations preserve every cross-boundary obligation.
 Native tests compare nested parallel exclusions with source intervals. Kani
@@ -28,5 +29,5 @@ checks symbolic endpoint identities and workspace reuse; Miri executes the
 candidate and borrowed-workspace tests. These checks do not constitute a full
 Rust refinement proof.
 
-Run `bash .github/scripts/check_projection_algorithms.sh` for the supplemental
+Run `bash .github/scripts/check_implementation_proofs.sh` for the supplemental
 models and `bash .github/scripts/check_lean_proofs.sh` for the common Lean package.

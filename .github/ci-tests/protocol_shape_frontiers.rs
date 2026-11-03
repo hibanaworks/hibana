@@ -1,7 +1,7 @@
 //! Parallel repetitions followed by a choice on another logical direction.
 use super::Protocol;
 
-pub(super) const COUNT: usize = 32;
+pub(super) use super::catalog_counts::FRONTIERS as COUNT;
 
 fn message(from: u8, to: u8, owned: bool) -> Protocol {
     Protocol::Message {

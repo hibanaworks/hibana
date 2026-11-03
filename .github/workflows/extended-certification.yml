@@ -1,0 +1,83 @@
+name: extended-certification
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Syntax sampling seed; empty uses the UTC date
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extended-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TOOLCHAIN: stable
+  CARGO_BUILD_JOBS: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
+jobs:
+  core:
+    uses: ./.github/workflows/quality-gates.yml
+    with:
+      extended: true
+      seed: ${{ inputs.seed || '' }}
+
+  kani:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned Kani and CBMC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          rustup toolchain install stable --profile minimal
+          cargo +stable install --locked kani-verifier --version "$(cat .github/kani-version)"
+          cargo +stable kani setup
+      - name: Run the complete Kani inventory
+        run: bash .github/scripts/check_kani.sh
+
+  proofs:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt --component rust-src
+          rustup toolchain install "$(cat .github/miri-toolchain)" --profile minimal --component miri --component rust-src
+      - uses: ./.github/actions/setup-lean
+      - name: Check all additional proof and memory obligations
+        run: |
+          bash .github/scripts/lib/resource_guard.sh bash .github/scripts/run_extended_gates.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: extended-verification
+          path: |
+            target/miri-parallel-reentry/**
+            target/lean-proof/**
+
+  certified:
+    name: extended-certification
+    if: always()
+    needs: [core, kani, proofs]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Require every certification job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: >-
+          printf '%s\n' "$RESULTS" |
+          jq -e 'keys == ["core", "kani", "proofs"] and all(.[]; .result == "success")'

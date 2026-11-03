@@ -141,53 +141,17 @@ fn check_toolchain(root: &Path) -> AuditResult<()> {
         "Lean proof gate toolchain mismatch",
     )
 }
-fn raw_forbidden(line: &str) -> bool {
-    // Conservatively treat non-ASCII continuations as boundaries. This avoids
-    // weakening the former Unicode regex policy without a regex dependency.
-    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    ["sorry", "admit", "axiom", "native_decide", "unsafe"]
-        .iter()
-        .any(|token| {
-            line.match_indices(token).any(|(offset, _)| {
-                line[..offset].chars().next_back().is_none_or(|c| !word(c))
-                    && line[offset + token.len()..]
-                        .chars()
-                        .next()
-                        .is_none_or(|c| !word(c))
-            })
-        })
-}
-fn check_sources(label: &str, paths: &[String]) -> AuditResult<()> {
-    require(
-        !paths.is_empty(),
-        "proof source audit requires at least one file",
-    )?;
-    let mut violations = Vec::new();
-    for path in paths {
-        let source = read(Path::new(path))?;
-        // The supplemental gate deliberately scans comments and strings too,
-        // retaining its former whole-file forbidden-token policy.
-        for (line_no, line) in source.lines().enumerate() {
-            if raw_forbidden(line) {
-                violations.push(format!("{path}:{}:{line}", line_no + 1));
-            }
-        }
-    }
-    require(
-        violations.is_empty(),
-        format!(
-            "{}\nUntrusted proof declaration: {label}",
-            violations.join("\n")
-        ),
-    )
-}
 fn run(args: &[String]) -> AuditResult<()> {
-    match args{
-        [mode,root]if mode=="toolchain"=>check_toolchain(Path::new(root)),
-        [mode,kind]if mode=="markers"=>{let mut output=String::new();io::stdin().read_to_string(&mut output).map_err(|e|e.to_string())?;check_markers(kind,&output)},
-        [mode,path,label]if mode=="artifact"=>{let metadata=std::fs::metadata(path).map_err(|e|format!("{path}: {e}"))?;require(metadata.is_file() && metadata.len()>0,format!("Lean proof gate {label} exporter did not create a nonempty artifact"))},
-        [mode,label,paths @ ..]if mode=="sources"=>check_sources(label,paths),
-        _=>Err("usage: check-lean-proof-guard toolchain PROOF_DIR | markers KIND | artifact PATH LABEL | sources LABEL FILE...".into())
+    match args {
+        [mode, root] if mode == "toolchain" => check_toolchain(Path::new(root)),
+        [mode, kind] if mode == "markers" => {
+            let mut output = String::new();
+            io::stdin()
+                .read_to_string(&mut output)
+                .map_err(|e| e.to_string())?;
+            check_markers(kind, &output)
+        }
+        _ => Err("usage: check-lean-proof-guard toolchain PROOF_DIR | markers KIND".into()),
     }
 }
 fn main() {
@@ -199,27 +163,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn raw_source_policy_does_not_erase_comments_or_unicode_boundaries() {
-        for text in [
-            "private axiom hidden : False",
-            "-- sorry",
-            "\"native_decide\"",
-            "axiom²",
-            "axiom一",
-        ] {
-            assert!(raw_forbidden(text), "accepted {text}");
-        }
-        for text in [
-            "def safe : Nat := 0",
-            "unsafe_name",
-            "pre_axiom",
-            "admitted",
-            "sorryish",
-        ] {
-            assert!(!raw_forbidden(text), "rejected {text}");
-        }
-    }
     #[test]
     fn every_marker_is_required() {
         for kind in [

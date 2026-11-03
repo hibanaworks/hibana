@@ -16,6 +16,8 @@ fn write_if_changed(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     }
 }
 
+#[path = "protocol_shape_catalog_counts.rs"]
+mod catalog_counts;
 #[path = "protocol_shape_causality.rs"]
 mod causality;
 #[path = "protocol_shape_choice.rs"]

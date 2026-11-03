@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "$#:${1:-}" in
+  0:) selection=all ;;
+  1:--contract) selection=contract ;;
+  1:--extended) selection=extended ;;
+  *) echo 'usage: check_miri.sh [--contract|--extended]' >&2; exit 2 ;;
+esac
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
@@ -60,10 +67,35 @@ run_miri_test() {
   rm -f "${output}"
 }
 
+if [[ "$selection" != extended ]]; then
 run_miri_test \
   public-runtime-owner \
   -p hibana \
   --test miri_runtime_owner
+
+run_miri_test \
+  borrowed-transport-handles \
+  -p hibana --test transport_borrow
+
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test public-initial-issuance -p hibana --test endpoint_initial_issuance
+)
+
+run_miri_test \
+  resource-endpoint-join \
+  -p hibana --test explicit_resource_join
+
+run_miri_test \
+  session-fault-cancel-owner \
+  -p hibana --test cursor_send_recv_session_fault_cancel
+fi
+
+if [[ "$selection" == contract ]]; then
+  TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri-total "${MIRI_TOOLCHAIN}" "${miri_totals}"
+  echo 'Miri required owner, transport, issuance, delegation and cancellation boundaries passed'
+  exit 0
+fi
 
 run_miri_test \
   control-observation-actors \
@@ -130,16 +162,6 @@ echo "Miri public Endpoint delegation example passed"
 (
   hibana_disable_repo_tests_cfg
   run_miri_test public-carrier-requeue -p hibana --example endpoint_delegation
-)
-
-run_miri_test \
-  borrowed-transport-handles \
-  -p hibana \
-  --test transport_borrow
-
-(
-  hibana_disable_repo_tests_cfg
-  run_miri_test public-initial-issuance -p hibana --test endpoint_initial_issuance
 )
 
 (
@@ -766,11 +788,6 @@ run_miri_test \
   endpoint-drop-wake-owner \
   -p hibana \
   --test cursor_send_recv_session_drop_wake
-
-run_miri_test \
-  session-fault-cancel-owner \
-  -p hibana \
-  --test cursor_send_recv_session_fault_cancel
 
 run_miri_test \
   local-action-owner \

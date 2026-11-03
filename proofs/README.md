@@ -1,16 +1,27 @@
 # Verification
 
-Hibana uses Lean models, SMT checks, bounded Rust verification, and executable
+Hibana uses Lean models, bounded Rust verification, and executable
 tests to check protocol projection and execution. The models state assumptions
 about codecs, transports and participant behavior. They do not verify arbitrary
 Rust programs or arbitrary implementations of `Transport`.
 
 Lean states protocol rules. Endpoint tests compare Rust with those rules;
 EPF checks saved observations. These checks do not replace the general proofs.
-SMT is reserved for distinct fixed-width representation obligations not yet covered
-by those checks. Do not keep a second SMT restatement of a Lean property.
-Necessary generated solver inputs belong in the check's output directory,
-alongside their input hashes, rather than in the source tree.
+Fixed-width headers, owned envelopes, route rows and compiler bitmaps share
+[Lean encoding laws](checks/image/encoding/Fields.lean). Pending-event and causal
+source masks share the exact bit-membership proof in
+[Scan.lean](checks/runtime/pending-events/Scan.lean). There is no solver-specific
+model or generated solver input in the source tree.
+
+Standalone checks compile the actual declarations and audit every local theorem's
+transitive axiom dependencies, including private declarations and theorems that
+have no printed report. Only Lean's standard logical axioms are accepted
+(`propext`, `Quot.sound`, `Classical.choice`); local axioms, proof holes and native
+proof shortcuts fail. Comments and file names are not proof evidence.
+
+The [required CI contract](CI.md) fixes the finite populations checked on every
+push. Generated catalogs and sampled protocol syntax use one execution path;
+larger implementation certification runs nightly or explicitly.
 
 ## Layout
 
@@ -313,13 +324,15 @@ each `seq`, `par`, `route` or `roll` adds one to its deepest child. A resolved
 route has the same depth as a message-based route. The inventory reports the
 largest depth in the catalog and in the emitted runtime inputs separately.
 Results are stored under `target/protocol-shapes/operator-budget-BUDGET/`.
-The `protocol-shapes` workflow accepts budgets three, four and five. Budget
-three uses window zero. Budget four requires all 32 windows, zero through 31,
+The local generator supports budgets three, four and five. Budget three uses
+window zero. Budget four requires all 32 windows, zero through 31,
 covering 32,768 shards. Budget five uses sixteen windows, zero through fifteen.
 A Rust check assigns each shard to exactly one job and
 window and rejects invalid scopes. One successful window does not establish
-complete coverage. The workflow saves each job's assigned shard list with its
-source hashes, inputs and observations for thirty days.
+complete coverage. The unified CI plan fixes budget two for mandatory checks;
+extended syntax sampling does not certify a higher complete constructor budget.
+The workflow saves each job's assignment with its source hashes, inputs and
+observations for thirty days.
 Projection diagnostics run before endpoint code is compiled. Accepted cases
 continue through execution and model comparison even when another case is
 rejected. `catalog.json` retains every generated tree, and `diagnostics.tsv`
@@ -785,6 +798,20 @@ Use the latest stable Rust for ordinary builds. Lean is pinned by
 by the versions pinned in `.github/`.
 
 From the repository root:
+
+```sh
+TOOLCHAIN=stable bash .github/scripts/lib/resource_guard.sh \
+  bash .github/scripts/run_ci_gates.sh
+TOOLCHAIN=stable bash .github/scripts/lib/resource_guard.sh \
+  bash .github/scripts/check_protocol_ci.sh constructors-0
+```
+
+The latter command executes one canonical CI assignment. The complete required
+population is listed by `protocol-shape-partitions ci-matrix`; run every listed
+ID and the portable work budget for the whole required contract. Each assignment
+uses the same script locally and in CI and refuses to overwrite its receipt.
+The [CI contract](CI.md) distinguishes this finite result from certification.
+For extended checks:
 
 ```sh
 TOOLCHAIN=stable bash .github/scripts/lib/resource_guard.sh \

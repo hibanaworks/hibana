@@ -13,10 +13,10 @@ the physical holder changes.
 `compiler/` builds the production validator with read-only proof observations.
 Its output is checked by `Knowledge.lean`, `Causality.lean` and the generated
 Lean claims. The [Kani gate](../../../kani/README.md) checks production
-ownership-equation operations. `check.sh` checks the remaining word-representation
-models against their declared results; protocol rules have one Lean source.
+ownership-equation operations. `check.sh` compares production Rust observations
+with the ownership model and generated Lean claims; protocol rules have one Lean source.
 
-`OrderFilter.lean` and `OrderFilter.smt2` check dependency bounds used by the
+`OrderFilter.lean` proves dependency bounds used by the
 word-batched source-order comparison. Required source choices of either row
 can settle a guarded dependency; unknown choices retain conservative bounds.
 All possible extra direct orders are checked. Positive obligations retain a
@@ -54,7 +54,7 @@ Each source subtree indexes the roles whose Endpoints it transfers. Queries
 skip a subtree only when that role is absent, and still compare the complete
 component and role at each leaf. This construction-only index is not stored in
 runtime progress. `TransferIndex.lean` proves that role pruning preserves exact
-key membership; `TransferIndex.smt2` checks the 256-role bitmap. Kani checks
+key membership; the shared `Fields.lean` proves exact 256-role bitmap membership. Kani checks
 production sequence, parallel, choice and repeated sources over symbolic full
 endpoint keys and payload kinds.
 
@@ -103,8 +103,8 @@ fresh visit with independent choices. Conditional actor bindings use the
 path-specific queries. These are compiler workspaces; no columns or caches
 are added to endpoint progress. `CausalFlow.lean` defines the seed, relay,
 choice and parallel rules and proves the conditional column join.
-`CausalColumns.smt2` checks that join and all compact-source interval masks,
-with incorrect joins and interval boundaries as negative controls. Native
+`source_mask_exact` in `Scan.lean` proves half-open membership for every source
+word and bit. Native
 tests compare the batched queries with scalar queries on small structured
 sources, including actor aliases and boundaries across 64-bit words. These
 comparisons do not establish a refinement proof for every Rust source tree.

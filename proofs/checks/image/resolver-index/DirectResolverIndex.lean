@@ -26,7 +26,7 @@ theorem construction_matches_scan (table : Nat → Nat) (n query : Nat) :
   | zero => rfl
   | succ n ih =>
     simp only [build, insert, scan, ih]
-    cases previous : scan table query n <;> simp [previous, eq_comm]
+    cases scan table query n <;> simp [eq_comm]
 
 theorem no_match_is_absent (table : Nat → Nat) (n query : Nat) :
     (∀ row, row < n → table row ≠ query) → scan table query n = none := by

@@ -7,18 +7,11 @@ export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 EVIDENCE=${1:-$(mktemp -d /tmp/hibana-rolled-route-proofs.XXXXXX)}
 mkdir -p "$EVIDENCE"
 EVIDENCE=$(cd "$EVIDENCE" && pwd -P)
-source "$ROOT/.github/scripts/lib/proof_audit.sh"
-FAILED=0
-check_trusted_proof_sources "rolled-route trusted proof declarations" "$PROOFS"/*.lean
-if [[ "$FAILED" -ne 0 ]]; then
-  echo 'Untrusted declaration or proof bypass in supplemental proofs' >&2
-  exit 1
-fi
 lean --version | bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" version
 (cd "$ROOT/proofs/lean" && lake build Hibana.GlobalSemantics) > "$EVIDENCE/build.log" 2>&1
 for proof in TraceValidity PhaseOwnership NestedReentry EligibleIngress ReentryAdmission ResetAlignment SendContinuation SendEntry NestedVisit SharedSuffix; do
   LEAN_PATH="$ROOT/proofs/lean/.lake/build/lib/lean" \
-    lean -o "$EVIDENCE/$proof.olean" "$PROOFS/$proof.lean" > "$EVIDENCE/$proof.log" 2>&1
+    bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" module "$PROOFS/$proof.lean" "$EVIDENCE/$proof.olean" > "$EVIDENCE/$proof.log" 2>&1
 done
 HIBANA_ROLL_COMPLETION_OBSERVATIONS="$EVIDENCE/completion.jsonl" \
   RUSTFLAGS="${RUSTFLAGS:-} --cfg hibana_repo_tests" \

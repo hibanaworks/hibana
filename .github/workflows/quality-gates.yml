@@ -3,488 +3,140 @@ name: quality-gates
 on:
   push:
   pull_request:
-  schedule:
-    - cron: '0 18 * * *'
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      check:
-        description: Check to run
-        type: choice
-        required: true
-        default: all
-        options: [all, final-form, protocol-shapes, protocol-syntax, protocol-interactions, protocol-spines, protocol-representatives, protocol-fuzz, miri-parallel-reentry]
-      shape-budget:
-        description: Generated constructor budget for protocol-shapes
-        type: choice
-        required: true
-        default: '3'
-        options: ['2', '3', '4', '5']
-      shape-window:
-        description: Window (0 for budget 2 or 3, 0 through 31 for budget 4, 0 through 15 for budget 5)
+      extended:
+        type: boolean
+        default: false
+      seed:
         type: string
-        required: true
-        default: '0'
-      syntax-depth:
-        description: Exact syntax depth (representatives supports only 0, 1, 2)
-        type: choice
-        required: true
-        default: '0'
-        options: ['0', '1', '2', '3', '4', '5', '6', '7', '8']
-      syntax-first:
-        description: First raw syntax rank or source representative ordinal
-        type: string
-        required: true
-        default: '0'
-      syntax-count:
-        description: Number of consecutive candidates (at most 8192 per dispatch)
-        type: string
-        required: true
-        default: '32'
-      interaction-length:
-        description: Nested context or constructor-edge count for interactions/spines
-        type: choice
-        required: true
-        default: '2'
-        options: ['0', '1', '2', '3', '4', '5']
-      interaction-first:
-        description: First interaction rank
-        type: string
-        required: true
-        default: '0'
-      interaction-count:
-        description: Number of interaction candidates (at most 8192 per dispatch)
-        type: string
-        required: true
-        default: '32'
-      fuzz-seed:
-        description: Syntax sampling seed (empty uses the UTC date)
-        type: string
-        required: false
         default: ''
-      fuzz-count:
-        description: Number of sampled syntax ranks per depth
-        type: string
-        required: true
-        default: '4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}-${{ inputs.extended && 'extended' || 'ci' }}
+  cancel-in-progress: true
+
+env:
+  TOOLCHAIN: stable
+  CARGO_BUILD_JOBS: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
+  quality:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust and embedded targets
+        run: |
+          brew list coreutils >/dev/null 2>&1 || brew install coreutils
+          brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
+          rustup toolchain install "$(cat .github/miri-toolchain)" --profile minimal --component miri --component rust-src
+      - uses: ./.github/actions/setup-lean
+      - name: Check the required core contract
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/run_ci_gates.sh
+
   runtime-work:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-15, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    env:
-      TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust and embedded targets
         run: |
           rustup toolchain install stable --profile minimal
           rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
-      - name: Check portable runtime work counts
-        run: >-
-          bash .github/scripts/lib/resource_guard.sh
-          bash .github/scripts/measure_runtime_work.sh
+      - name: Check portable work and memory budgets
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/measure_runtime_work.sh
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: runtime-work-${{ matrix.os }}
           path: target/runtime-work/results/
 
-  protocol-shape-matrix:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
+  protocol-plan:
     runs-on: ubuntu-24.04-arm
     outputs:
-      matrix: ${{ steps.scope.outputs.matrix }}
-    env:
-      SHAPE_BUDGET: ${{ inputs.check == 'protocol-shapes' && inputs.shape-budget || '2' }}
-      SHAPE_WINDOW: ${{ inputs.check == 'protocol-shapes' && inputs.shape-window || '0' }}
-      SHAPE_CHECK: ${{ inputs.check || 'all' }}
-      SYNTAX_DEPTH: ${{ inputs.syntax-depth }}
-      SYNTAX_FIRST: ${{ inputs.syntax-first }}
-      SYNTAX_COUNT: ${{ inputs.syntax-count }}
-      INTERACTION_LENGTH: ${{ inputs.interaction-length }}
-      INTERACTION_FIRST: ${{ inputs.interaction-first }}
-      INTERACTION_COUNT: ${{ inputs.interaction-count }}
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
-      - name: Validate the complete shard assignment
-        id: scope
+      - name: Assign the entire finite population exactly once
+        id: plan
+        env:
+          EXTENDED: ${{ inputs.extended == true }}
         run: |
           set -euo pipefail
           cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions
-          if [[ "$SHAPE_CHECK" == protocol-interactions || "$SHAPE_CHECK" == protocol-spines ]]; then
-            shape_command=interaction-matrix
-            if [[ "$SHAPE_CHECK" == protocol-spines ]]; then shape_command=spine-matrix; fi
-            cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
-            matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-              --bin protocol-shapes -- "$shape_command" "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT")
-          elif [[ "$SHAPE_CHECK" == protocol-representatives ]]; then
-            cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
-            matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-              --bin protocol-shapes -- representative-matrix "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT")
-          elif [[ "$SHAPE_CHECK" == protocol-syntax ]]; then
-            cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes
-            matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-              --bin protocol-shapes -- syntax-matrix "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT")
-          else
-            matrix=$(cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-              --bin protocol-shape-partitions -- matrix "$SHAPE_BUDGET" "$SHAPE_WINDOW")
-          fi
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          args=(ci-matrix)
+          if [[ "$EXTENDED" == true ]]; then args+=(extended); fi
+          matrix="$(cargo +stable run --quiet --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions -- "${args[@]}")"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$matrix" > protocol-plan.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: protocol-plan
+          path: protocol-plan.json
 
-  protocol-shapes:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
-    needs: protocol-shape-matrix
+  protocol-fuzz:
+    needs: protocol-plan
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
     strategy:
       fail-fast: false
       max-parallel: 16
-      matrix: ${{ fromJSON(needs.protocol-shape-matrix.outputs.matrix) }}
-    env:
-      TOOLCHAIN: stable
-      CARGO_BUILD_JOBS: 1
-      CARGO_INCREMENTAL: 0
-      SHAPE_BUDGET: ${{ inputs.check == 'protocol-shapes' && inputs.shape-budget || '2' }}
-      SHAPE_WINDOW: ${{ inputs.check == 'protocol-shapes' && inputs.shape-window || '0' }}
-      SHAPE_CHECK: ${{ inputs.check || 'all' }}
-      SYNTAX_DEPTH: ${{ inputs.syntax-depth }}
-      SYNTAX_FIRST: ${{ matrix.first }}
-      SYNTAX_COUNT: ${{ matrix.count }}
-      INTERACTION_LENGTH: ${{ inputs.interaction-length }}
-      INTERACTION_FIRST: ${{ matrix.first }}
-      INTERACTION_COUNT: ${{ matrix.count }}
+      matrix: ${{ fromJSON(needs.protocol-plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
       - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
+        run: rustup toolchain install stable --profile minimal
       - uses: ./.github/actions/setup-lean
-      - name: Reuse compiled Lean models and the shape checker
+      - name: Reuse the shared protocol checker
         uses: actions/cache@v6
         with:
           path: proofs/lean/.lake/build
-          key: protocol-shapes-lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain', 'proofs/lean/lakefile.toml', 'proofs/lean/lake-manifest.json', 'proofs/lean/**/*.lean', '.github/ci-tests/*.lean', '.github/scripts/check_protocol_shapes.sh', '.github/scripts/lib/lean_audit*', '.github/ci-tests/lean_*') }}
-      - name: Check every assigned generated protocol
-        run: |
-          set -euo pipefail
-          if [[ "$SHAPE_CHECK" == protocol-interactions || "$SHAPE_CHECK" == protocol-spines ]]; then
-            shape_flag=--interactions
-            if [[ "$SHAPE_CHECK" == protocol-spines ]]; then shape_flag=--spines; fi
-            printf '%s\t%s\t%s\n' "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT" > assigned-interactions.tsv
-            bash .github/scripts/lib/resource_guard.sh \
-              bash .github/scripts/check_protocol_shapes.sh "$shape_flag" "$INTERACTION_LENGTH" "$INTERACTION_FIRST" "$INTERACTION_COUNT"
-          elif [[ "$SHAPE_CHECK" == protocol-representatives ]]; then
-            printf '%s\t%s\t%s\n' "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT" > assigned-representatives.tsv
-            bash .github/scripts/lib/resource_guard.sh \
-              bash .github/scripts/check_protocol_shapes.sh --representatives "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT"
-          elif [[ "$SHAPE_CHECK" == protocol-syntax ]]; then
-            printf '%s\t%s\t%s\n' "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT" > assigned-syntax.tsv
-            bash .github/scripts/lib/resource_guard.sh \
-              bash .github/scripts/check_protocol_shapes.sh --syntax-depth "$SYNTAX_DEPTH" "$SYNTAX_FIRST" "$SYNTAX_COUNT"
-          else
-            cargo +stable run --locked --manifest-path .github/ci-tests/Cargo.toml \
-              --bin protocol-shape-partitions -- shards "$SHAPE_BUDGET" "$SHAPE_WINDOW" \
-              '${{ matrix.partition }}' > assigned-shards.tsv
-            while IFS=$'\t' read -r shard shards; do
-              bash .github/scripts/lib/resource_guard.sh \
-                bash .github/scripts/check_protocol_shapes.sh "$SHAPE_BUDGET" "$shard" "$shards"
-            done < assigned-shards.tsv
-          fi
+          key: protocol-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain', 'proofs/lean/lakefile.toml', 'proofs/lean/lake-manifest.json', 'proofs/lean/**/*.lean', '.github/ci-tests/*.lean', '.github/scripts/check_protocol_shapes.sh', '.github/scripts/lib/lean_audit*', '.github/ci-tests/lean_*') }}
+      - name: Execute the assigned protocol population
+        env:
+          CASE_ID: ${{ matrix.id }}
+          SEED: ${{ inputs.seed }}
+        run: >-
+          bash .github/scripts/lib/resource_guard.sh
+          bash .github/scripts/check_protocol_ci.sh "$CASE_ID" "$SEED"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: ${{ inputs.check }}-${{ matrix.partition }}
+          name: protocol-${{ matrix.id }}
           retention-days: 30
           path: |
-            assigned-shards.tsv
-            assigned-syntax.tsv
-            assigned-interactions.tsv
-            assigned-representatives.tsv
-            target/protocol-shapes/*/**/inventory.txt
-            target/protocol-shapes/*/**/catalog-inventory.txt
-            target/protocol-shapes/*/**/catalog.json
-            target/protocol-shapes/*/**/catalog-scope.txt
-            target/protocol-shapes/*/**/case-identities.tsv
-            target/protocol-shapes/*/**/case-depths.tsv
-            target/protocol-shapes/*/**/*coverage*.tsv
-            target/protocol-shapes/*/**/diagnostics.tsv
-            target/protocol-shapes/*/**/unclassified-rejections.txt
-            target/protocol-shapes/*/**/diagnose.time
-            target/protocol-shapes/*/**/diagnosis-source.sha256
-            target/protocol-shapes/*/**/compiler.txt
-            target/protocol-shapes/*/**/revision.txt
-            target/protocol-shapes/*/**/source.patch
-            target/protocol-shapes/*/**/source.sha256
-            target/protocol-shapes/*/**/source-after.sha256
-            target/protocol-shapes/*/**/inputs.sha256
-            target/protocol-shapes/*/**/inputs-check.log
-            target/protocol-shapes/*/**/Cargo.toml
-            target/protocol-shapes/*/**/src/**/*.rs
-            target/protocol-shapes/*/**/traces/*.txt
-            target/protocol-shapes/*/**/Cargo.lock
-            target/protocol-shapes/*/**/dependencies.sha256
-            target/protocol-shapes/*/**/dependencies-check.log
-            target/protocol-shapes/*/**/compile.time
-            target/protocol-shapes/*/**/execute.time
-            target/protocol-shapes/*/**/oracle.time
-            target/protocol-shapes/*/**/oracle.log
-            target/protocol-shapes/*/**/inputs.json
-            target/protocol-shapes/*/**/scope-inputs.json
-            target/protocol-shapes/*/**/scope-plans/*.jsonl
-            target/protocol-shapes/*/**/scripts/*.jsonl
-            target/protocol-shapes/*/**/observations/*.json
-            target/protocol-shapes/*/**/scope-observations/*.jsonl
-            target/protocol-shapes/*/**/scope-parts/**/*.json
-            target/protocol-shapes/*/**/scope-parts/**/*.jsonl
-            target/protocol-shapes/*/**/rejected/inventory.tsv
-            target/protocol-shapes/*/**/rejected/Cargo.toml
-            target/protocol-shapes/*/**/rejected/Cargo.lock
-            target/protocol-shapes/*/**/rejected/src/bin/*.rs
-            target/protocol-shapes/*/**/rejected/*.jsonl
-            target/protocol-shapes/*/**/rejected/*.stderr
-
-  protocol-fuzz:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.check == 'protocol-fuzz')
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        depth: ${{ fromJSON(github.event_name == 'schedule' && '[4,5,6,7,8]' || format('[{0}]', inputs.syntax-depth)) }}
-    env:
-      TOOLCHAIN: stable
-      CARGO_BUILD_JOBS: 1
-      CARGO_INCREMENTAL: 0
-      FUZZ_DEPTH: ${{ matrix.depth }}
-      FUZZ_SEED: ${{ inputs.fuzz-seed }}
-      FUZZ_COUNT: ${{ inputs.fuzz-count || '4' }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-      - uses: ./.github/actions/setup-lean
-      - name: Sample syntax and retain failure reductions
-        run: |
-          bash .github/scripts/lib/resource_guard.sh bash -euo pipefail -c '
-            cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes --bin protocol-shape-controls
-            cargo +stable build --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes --bin protocol-shape-controls
-            task_seed="${FUZZ_SEED:-$(date -u +%Y%m%d)}"
-            target/debug/protocol-shapes syntax-fuzz "$PWD" "$FUZZ_DEPTH" "$task_seed" "$FUZZ_COUNT" "target/protocol-fuzz-${FUZZ_DEPTH}-${task_seed}"
-            # These fixed inputs are shared by all sampled depths.
-            if [[ "$FUZZ_DEPTH" == 4 ]]; then
-              bash .github/scripts/check_protocol_shapes.sh --contracts 0 15
-              bash .github/scripts/check_shape_resumption_sensitivity.sh
-              bash .github/scripts/check_prefix_input_sensitivity.sh
-              bash .github/scripts/check_resolver_occurrence_sensitivity.sh
-              bash .github/scripts/check_resolver_observation_sensitivity.sh
-              bash .github/scripts/check_recv_contract_sensitivity.sh
-              bash .github/scripts/check_parked_offer_sensitivity.sh
-              bash .github/scripts/check_parked_receive_sensitivity.sh
-              bash .github/scripts/check_reentry_component_sensitivity.sh
-              target/debug/protocol-shapes syntax-shrink "$PWD" 3 19011422329217 target/protocol-fuzz-shrink-control \
-                -- "$PWD/target/debug/protocol-shape-controls" --shrink-probe
-              target/debug/protocol-shape-controls --check-shrink target/protocol-fuzz-shrink-control
-              bash .github/scripts/check_protocol_shapes.sh --interactions 4 12439 1
-              bash .github/scripts/check_protocol_shapes.sh --interactions 5 111955 1
-              bash .github/scripts/check_protocol_shapes.sh --spines 5 2019 1
-              bash .github/scripts/check_protocol_shapes.sh --spines 5 15667 1
-              bash .github/scripts/check_protocol_shapes.sh --spines 5 22409 1
-              bash .github/scripts/check_protocol_shapes.sh --spines 5 23531 1
-              bash .github/scripts/check_protocol_shapes.sh --spines 3 630 1
-              bash .github/scripts/check_protocol_shapes.sh --spines 3 658 1
-            fi
-          '
-      - name: Require delayed parent reentry in both poll orders
-        if: matrix.depth == 4
-        run: |
-          awk -F '\t' '
-            NR > 1 { witnessed[$3] = 1 }
-            END { exit !(witnessed["false"] && witnessed["true"]) }
-          ' target/protocol-shapes/spines-3/range-658-count-1/roll-schedule-coverage.tsv
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: protocol-fuzz-${{ matrix.depth }}
-          path: |
+            target/protocol-ci/${{ matrix.id }}/**
+            target/protocol-shapes/**
+            !target/protocol-shapes/**/target/**
             target/protocol-fuzz-*/**
-            target/protocol-shapes/contracts/**
-            target/resolver-occurrence-sensitivity/**
-            target/resolver-observation-sensitivity/**
-            target/recv-contract-sensitivity/**
-            target/parked-offer-sensitivity/**
-            target/parked-receive-sensitivity/**
-            target/reentry-component-sensitivity/**
-            target/shape-resumption-sensitivity/**
-            target/protocol-shapes/*/**/catalog.json
-            target/protocol-shapes/*/**/catalog-scope.txt
-            target/protocol-shapes/*/**/case-identities.tsv
-            target/protocol-shapes/*/**/case-depths.tsv
-            target/protocol-shapes/*/**/*coverage*.tsv
-            target/protocol-shapes/*/**/source.sha256
-            target/protocol-shapes/*/**/source-after.sha256
-            target/protocol-shapes/*/**/source.patch
-            target/protocol-shapes/*/**/compiler.txt
-            target/protocol-shapes/*/**/revision.txt
-            target/protocol-shapes/*/**/inventory.txt
-            target/protocol-shapes/*/**/inputs.json
-            target/protocol-shapes/*/**/scope-inputs.json
-            target/protocol-shapes/*/**/scope-plans/*.jsonl
-            target/protocol-shapes/*/**/inputs.sha256
-            target/protocol-shapes/*/**/inputs-check.log
-            target/protocol-shapes/*/**/Cargo.toml
-            target/protocol-shapes/*/**/src/**/*.rs
-            target/protocol-shapes/*/**/traces/*.txt
-            target/protocol-shapes/*/**/Cargo.lock
-            target/protocol-shapes/*/**/dependencies.sha256
-            target/protocol-shapes/*/**/dependencies-check.log
-            target/protocol-shapes/*/**/diagnostics.tsv
-            target/protocol-shapes/*/**/unclassified-rejections.txt
-            target/protocol-shapes/*/**/diagnose.time
-            target/protocol-shapes/*/**/compile.time
-            target/protocol-shapes/*/**/execute.time
-            target/protocol-shapes/*/**/oracle.time
-            target/protocol-shapes/*/**/oracle.log
-            target/protocol-shapes/*/**/observations/*.json
-            target/protocol-shapes/*/**/scope-observations/*.jsonl
-            target/protocol-shapes/*/**/scope-parts/**/*.json
-            target/protocol-shapes/*/**/scope-parts/**/*.jsonl
-            target/protocol-shapes/*/**/scripts/*.jsonl
-            target/protocol-shapes/*/**/rejected/inventory.tsv
-            target/protocol-shapes/*/**/rejected/Cargo.toml
-            target/protocol-shapes/*/**/rejected/Cargo.lock
-            target/protocol-shapes/*/**/rejected/src/bin/*.rs
-            target/protocol-shapes/*/**/rejected/*.jsonl
-            target/protocol-shapes/*/**/rejected/*.stderr
+            !target/protocol-fuzz-*/**/target/**
+            target/*-sensitivity/**
+            !target/*-sensitivity/**/target/**
 
-  miri-parallel-reentry:
-    if: github.event_name == 'workflow_dispatch' && inputs.check == 'miri-parallel-reentry'
+  required:
+    name: core-contract
+    if: always()
+    needs: [quality, runtime-work, protocol-plan, protocol-fuzz]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        case: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-    env:
-      CARGO_BUILD_JOBS: 1
-      CARGO_INCREMENTAL: 0
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      CARGO_PROFILE_TEST_DEBUG: line-tables-only
-      CASE: ${{ matrix.case }}
-      MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-env-set=HIBANA_PARALLEL_CREDIT_CASE=${{ matrix.case }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Install Rust and Miri
+      - name: Require every mandatory population and budget check
+        env:
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          rustup toolchain install stable --profile minimal
-          MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
-          rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
-          echo "MIRI_TOOLCHAIN=${MIRI_TOOLCHAIN}" >> "${GITHUB_ENV}"
-      - name: Check one complete parallel reentry schedule
-        run: |
-          bash .github/scripts/lib/resource_guard.sh bash -euo pipefail -c '
-            out="target/miri-parallel-reentry/${CASE}"
-            mkdir -p "$out"
-            git rev-parse HEAD > "$out/revision.txt"
-            git diff --exit-code HEAD > "$out/source.patch"
-            git ls-files -z | xargs -0 shasum -a 256 -- > "$out/source-before.sha256"
-            cargo +"${MIRI_TOOLCHAIN}" miri --version > "$out/miri-version.txt"
-            cargo +"${MIRI_TOOLCHAIN}" miri test --locked --target aarch64-unknown-linux-gnu --test nested_parallel_reentry --no-run > "$out/build.log" 2>&1
-            /usr/bin/time -p -o "$out/time.txt" timeout --kill-after=10s 480s \
-              cargo +"${MIRI_TOOLCHAIN}" miri test --locked --target aarch64-unknown-linux-gnu --test nested_parallel_reentry \
-              nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late \
-              -- --exact --nocapture > "$out/run.log" 2>&1
-            reverse=false
-            if (( CASE % 2 )); then reverse=true; fi
-            grep -F "parallel-credit complete: right_visit=$((CASE / 2)) reverse=${reverse}" "$out/run.log"
-            test "$(grep -c "^parallel-credit complete:" "$out/run.log")" = 1
-            git ls-files -z | xargs -0 shasum -a 256 -- > "$out/source-after.sha256"
-            cmp "$out/source-before.sha256" "$out/source-after.sha256"
-          '
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: miri-parallel-reentry-${{ matrix.case }}
-          path: target/miri-parallel-reentry/
-
-  kani:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.check == 'all')
-    runs-on: ubuntu-24.04
-    env:
-      TOOLCHAIN: stable
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install pinned Kani and CBMC
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep
-          rustup toolchain install stable --profile minimal
-          KANI_VERSION="$(< .github/kani-version)"
-          cargo +stable install --locked kani-verifier --version "${KANI_VERSION}"
-          cargo +stable kani setup
-      - name: Run Kani proofs
-        run: bash ./.github/scripts/check_kani.sh
-
-  final-form:
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || (inputs.check != 'protocol-shapes' && inputs.check != 'protocol-syntax' && inputs.check != 'protocol-interactions' && inputs.check != 'protocol-spines' && inputs.check != 'protocol-representatives' && inputs.check != 'protocol-fuzz' && inputs.check != 'miri-parallel-reentry'))
-    needs: protocol-shapes
-    runs-on: ubuntu-24.04-arm
-    env:
-      TOOLCHAIN: stable
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Install host tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep z3
-          rustup toolchain install stable --profile minimal --component clippy --component rustfmt --component rust-src
-          cargo +stable fmt --version
-          MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
-          rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
-      - uses: ./.github/actions/setup-lean
-      - name: Check nested roll send admission
-        run: >-
-          bash .github/scripts/lib/resource_guard.sh
-          bash .github/scripts/check_nested_roll_admission.sh
-      - name: Run final-form gates
-        run: >-
-          bash .github/scripts/lib/resource_guard.sh
-          bash ./.github/scripts/run_final_form_gates.sh
-      - name: Check elastic roll endpoint selectors
-        run: bash proofs/checks/runtime/roll-reentry-selectors/check.sh
-      - name: Check conditional roll continuation dependencies
-        run: bash proofs/checks/runtime/roll-continuation-dependency/check.sh
-      - name: Check parallel resolver progress
-        run: bash proofs/checks/runtime/parallel-resolver-progress/check.sh
-      - name: Check rolled-route ownership
-        run: bash proofs/checks/runtime/rolled-route-ownership/check.sh
-      - name: Check projection diagnostic models
-        run: |
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/projection/projection-diagnostics/Diagnostics.lean
-      - name: Check explicit resource join integration
-        run: bash proofs/checks/projection/explicit-resource-join/check.sh
-      - name: Check receive lane census
-        run: bash proofs/checks/runtime/recv-lane-census/check.sh
-      - name: Check immutable operation lookup
-        run: bash proofs/checks/image/operation-index/check.sh
-      - name: Check completion bitmap traversal
-        run: bash proofs/checks/runtime/pending-events/check.sh
-      - name: Check immutable event admission
-        run: bash proofs/checks/runtime/event-admission/check.sh
-      - name: Check parallel offer ingress handoff
-        run: bash proofs/checks/runtime/parallel-offer-ingress/check.sh
-      - name: Check immutable resolver lookup and dispatch subtree
-        run: |
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 bash proofs/checks/image/route-index/check.sh
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/resolver-index/DirectResolverIndex.lean
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 bash proofs/checks/image/dispatch-subtree/check.sh
-          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/checks/image/route-column-access/Bounds.lean
+          printf '%s\n' "$RESULTS" | jq -e 'keys == ["protocol-fuzz", "protocol-plan", "quality", "runtime-work"] and all(.[]; .result == "success")'
+          printf '%s\n' 'The complete required finite CI contract passed; see proofs/CI.md for its scope.' >> "$GITHUB_STEP_SUMMARY"

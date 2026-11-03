@@ -2,6 +2,29 @@ import Std
 
 namespace Hibana.PendingEvents
 
+def sourceMask (start finish word : Nat) : BitVec 64 :=
+  let base := word * 64
+  if finish ≤ base ∨ base + 64 ≤ start then 0
+  else (BitVec.allOnes 64 <<< (start - base)) &&&
+    (BitVec.allOnes 64 >>> (64 - min (finish - base) 64))
+
+theorem source_word_bounds (word bit : Nat) (w : word < 1024) (b : bit < 64) :
+    word * 64 + bit < 65536 ∧ word * 64 + 64 ≤ 65536 := by omega
+
+/-- Exact half-open membership for every compact source word and endpoint. -/
+theorem source_mask_exact (start finish word bit : Nat) (within : bit < 64) :
+    (sourceMask start finish word).getLsbD bit = true ↔
+      start ≤ word * 64 + bit ∧ word * 64 + bit < finish := by
+  dsimp only [sourceMask]
+  split
+  · rename_i outside
+    simp
+    omega
+  · simp only [BitVec.getLsbD_and, BitVec.getLsbD_shiftLeft,
+      BitVec.getLsbD_ushiftRight, BitVec.getLsbD_allOnes,
+      Bool.and_eq_true, decide_eq_true_eq]
+    by_cases low : bit < start - word * 64 <;> simp [low] <;> omega
+
 def rangeMask (low high : Nat) : BitVec 32 :=
   (BitVec.allOnes 32 <<< low) &&& BitVec.ofNat 32 (2 ^ high - 1)
 
@@ -153,6 +176,8 @@ theorem a_conflicting_ancestor_excludes_its_event
   · exact different (Option.some.inj (chosen.symm.trans same))
 
 #print axioms mask_exact
+#print axioms source_mask_exact
+#print axioms source_word_bounds
 #print axioms clear_selected
 #print axioms lowest_present
 #print axioms word_in_backing

@@ -3,9 +3,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SOURCE="$ROOT/.github/ci-tests/supplemental_proofs.rs"
 SHARED="$ROOT/.github/ci-tests/lean_audit.rs"
+MODULE="$ROOT/.github/ci-tests/lean_module.rs"
 BUILD="$ROOT/target/ci-tools"
 BINARY="$BUILD/supplemental-proofs"
-if [[ ! -x "$BINARY" || "$SOURCE" -nt "$BINARY" || "$SHARED" -nt "$BINARY" ]]; then
+if [[ ! -x "$BINARY" || "$SOURCE" -nt "$BINARY" || "$SHARED" -nt "$BINARY" || "$MODULE" -nt "$BINARY" ]]; then
   mkdir -p "$BUILD"
   temporary="$(mktemp "$BUILD/supplemental-proofs.XXXXXX")"
   trap 'rm -f "$temporary"' EXIT

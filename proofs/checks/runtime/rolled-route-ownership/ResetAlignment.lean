@@ -81,6 +81,31 @@ end ResetAlignment
 
 namespace ParallelVisitCompletion
 
+/-- The stored credit records presence of a completed visit, not a counter. -/
+def resetCredit (prior : BitVec 64) (parentComplete : Bool) : BitVec 64 :=
+  if prior ≠ 0#64 ∨ parentComplete = true then 1#64 else 0#64
+
+theorem reset_credit_is_canonical (prior : BitVec 64) (parentComplete : Bool) :
+    resetCredit prior parentComplete = 0#64 ∨ resetCredit prior parentComplete = 1#64 := by
+  unfold resetCredit
+  split <;> simp
+
+theorem reset_credit_is_idempotent (prior : BitVec 64) (parentComplete : Bool) :
+    resetCredit (resetCredit prior parentComplete) parentComplete =
+      resetCredit prior parentComplete := by
+  cases parentComplete <;> by_cases zero : prior = 0#64 <;> simp [resetCredit, zero]
+
+theorem a_consumed_credit_requires_fresh_completion :
+    resetCredit 0#64 false = 0#64 ∧ resetCredit 0#64 true = 1#64 := by decide
+
+theorem retained_credit_survives_reset :
+    resetCredit 1#64 false = 1#64 := by decide
+
+#print axioms reset_credit_is_canonical
+#print axioms reset_credit_is_idempotent
+#print axioms a_consumed_credit_requires_fresh_completion
+#print axioms retained_credit_survives_reset
+
 /- A completion in a parallel child can pay for the containing visit while
    that child's next visit is pending. It cannot pay for its own new work. -/
 def rowComplete (done credited independent : Bool) : Bool :=

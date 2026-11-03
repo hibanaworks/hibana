@@ -68,8 +68,8 @@ source_hashes() {
   )
 }
 source_hashes > "${OUTPUT}/source.sha256"
-cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-  --bin protocol-shapes
+# Generator unit tests run once in the required workspace test gate. Each
+# population still runs its complete compiler, Endpoint and oracle checks here.
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shapes -- "${ROOT_DIR}" "${OUTPUT}" "${GENERATOR_ARGS[@]}" \
   | tee "${OUTPUT}/catalog-inventory.txt"
@@ -94,8 +94,6 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
     diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.jsonl scripts/*.jsonl \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )
-cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-  --bin protocol-shape-rejections
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shape-rejections -- "${OUTPUT}" "${TOOLCHAIN:-stable}"
 if [[ "$(cat "${OUTPUT}/inputs.json")" == '[]' ]]; then
@@ -132,8 +130,6 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial \
   "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" \
   "${OUTPUT}/inputs.json" "${OUTPUT}/observations" | tee "${OUTPUT}/oracle.log"
 cat "${OUTPUT}/diagnose.time" "${OUTPUT}/compile.time" "${OUTPUT}/execute.time" "${OUTPUT}/oracle.time"
-cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-  --bin protocol-shape-controls
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shape-controls -- "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" "${OUTPUT}"
 source_hashes > "${OUTPUT}/source-after.sha256"

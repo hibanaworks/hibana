@@ -262,7 +262,7 @@ fn static_inventory_rejects_hidden_claims_and_changed_closures() {
 }
 
 #[test]
-fn proof_guard_rejects_version_artifact_and_source_failures() {
+fn proof_guard_rejects_toolchain_failures() {
     use std::os::unix::fs::PermissionsExt;
     let root = std::env::temp_dir().join(format!(
         "hibana-proof-guard-failures-{}",
@@ -298,39 +298,5 @@ fn proof_guard_rejects_version_artifact_and_source_failures() {
     }
     fs::write(&toolchain, "leanprover/lean4:v4.29.0\n").unwrap();
     assert!(!version().status.success());
-    let artifact = root.join("Generated.lean");
-    let check_artifact = || {
-        Command::new(binary)
-            .arg("artifact")
-            .arg(&artifact)
-            .arg("fixture")
-            .output()
-            .unwrap()
-    };
-    assert!(!check_artifact().status.success());
-    fs::write(&artifact, "").unwrap();
-    assert!(!check_artifact().status.success());
-    fs::write(&artifact, "theorem fixture : True := by trivial\n").unwrap();
-    assert!(check_artifact().status.success());
-    let check_source = || {
-        Command::new(binary)
-            .args(["sources", "fixture"])
-            .arg(&artifact)
-            .output()
-            .unwrap()
-    };
-    assert!(check_source().status.success());
-    for source in [
-        "private axiom hidden : False",
-        "-- sorry in a comment",
-        "def quoted : String := \"native_decide\"",
-        "unsafe def foreign := 1",
-        "theorem bad : False := by admit",
-    ] {
-        fs::write(&artifact, source).unwrap();
-        assert!(!check_source().status.success(), "accepted {source}");
-    }
-    fs::remove_file(&artifact).unwrap();
-    assert!(!check_source().status.success());
     let _ = fs::remove_dir_all(root);
 }

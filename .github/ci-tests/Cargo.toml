@@ -32,10 +32,6 @@ name = "resource-guard"
 path = "resource_guard.rs"
 
 [[bin]]
-name = "dispatch-model"
-path = "dispatch_model.rs"
-
-[[bin]]
 name = "check-lean-theorem-inventory"
 path = "check_lean_theorem_inventory.rs"
 
@@ -60,16 +56,12 @@ name = "pressure-source"
 path = "pressure_source.rs"
 
 [[bin]]
-name = "smt-model"
-path = "smt_model.rs"
-
-[[bin]]
 name = "final-measurements"
 path = "final_measurements.rs"
 
 [[bin]]
-name = "projection-checks"
-path = "projection_checks.rs"
+name = "implementation-proofs"
+path = "implementation_proofs.rs"
 
 [[bin]]
 name = "size-snapshot"

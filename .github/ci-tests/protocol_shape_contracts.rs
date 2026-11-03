@@ -2,7 +2,7 @@
 use super::{Protocol, localside};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) const COUNT: usize = 15;
+pub(super) use super::catalog_counts::CONTRACTS as COUNT;
 pub(super) const VARIANTS: usize = 4;
 
 /// Source positions whose sends have the same public selector in opposite

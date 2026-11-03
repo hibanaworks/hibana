@@ -57,7 +57,7 @@ theorem initial_search_lower_bound (t : Nat → Nat) (q n : Nat)
     (by omega) (by omega) (by intro i hi; omega) (by intro i hi hin; omega)
 
 theorem no_equal_marker_skipped (t : Nat → Nat) (q n b i : Nat)
-    (bound : LowerBound t q n b) (hin : i < n) (same : t i = q) : b ≤ i := by
+    (bound : LowerBound t q n b) (same : t i = q) : b ≤ i := by
   by_cases h : b ≤ i
   · exact h
   · have bad := bound.2.1 i (by omega)

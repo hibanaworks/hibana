@@ -38,7 +38,25 @@ theorem range_count_exact (counts : List Nat) (start stop : Nat)
   have equality := prefix_decomposition counts start stop ordered
   omega
 
+/-- Checked monotone prefixes cannot wrap a compact subtraction. -/
+theorem compact_count_bounds (first stop : Nat)
+    (bound : stop < 65536) : stop - first ≤ stop ∧ stop - first < 65536 :=
+  ⟨Nat.sub_le stop first, Nat.lt_of_le_of_lt (Nat.sub_le stop first) bound⟩
+
+def packedStart (first stop : Nat) : Nat := if stop - first = 0 then 0 else first
+
+theorem nonempty_packed_range_has_exact_end (first stop : Nat) (ordered : first < stop) :
+    packedStart first stop + (stop - first) = stop := by
+  simp [packedStart, show stop - first ≠ 0 by omega]
+  omega
+
+theorem empty_packed_range_is_canonical (first : Nat) : packedStart first first = 0 := by
+  simp [packedStart]
+
 end Hibana.RowPrefix
 
 #print axioms Hibana.RowPrefix.prefix_decomposition
 #print axioms Hibana.RowPrefix.range_count_exact
+#print axioms Hibana.RowPrefix.compact_count_bounds
+#print axioms Hibana.RowPrefix.nonempty_packed_range_has_exact_end
+#print axioms Hibana.RowPrefix.empty_packed_range_is_canonical

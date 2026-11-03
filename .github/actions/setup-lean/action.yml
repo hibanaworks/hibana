@@ -1,45 +1,46 @@
 name: Set up Lean
-description: Install the pinned Lean compiler on Linux ARM64.
+description: Install the source-selected Lean compiler on macOS or Linux ARM64.
 runs:
   using: composite
   steps:
-    - name: Install elan
+    - name: Install the verified elan release
       shell: bash
       run: |
         set -euo pipefail
-        [[ "$(uname -s):$(uname -m)" == Linux:aarch64 ]]
+        case "$(uname -s):$(uname -m)" in
+          Darwin:arm64)
+            asset=elan-aarch64-apple-darwin.tar.gz
+            hash=7cae4c03b2f0de4053fb04a91359d5804551e6e37a6ddd1b2e0097dc561ae4a9
+            ;;
+          Darwin:x86_64)
+            asset=elan-x86_64-apple-darwin.tar.gz
+            hash=10d037a69731c0593723e018130c5f54afde175796b4af8ba1317e561e55598c
+            ;;
+          Linux:aarch64)
+            asset=elan-aarch64-unknown-linux-gnu.tar.gz
+            hash=cb69af0803b04157bc30201c29c12fca882bb3ad8b43476b8d2d3064810bc3ac
+            ;;
+          *) echo 'Unsupported verification host' >&2; exit 1 ;;
+        esac
         elan_tmp="$(mktemp -d)"
-        trap 'rm -rf "$elan_tmp"' EXIT
-        curl --proto '=https' --tlsv1.2 -sSfL \
-          https://github.com/leanprover/elan/releases/download/v4.2.3/elan-aarch64-unknown-linux-gnu.tar.gz \
-          -o "${elan_tmp}/elan.tar.gz"
-        echo "cb69af0803b04157bc30201c29c12fca882bb3ad8b43476b8d2d3064810bc3ac  ${elan_tmp}/elan.tar.gz" | sha256sum --check -
-        tar -xzf "${elan_tmp}/elan.tar.gz" -C "${elan_tmp}"
-        "${elan_tmp}/elan-init" -y --default-toolchain none
-        echo "${HOME}/.elan/bin" >> "${GITHUB_PATH}"
-    - name: Reuse the pinned compiler
+        trap 'rm -r -- "$elan_tmp"' EXIT
+        curl --proto '=https' --tlsv1.2 -fsSL \
+          "https://github.com/leanprover/elan/releases/download/v4.2.3/$asset" \
+          -o "$elan_tmp/elan.tar.gz"
+        printf '%s  %s\n' "$hash" "$elan_tmp/elan.tar.gz" | shasum -a 256 --check
+        tar -xzf "$elan_tmp/elan.tar.gz" -C "$elan_tmp"
+        "$elan_tmp/elan-init" -y --default-toolchain none
+        echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+    - name: Reuse the selected compiler
       uses: actions/cache@v6
       with:
-        path: ~/.cache/lean
-        key: lean-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain', '.github/actions/setup-lean/action.yml') }}
-    - name: Install the pinned compiler
+        path: ~/.elan/toolchains
+        key: lean-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain', '.github/actions/setup-lean/action.yml') }}
+    - name: Install the source-selected compiler
       shell: bash
       run: |
         set -euo pipefail
-        toolchain="$(< proofs/lean/lean-toolchain)"
-        [[ "$toolchain" == leanprover/lean4:v4.30.0 ]]
-        compiler="${HOME}/.cache/lean/4.30.0-linux_aarch64"
-        if [[ ! -d "$compiler" ]]; then
-          lean_tmp="$(mktemp -d)"
-          trap 'rm -r "$lean_tmp"' EXIT
-          curl --proto '=https' --tlsv1.2 --retry 2 --retry-delay 5 -sSfL \
-            https://github.com/leanprover/lean4/releases/download/v4.30.0/lean-4.30.0-linux_aarch64.tar.zst \
-            -o "${lean_tmp}/lean.tar.zst"
-          echo "c99c6f0edd446956d4758c59d4383e8e6411ff6cc71a01f9caabe5eba454121d  ${lean_tmp}/lean.tar.zst" | sha256sum --check -
-          mkdir "${lean_tmp}/compiler"
-          tar --zstd -xf "${lean_tmp}/lean.tar.zst" -C "${lean_tmp}/compiler" --strip-components=1
-          mkdir -p "$(dirname "$compiler")"
-          mv "${lean_tmp}/compiler" "$compiler"
-        fi
-        elan toolchain link "$toolchain" "$compiler"
+        toolchain="$(cat proofs/lean/lean-toolchain)"
+        elan toolchain install "$toolchain"
         elan run "$toolchain" lean --version
+        printf 'ELAN_TOOLCHAIN=%s\n' "$toolchain" >> "$GITHUB_ENV"

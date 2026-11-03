@@ -1,10 +1,14 @@
 # Implementation checks
 
 These checks are grouped by the part of Hibana they model. Paths in the tables
-refer to the current implementation. The Lean and SMT files prove mathematical
+refer to the current implementation. The Lean files prove mathematical
 properties of those algorithms. Production tests and generated-input checks
 exercise their connection to Rust. A model theorem alone is not a proof that
 every Rust execution follows it.
+
+The shared [encoding laws](image/encoding/Fields.lean) cover the full wire header,
+owned envelope, route-row fields, role bitmaps and packed compiler-table addresses.
+They are checked once by the projection runner.
 
 ## Projection
 
@@ -19,7 +23,7 @@ every Rust execution follows it.
 | [message-identity](projection/message-identity) | [`event_rows.rs`](../../src/global/role_program/image_impl/event_rows.rs), [`FrameHeader`](../../src/transport.rs) and [`DescriptorImage`](../lean/Hibana/DescriptorImage.lean): static source positions distinguish message sites |
 | [explicit-resource-join](projection/explicit-resource-join) | [`g/source/ownership.rs`](../../src/g/source/ownership.rs): independent resource work and its join |
 
-`.github/scripts/check_projection_algorithms.sh` runs the participant,
+`.github/scripts/check_implementation_proofs.sh` runs the participant,
 passive-child, conflict-reuse, lane and framed-message identity checks.
 The common Lean model and generated public projection tests separately compare
 wire identities with source positions. Repeated visits to one site share an
@@ -39,7 +43,7 @@ identity and require FIFO delivery, nonduplication and run isolation.
 
 ## Local execution
 
-The [tap-commit encoding check](runtime/tap-commit/check.sh) proves recovery and
+The [tap-commit encoding proof](runtime/tap-commit/Encoding.lean) proves recovery and
 injectivity of the actor, view, lane, direction, complete source-event and scope
 reentry fields.
 Actual Endpoint tests compare the records with 257 repeated message contracts,
@@ -65,7 +69,11 @@ The checks do not reconstruct or certify a complete execution history.
 | [roll-continuation-dependency](runtime/roll-continuation-dependency) | [`event_progress.rs`](../../src/global/typestate/cursor/scope_route/event_progress.rs): event membership and prerequisite completion are distinct |
 | [rolled-route-ownership](runtime/rolled-route-ownership) | [`scope_route`](../../src/global/typestate/cursor/scope_route): retained choices, visit admission, reset bounds and continuation order |
 
-Run a directory's `check.sh` from the repository root through the resource guard.
+All standalone Lean modules run through
+`.github/scripts/check_implementation_proofs.sh` in the required model gate.
+It checks compiled theorem closures, not source tokens or a fixed stdout transcript.
+The remaining `check.sh` entry points add actual Rust/model comparisons; they
+are not alternative theorem gates. Run them through the resource guard.
 The rolled-route check also compares all 128 combinations of completion bits,
 retained child completions and entry positions for a three-message parallel
 fixture. Its Rust cursor results are compared with `completeAt` in
@@ -74,7 +82,5 @@ to both overly strict and overly permissive rules.
 This finite comparison supplements the general model lemmas and public
 Endpoint tests; it does not establish correspondence for every protocol.
 
-Checks without a shell entry point are invoked directly by the
-[workflow](../../.github/workflows/quality-gates.yml) or by the projection runner
-above. The common Lean models and generated Rust observations are checked by
+All standalone theorem files share the implementation proof runner above. The common Lean models and generated Rust observations are checked by
 `.github/scripts/check_lean_proofs.sh`.

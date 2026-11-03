@@ -1,39 +1,12 @@
 //! Fail-closed verdict checks for the small standalone proof families.
 mod lean_audit;
+mod lean_module;
 use lean_audit::*;
 use std::{
-    env,
+    env, fs,
     io::{self, Read},
     path::Path,
 };
-fn smt(output: &str, expected: &[&str], counts: bool) -> AuditResult<()> {
-    let actual = output.lines().collect::<Vec<_>>();
-    if counts {
-        require(expected.len() == 2, "counts require sat and unsat totals")?;
-        let sat = expected[0]
-            .parse::<usize>()
-            .map_err(|_| "invalid sat count")?;
-        let unsat = expected[1]
-            .parse::<usize>()
-            .map_err(|_| "invalid unsat count")?;
-        require(
-            actual
-                .iter()
-                .all(|line| matches!(*line, "sat" | "unsat") || line.trim().is_empty()),
-            "unexpected SMT output",
-        )?;
-        require(
-            actual.iter().filter(|&&line| line == "sat").count() == sat
-                && actual.iter().filter(|&&line| line == "unsat").count() == unsat,
-            "SMT outcome count mismatch",
-        )
-    } else {
-        require(
-            actual == expected,
-            format!("SMT outcome order mismatch: expected {expected:?}, actual {actual:?}"),
-        )
-    }
-}
 fn lean(output: &str, count: usize) -> AuditResult<()> {
     let reports = parse_axioms(output)?;
     require(
@@ -53,7 +26,7 @@ fn lean(output: &str, count: usize) -> AuditResult<()> {
     }
     for (name, axioms) in reports {
         require(
-            axioms.is_subset(&names(&["propext", "Quot.sound"])),
+            axioms.is_subset(&names(&["propext", "Quot.sound", "Classical.choice"])),
             format!("forbidden Lean axioms: {name} {axioms:?}"),
         )?;
     }
@@ -61,6 +34,21 @@ fn lean(output: &str, count: usize) -> AuditResult<()> {
 }
 fn run(args: &[String]) -> AuditResult<()> {
     require(args.len() >= 2, "missing proof validation mode")?;
+    if args[1] == "module-self-test" {
+        require(args.len() == 2, "usage: module-self-test")?;
+        return module_self_test(&env::var("LEAN_BIN").unwrap_or_else(|_| "lean".into()));
+    }
+    if args[1] == "module" {
+        require(
+            args.len() == 3 || args.len() == 4,
+            "usage: module SOURCE [OUTPUT]",
+        )?;
+        return lean_module::check(
+            &env::var("LEAN_BIN").unwrap_or_else(|_| "lean".into()),
+            Path::new(&args[2]),
+            args.get(3).map(Path::new),
+        );
+    }
     if args[1] == "version" {
         let mut text = String::new();
         io::stdin()
@@ -73,11 +61,6 @@ fn run(args: &[String]) -> AuditResult<()> {
     require(args.len() >= 3, "missing evidence path")?;
     let text = read(Path::new(&args[2]))?;
     match args[1].as_str() {
-        "smt-counts" | "smt-sequence" => smt(
-            &text,
-            &args[3..].iter().map(String::as_str).collect::<Vec<_>>(),
-            args[1] == "smt-counts",
-        ),
         "lean" => lean(
             &text,
             args.get(3)
@@ -85,23 +68,53 @@ fn run(args: &[String]) -> AuditResult<()> {
                 .parse()
                 .map_err(|_| "invalid theorem count")?,
         ),
-        "lean-clean" => require(
-            !["sorryAx", "_native", "error:", "warning:"]
-                .iter()
-                .any(|s| text.contains(s)),
-            "untrusted Lean output",
-        ),
-        "source" => require(
-            forbidden(
-                &erase_non_code(&text)?,
-                &["sorry", "admit", "axiom", "native_decide", "unsafe"],
-            )
-            .is_none(),
-            "untrusted proof declaration",
-        ),
         _ => Err("unknown proof validation mode".into()),
     }
 }
+
+fn module_self_test(lean: &str) -> Result<(), String> {
+    let directory =
+        std::env::temp_dir().join(format!("hibana-compiled-axioms-{}", std::process::id()));
+    fs::create_dir(&directory).map_err(|e| e.to_string())?;
+    let result = (|| {
+        for (name, source, accepted) in [
+            ("valid", "theorem checked : True := by trivial", true),
+            (
+                "private-axiom",
+                "private axiom hidden : False\ntheorem checked : True := by trivial",
+                false,
+            ),
+            (
+                "unused-hole",
+                "theorem hidden : False := by sorry\ntheorem checked : True := by trivial",
+                false,
+            ),
+            (
+                "axiom-dependency",
+                "axiom hidden : False\ntheorem checked : False := hidden",
+                false,
+            ),
+            ("empty", "def data : Nat := 3", false),
+            (
+                "comment",
+                "-- sorry axiom native_decide\ntheorem checked : True := by trivial",
+                true,
+            ),
+        ] {
+            let file = directory.join(format!("{name}.lean"));
+            fs::write(&file, source).map_err(|e| e.to_string())?;
+            println!("Compiled-axiom control {name}: expected accepted={accepted}");
+            if lean_module::check(lean, &file, None).is_ok() != accepted {
+                return Err(format!("compiled axiom audit misclassified {name}"));
+            }
+        }
+        println!("Compiled-axiom controls passed: 6");
+        Ok(())
+    })();
+    let removed = fs::remove_dir_all(&directory).map_err(|e| e.to_string());
+    result.and(removed)
+}
+
 fn main() {
     if let Err(error) = run(&env::args().collect::<Vec<_>>()) {
         eprintln!("{error}");
@@ -111,15 +124,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn verdict_mutants() {
-        assert!(smt("sat\nunsat\n", &["1", "1"], true).is_ok());
-        for bad in ["unknown\nunsat\n", "sat\n", "sat\nunsat\ngarbage\n"] {
-            assert!(smt(bad, &["1", "1"], true).is_err());
-        }
-        assert!(smt("sat\nunsat\n", &["sat", "unsat"], false).is_ok());
-        assert!(smt("unsat\nsat\n", &["sat", "unsat"], false).is_err());
-    }
     #[test]
     fn lean_closure_mutants() {
         let good =

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "$#:${1:-}" in
+  0:) selection=all ;;
+  1:--models) selection=models ;;
+  1:--generated) selection=generated ;;
+  *) echo 'usage: check_lean_proofs.sh [--models|--generated]' >&2; exit 2 ;;
+esac
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROOF_DIR="${ROOT_DIR}/proofs/lean"
 GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
@@ -74,10 +81,12 @@ run_audit() {
 }
 
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard toolchain "${PROOF_DIR}"
+bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_DIR}"
+if [[ "$selection" != generated ]]; then
+bash "${ROOT_DIR}/.github/scripts/lib/supplemental_proofs_tool.sh" module-self-test
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory --self-test
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" generated-axioms --self-test
 
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_DIR}"
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
@@ -86,6 +95,15 @@ printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \
   --example-types "${PROOF_DIR}" "${EXAMPLE_CLAIM_SNAPSHOT}" 35
+
+LEAN_PATH="${PROOF_DIR}/.lake/build/lib/lean" \
+  bash "${ROOT_DIR}/.github/scripts/check_implementation_proofs.sh"
+fi
+
+if [[ "$selection" == models ]]; then
+  echo 'Lean model definitions, theorem types and axiom boundaries passed'
+  exit 0
+fi
 
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
@@ -99,8 +117,6 @@ mkdir -p "$(dirname "${GENERATED}")"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::bounded_conformance::bounded_public_schedules_emit_executable_lean_conformance_cases \
   -- --exact --nocapture
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CONFORMANCE_CASES}" "bounded Endpoint schedules"
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CONFORMANCE_INPUTS}" "Endpoint source/image inputs"
 # Keep physical acceptance separate from sender completion. The first loan,
 # independent tick, return and next loan enumerate all enabled I/O releases;
 # the owned/par/roll localsides run as concurrent hibana-runtime scopes.
@@ -108,12 +124,10 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::bounded_conformance::phases::bounded_acceptance_and_completion_schedules_emit_lean_cases \
   -- --exact --nocapture
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PHASE_CASES}" "split Endpoint acceptance/completion"
 : > "${FAULT_PHASE_CASES}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::bounded_conformance::phases::faults::bounded_close_and_abort_schedules_emit_lean_cases \
   -- --exact --nocapture
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FAULT_PHASE_CASES}" "split Endpoint close/abort schedules"
 # Compile the same independent Lean oracle once. Only small source/image inputs
 # enter elaboration; all observed schedules are parsed from JSON at execution.
 cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" \
@@ -156,9 +170,6 @@ rm -f "${OWNED_ABORT_GENERATED}"
 : > "${TRANSPORT_RECEIVE_FAULT_GENERATED}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::transport_fault:: -- --nocapture
-for generated in "${TRANSPORT_SEND_FAULT_GENERATED}" "${TRANSPORT_RECEIVE_FAULT_GENERATED}"; do
-  bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${generated}" "actual transport errors"
-done
 run_audit generated-axioms --kernel "${TRANSPORT_SEND_FAULT_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/transport-send-fault-generated-claim-surface.txt" 8
 run_audit generated-axioms --kernel "${TRANSPORT_RECEIVE_FAULT_GENERATED}" "${PROOF_DIR}" \
@@ -170,116 +181,96 @@ rm -f "${PEER_WITNESS_GENERATED}"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::frame_domains::actual_rolled_frame_identity_keeps_each_source_site_distinct \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FRAME_DOMAINS_GENERATED}" "source frame domains"
 run_audit generated-axioms --kernel "${FRAME_DOMAINS_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/frame-domains-generated-claim-surface.txt" 18
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::admission::source_ready_rows_match_actual_admission_across_a_parallel_owned_visit \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_ADMISSION_GENERATED}" "source and actual cursor admission"
 run_audit generated-axioms --kernel "${ACTOR_ADMISSION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/actor-admission-generated-claim-surface.txt" 54
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::mutation_coverage::actual_reset_and_recommit_cannot_disappear_between_equal_snapshots \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_MUTATION_GENERATED}" "actual completion mutation coverage"
 run_audit generated-axioms --kernel "${ACTOR_MUTATION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/actor-mutation-generated-claim-surface.txt" 11
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::handoff_interval::a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_work \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${SOURCE_INTERVAL_GENERATED}" "measured source handoff interval"
 run_audit generated-axioms --kernel "${SOURCE_INTERVAL_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/source-interval-generated-claim-surface.txt" 19
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::receipt_refresh::a_reentered_earlier_body_refreshes_the_value_after_a_later_source_receipt \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${RECEIPT_REFRESH_GENERATED}" "actual chronological resource receipt"
 run_audit generated-axioms --kernel "${RECEIPT_REFRESH_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/receipt-refresh-generated-claim-surface.txt" 36
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::send_wait::an_owned_send_rejects_a_predecessor_that_needs_its_payload_view \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FUTURE_PREDECESSOR_GENERATED}" "actual owned future prerequisite"
 run_audit generated-axioms --kernel "${FUTURE_PREDECESSOR_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/owned-future-predecessor-generated-claim-surface.txt" 4
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::visit_progress::a_complete_actor_visit_exposes_real_parallel_admissions_and_completion \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_VISIT_GENERATED}" "complete actor visit progress"
 run_audit generated-axioms --kernel "${ACTOR_VISIT_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/actor-visit-generated-claim-surface.txt" 24
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   endpoint::kernel::core::commit_delta::send_completion::a_prepared_send_publishes_before_returning_success \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${SEND_COMPLETION_GENERATED}" "prepared send completion"
 run_audit generated-axioms --kernel "${SEND_COMPLETION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/send-completion-generated-claim-surface.txt" 7
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::source_order::source_order_rejects_a_missing_join_and_spurious_parallel_order \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${SOURCE_ORDER_GENERATED}" "source operation dependencies"
 run_audit generated-axioms --kernel "${SOURCE_ORDER_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/source-order-generated-claim-surface.txt" 8
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::entry_image::missing_wrong_owner_and_unrelated_roll_entry_resources_are_rejected \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_ENTRY_GENERATED}" "owned entry resources"
 run_audit generated-axioms --kernel "${OWNED_ENTRY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/owned-entry-generated-claim-surface.txt" 5
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::recovery_image::missing_wrong_and_out_of_bounds_owned_receipts_are_rejected \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_RECOVERY_GENERATED}" "owned resource receipts"
 run_audit generated-axioms --kernel "${OWNED_RECOVERY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/owned-recovery-generated-claim-surface.txt" 5
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::elastic_continuation::a_queued_old_branch_does_not_skip_the_fresh_body_receive \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ELASTIC_CONTINUATION_GENERATED}" "retained continuation admission"
 run_audit generated-axioms --kernel "${ELASTIC_CONTINUATION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/elastic-continuation-generated-claim-surface.txt" 14
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::local_return::a_local_branch_waits_for_another_view_to_receive_its_entry_resource \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${LOCAL_RETURN_GENERATED}" "local resource return"
 run_audit generated-axioms --kernel "${LOCAL_RETURN_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/local-return-generated-claim-surface.txt" 12
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::pending_reentry::a_pending_owned_send_keeps_its_payload_unavailable_for_resource_dependent_reentry \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PENDING_BORROW_GENERATED}" "pending payload borrow"
 run_audit generated-axioms --kernel "${PENDING_BORROW_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/pending-borrow-generated-claim-surface.txt" 11
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::pending_reentry::an_unpolled_owned_send_cannot_wait_on_its_payload_after_another_view_restarts \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FUTURE_INVENTORY_GENERATED}" "actual owned future constructor"
 run_audit generated-axioms --kernel "${FUTURE_INVENTORY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/future-inventory-generated-claim-surface.txt" 4
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::owned::dropping_a_completed_owned_send_does_not_retire_the_returned_resource_view \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${FUTURE_CUSTODY_GENERATED}" "future and frame custody"
 run_audit generated-axioms --kernel "${FUTURE_CUSTODY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/future-custody-generated-claim-surface.txt" 78
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::closure::an_accepted_loan_drains_before_eof_and_its_returned_value_remains_usable \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_CLOSURE_GENERATED}" "owned transfer and observed EOF"
 run_audit generated-axioms --kernel "${OWNED_CLOSURE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/owned-closure-generated-claim-surface.txt" 7
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::closure::abort::an_aborted_accepted_loan_is_fenced_without_a_receipt_or_reissued_authority \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_ABORT_GENERATED}" "owned transfer isolated before receipt"
 run_audit generated-axioms --kernel "${OWNED_ABORT_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/owned-abort-generated-claim-surface.txt" 6
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::send_wait::dropping_an_owned_send_cancels_the_run_before_or_during_preparation \
   g::role_projection::tests::retirement::a_completed_view_retires_without_cancelling_independent_work --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OWNED_DROP_GENERATED}" "owned future drop"
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${COMPLETED_RETIREMENT_GENERATED}" "completed view retirement"
 run_audit generated-axioms --kernel "${OWNED_DROP_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/owned-drop-generated-claim-surface.txt" 120
 run_audit generated-axioms --kernel "${COMPLETED_RETIREMENT_GENERATED}" "${PROOF_DIR}" \
@@ -289,98 +280,74 @@ CARGO_BUILD_JOBS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \
     global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean \
     -- --ignored --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${GENERATED}" "production trace"
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
   cargo +"${TOOLCHAIN}" test -p hibana --lib \
     rendezvous::core::storage_layout::capacity::tests::formal_certificate_export::export_runtime_certificates_for_lean \
     -- --ignored --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${RUNTIME_GENERATED}" "runtime"
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
   cargo +"${TOOLCHAIN}" test -p hibana --lib \
     endpoint::kernel::core::public_operation::tests::export_public_operation_kernel_for_lean \
     -- --ignored --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PUBLIC_OPERATION_GENERATED}" "public-operation"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   endpoint::parallel::tests::parallel_arms_poll_independently_and_join_the_same_parent \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PUBLIC_OPERATION_CUT_GENERATED}" "parallel operation slots"
 run_audit generated-axioms --kernel "${PUBLIC_OPERATION_CUT_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/parallel-operation-cut-generated-claim-surface.txt" 15
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   global::const_dsl::receive_lane_causality::tests::export_causal_flow_for_lean \
   -- --ignored --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CAUSAL_GENERATED}" "causal"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   global::event_program_cursor_tests::lean_proof_export::parallel_certificate::export_parallel_dependencies_for_lean \
   -- --ignored --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PARALLEL_GENERATED}" "parallel"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::program_columns::export_program_columns_for_lean \
   -- --ignored --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PROGRAM_COLUMNS_GENERATED}" "program columns"
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PARTIAL_CHOICE_GENERATED}" "partial choices"
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${CONTROLLER_GENERATED}" "controller authority"
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${INGRESS_GENERATED}" "actor ingress"
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${REENTRY_GENERATED}" "actor roll preparation"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::commit::owned_commits_publish_the_shared_actor_step_and_resource_view_together \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_COMMIT_GENERATED}" "actor commits"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::reentry_choice::an_enclosing_choice_survives_two_delegated_roll_visits \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_REENTRY_COMMIT_GENERATED}" "actor body reentry commits"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::reentry_parallel::parallel_loan_reentry_preserves_the_other_body_and_completed_tail \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_PARALLEL_REENTRY_GENERATED}" "actor parallel reentry commits"
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::mixed_send_admission::ordinary_and_owned_acceptances_keep_the_same_fifo_through_reentry \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${MIXED_SEND_ADMISSION_GENERATED}" "ordinary and owned source acceptances"
 run_audit generated-axioms --kernel "${MIXED_SEND_ADMISSION_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/mixed-send-admission-generated-claim-surface.txt" 22
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_SOURCE_GENERATED}" "joint distributed source boundaries"
 run_audit generated-axioms --kernel "${DISTRIBUTED_SOURCE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/distributed-source-generated-claim-surface.txt" 28
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::native::network::preemption::a_tcp_receiver_returns_the_resource_while_the_send_is_pending_between_polls \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ASYNC_SOURCE_GENERATED}" "overlapping asynchronous send calls"
 run_audit generated-axioms --kernel "${ASYNC_SOURCE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/async-source-generated-claim-surface.txt" 9
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ASYNC_OPERATION_CUT_GENERATED}" "pending owned send operation slots"
 run_audit generated-axioms --kernel "${ASYNC_OPERATION_CUT_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/async-operation-cut-generated-claim-surface.txt" 6
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::occurrence_choice::changing_rolled_loans_teach_only_the_received_occurrences_choices \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${OCCURRENCE_CHOICE_GENERATED}" "accepted occurrence branch knowledge"
 run_audit generated-axioms --kernel "${OCCURRENCE_CHOICE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/occurrence-choice-generated-claim-surface.txt" 51
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${DISTRIBUTED_CHOICE_GENERATED}" "joint distributed choice origins"
 run_audit generated-axioms --kernel "${DISTRIBUTED_CHOICE_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/distributed-choice-generated-claim-surface.txt" 14
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::logical_view_word::a_logical_wire_word_keeps_its_order_when_the_sender_changes_holder \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${LOGICAL_VIEW_WORD_GENERATED}" "logical source words across physical holders"
 run_audit generated-axioms --kernel "${LOGICAL_VIEW_WORD_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/logical-view-word-generated-claim-surface.txt" 27
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
   g::role_projection::tests::partial_choice::a_service_uses_the_delegated_peer_without_knowing_its_physical_holder \
   -- --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${PEER_WITNESS_GENERATED}" "unknown peer holder source witnesses"
 run_audit generated-axioms --kernel "${PEER_WITNESS_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/peer-witness-generated-claim-surface.txt" 19
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib -- \
   g::role_projection::tests::conditional_controller::remote_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   g::role_projection::tests::conditional_controller::co_resident_controller::a_conditional_controller_does_not_take_authority_from_its_co_resident_observer \
   --exact
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "remote route reentry commits"
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard artifact "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}" "co-resident route reentry commits"
 run_audit generated-axioms --kernel "${ACTOR_ROUTE_LEFT_REENTRY_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/claims/actor-route-left-reentry-generated-claim-surface.txt" 82
 run_audit generated-axioms --kernel "${ACTOR_ROUTE_RIGHT_REENTRY_GENERATED}" "${PROOF_DIR}" \
