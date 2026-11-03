@@ -37,7 +37,7 @@ for defect in omit completion-only; do
     git ls-files -z | xargs -0 shasum -a 256 -- > "${OUTPUT}/${defect}-source.sha256"
     cargo +"${TOOLCHAIN:-stable}" test --locked --test tap_send_poll
   ) > "${OUTPUT}/${defect}.log" 2>&1 || status=$?
-  if [[ "${status}" != 101 ]] || ! grep -Fq 'test result: FAILED. 2 passed; 2 failed;' "${OUTPUT}/${defect}.log"; then
+  if [[ "${status}" != 101 ]] || ! grep -Eq '^test result: FAILED\. [0-9]+ passed; 2 failed; 0 ignored; 0 measured; 0 filtered out;' "${OUTPUT}/${defect}.log"; then
     echo "The ${defect} mutation did not fail both pending wire histories" >&2
     tail -40 "${OUTPUT}/${defect}.log" >&2
     exit 1
@@ -45,6 +45,14 @@ for defect in omit completion-only; do
   for name in each_checked_wire_poll_precedes_frame_delivery_and_keeps_its_prepared_scope a_received_resource_can_be_used_before_the_loan_sender_publishes; do
     grep -Fxq "test ${name} ... FAILED" "${OUTPUT}/${defect}.log"
   done
+  for name in an_out_of_order_send_never_reaches_a_transport_poll_observation local_unit_operations_do_not_invent_transport_polls; do
+    grep -Fxq "test ${name} ... ok" "${OUTPUT}/${defect}.log"
+  done
+  for kind in positive "${defect}"; do
+    awk '$1 == "test" && ($NF == "ok" || $NF == "FAILED") {print $2}' "${OUTPUT}/${kind}.log" |
+      LC_ALL=C sort > "${OUTPUT}/${kind}-tests.txt"
+  done
+  cmp "${OUTPUT}/positive-tests.txt" "${OUTPUT}/${defect}-tests.txt"
   find "${mutant}/target" -type f -perm -100 -exec shasum -a 256 -- {} + > "${OUTPUT}/${defect}-binaries.sha256"
   printf '%s\t%s\t2\n' "${defect}" "${status}" >> "${OUTPUT}/results.tsv"
   rm -r -- "${mutant}"
