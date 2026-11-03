@@ -8,7 +8,7 @@ use crate::{
 #[test]
 fn failed_initial_attachment_does_not_consume_the_physical_resource_binding() {
     type Loan<'r> = g::Msg<1, crate::Endpoint<'r, 10>>;
-    let global = g::seq(g::send::<0, 1, Loan<'_>>(), g::send::<1, 0, Loan<'_>>());
+    let global = g::seq(g::send::<0, 1, Loan>(), g::send::<1, 0, Loan>());
     let owner_program = project::<0>(&global);
     let resource_program = project::<10>(&global);
     let mut slab = [0u8; 32 * 1024];

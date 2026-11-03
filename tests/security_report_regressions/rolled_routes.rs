@@ -1,7 +1,9 @@
 use super::*;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn phase_packet_cannot_reenter_a_previous_unchosen_suffix() {
+async fn phase_packet_cannot_reenter_a_previous_unchosen_suffix()
+-> Result<(), hibana::EndpointError> {
     let choreo = g::seq(
         g::route(
             g::seq(
@@ -62,10 +64,10 @@ fn phase_packet_cannot_reenter_a_previous_unchosen_suffix() {
     let (p0, p1): (RoleProgram<0>, RoleProgram<1>) = (project(&choreo), project(&choreo));
     let mut phase_colors = Vec::new();
     for old_suffix_consumed in [false, true] {
-        let frames = Rc::new(RefCell::new(Vec::new()));
+        let frames = core::cell::Cell::new(Vec::new());
         let carrier = RecordingCarrier {
             inner: TestTransport::new(),
-            frames: frames.clone(),
+            frames: &frames,
         };
         let mut slab = [0; 128 * 1024];
         let mut storage = SessionKitStorage::<RecordingCarrier>::uninit();
@@ -74,8 +76,8 @@ fn phase_packet_cannot_reenter_a_previous_unchosen_suffix() {
             rv.enter(SessionId::new(1), &p0).unwrap(),
             rv.enter(SessionId::new(1), &p1).unwrap(),
         );
-        futures::executor::block_on(async {
-            futures::try_join!(
+        (async {
+            async {
                 async {
                     client.send::<Msg<0, u32>>(&10).await?;
                     assert_eq!(client.offer().await?.recv::<Msg<200, u32>>().await?, 10);
@@ -99,7 +101,7 @@ fn phase_packet_cannot_reenter_a_previous_unchosen_suffix() {
                     assert_eq!(client.offer().await?.recv::<Msg<211, u32>>().await?, 11);
                     client.send::<Msg<162, u32>>(&11).await?;
                     Ok::<_, hibana::EndpointError>(())
-                },
+                };
                 async {
                     assert_eq!(owner.offer().await?.recv::<Msg<0, u32>>().await?, 10);
                     owner.send::<Msg<200, u32>>(&10).await?;
@@ -115,11 +117,13 @@ fn phase_packet_cannot_reenter_a_previous_unchosen_suffix() {
                     owner.send::<Msg<211, u32>>(&11).await?;
                     assert_eq!(owner.recv::<Msg<162, u32>>().await?, 11);
                     Ok::<_, hibana::EndpointError>(())
-                }
-            )
+                };
+            }
+            .await
             .unwrap();
-        });
-        let frames = frames.borrow();
+        })
+        .await;
+        let frames = frames.take();
         assert_eq!(frames.iter().filter(|f| f.target == 0).count(), 5);
         let current = frames.iter().rfind(|f| f.target == 0).unwrap();
         if old_suffix_consumed {
@@ -135,10 +139,13 @@ fn phase_packet_cannot_reenter_a_previous_unchosen_suffix() {
         phase_colors.push((current.lane, current.label));
     }
     assert_eq!(phase_colors[0], phase_colors[1]);
+    Ok(())
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_three_result_route_reenters_after_a_fresh_request() {
+async fn nested_three_result_route_reenters_after_a_fresh_request()
+-> Result<(), hibana::EndpointError> {
     let choreo = g::seq(
         g::route(
             g::seq(
@@ -173,8 +180,8 @@ fn nested_three_result_route_reenters_after_a_fresh_request() {
         rv.enter(SessionId::new(1), &p0).unwrap(),
         rv.enter(SessionId::new(1), &p1).unwrap(),
     );
-    futures::executor::block_on(async {
-        futures::try_join!(
+    (async {
+        async {
             async {
                 for n in 0..2 {
                     client.send::<Msg<0, u32>>(&n).await?;
@@ -187,7 +194,7 @@ fn nested_three_result_route_reenters_after_a_fresh_request() {
                     client.send::<Msg<162, u32>>(&n).await?;
                 }
                 Ok::<_, hibana::EndpointError>(())
-            },
+            };
             async {
                 for n in 0..2 {
                     assert_eq!(owner.offer().await?.recv::<Msg<0, u32>>().await?, n);
@@ -199,10 +206,13 @@ fn nested_three_result_route_reenters_after_a_fresh_request() {
                     assert_eq!(owner.recv::<Msg<162, u32>>().await?, n);
                 }
                 Ok::<_, hibana::EndpointError>(())
-            }
-        )
+            };
+        }
+        .await
         .unwrap();
-    });
+    })
+    .await;
+    Ok(())
 }
 
 fn rolled_adjacent_choices() -> impl Projectable {
@@ -219,37 +229,37 @@ fn rolled_adjacent_choices() -> impl Projectable {
     .roll()
 }
 
-fn capture_adjacent_choices(first_left: bool, second_left: bool) -> Vec<Captured> {
-    let frames = Rc::new(RefCell::new(Vec::new()));
-    let carrier = RecordingCarrier {
-        inner: TestTransport::new(),
-        frames: frames.clone(),
-    };
-    let mut slab = [0; 128 * 1024];
-    let mut storage = SessionKitStorage::<RecordingCarrier>::uninit();
-    let rv = storage.init().rendezvous(&mut slab, carrier).unwrap();
-    let program: RoleProgram<0> = project(&rolled_adjacent_choices());
-    let mut origin = rv.enter(SessionId::new(1), &program).unwrap();
-    futures::executor::block_on(async {
-        if first_left {
-            origin.send::<Msg<180, u32>>(&18).await.unwrap();
-        } else {
-            origin.send::<Msg<200, u32>>(&20).await.unwrap();
-        }
-        if second_left {
-            origin.send::<Msg<190, u32>>(&19).await.unwrap();
-        } else {
-            origin.send::<Msg<210, u32>>(&21).await.unwrap();
-        }
-    });
-    frames.borrow().clone()
-}
-
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_adjacent_offers_accept_each_sibling_arm_without_an_extra_ack() {
+async fn rolled_adjacent_offers_accept_each_sibling_arm_without_an_extra_ack() {
     for first_left in [true, false] {
         for second_left in [true, false] {
-            let frames = capture_adjacent_choices(first_left, second_left);
+            let frames = {
+                let frames = core::cell::Cell::new(Vec::new());
+                let carrier = RecordingCarrier {
+                    inner: TestTransport::new(),
+                    frames: &frames,
+                };
+                let mut slab = [0; 128 * 1024];
+                let mut storage = SessionKitStorage::<RecordingCarrier>::uninit();
+                let rv = storage.init().rendezvous(&mut slab, carrier).unwrap();
+                let program: RoleProgram<0> = project(&rolled_adjacent_choices());
+                let mut origin = rv.enter(SessionId::new(1), &program).unwrap();
+                (async {
+                    if first_left {
+                        origin.send::<Msg<180, u32>>(&18).await.unwrap();
+                    } else {
+                        origin.send::<Msg<200, u32>>(&20).await.unwrap();
+                    }
+                    if second_left {
+                        origin.send::<Msg<190, u32>>(&19).await.unwrap();
+                    } else {
+                        origin.send::<Msg<210, u32>>(&21).await.unwrap();
+                    }
+                })
+                .await;
+                frames.take()
+            };
             let carrier = TestTransport::new();
             let mut slab = [0; 128 * 1024];
             let mut storage = SessionKitStorage::<TestTransport>::uninit();
@@ -262,7 +272,7 @@ fn rolled_adjacent_offers_accept_each_sibling_arm_without_an_extra_ack() {
             for frame in &frames {
                 inject(&carrier, 0, frame);
             }
-            futures::executor::block_on(async {
+            (async {
                 let branch = receiver.offer().await.unwrap();
                 if first_left {
                     assert_eq!(branch.recv::<Msg<180, u32>>().await.unwrap(), 18);
@@ -281,16 +291,45 @@ fn rolled_adjacent_offers_accept_each_sibling_arm_without_an_extra_ack() {
                 } else {
                     assert_eq!(branch.recv::<Msg<210, u32>>().await.unwrap(), 21);
                 }
-            });
+            })
+            .await;
             assert!(carrier.queue_is_empty());
         }
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_adjacent_offer_rejects_wrong_source_lane_or_frame_color() {
+async fn rolled_adjacent_offer_rejects_wrong_source_lane_or_frame_color() {
     for corrupt in 0..3 {
-        let mut frames = capture_adjacent_choices(true, false);
+        let mut frames = {
+            let first_left = true;
+            let second_left = false;
+            let frames = core::cell::Cell::new(Vec::new());
+            let carrier = RecordingCarrier {
+                inner: TestTransport::new(),
+                frames: &frames,
+            };
+            let mut slab = [0; 128 * 1024];
+            let mut storage = SessionKitStorage::<RecordingCarrier>::uninit();
+            let rv = storage.init().rendezvous(&mut slab, carrier).unwrap();
+            let program: RoleProgram<0> = project(&rolled_adjacent_choices());
+            let mut origin = rv.enter(SessionId::new(1), &program).unwrap();
+            (async {
+                if first_left {
+                    origin.send::<Msg<180, u32>>(&18).await.unwrap();
+                } else {
+                    origin.send::<Msg<200, u32>>(&20).await.unwrap();
+                }
+                if second_left {
+                    origin.send::<Msg<190, u32>>(&19).await.unwrap();
+                } else {
+                    origin.send::<Msg<210, u32>>(&21).await.unwrap();
+                }
+            })
+            .await;
+            frames.take()
+        };
         let carrier = TestTransport::new();
         let mut slab = [0; 128 * 1024];
         let mut storage = SessionKitStorage::<TestTransport>::uninit();
@@ -301,7 +340,7 @@ fn rolled_adjacent_offer_rejects_wrong_source_lane_or_frame_color() {
         let program: RoleProgram<1> = project(&rolled_adjacent_choices());
         let mut receiver = rv.enter(SessionId::new(1), &program).unwrap();
         inject(&carrier, 0, &frames[0]);
-        futures::executor::block_on(async {
+        (async {
             receiver
                 .offer()
                 .await
@@ -309,7 +348,8 @@ fn rolled_adjacent_offer_rejects_wrong_source_lane_or_frame_color() {
                 .recv::<Msg<180, u32>>()
                 .await
                 .unwrap();
-        });
+        })
+        .await;
         let source = if corrupt == 0 { 2 } else { 0 };
         if corrupt == 1 {
             frames[1].lane = 7;
@@ -327,9 +367,37 @@ fn rolled_adjacent_offer_rejects_wrong_source_lane_or_frame_color() {
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_adjacent_offer_cannot_skip_the_first_route() {
-    let frames = capture_adjacent_choices(true, false);
+async fn rolled_adjacent_offer_cannot_skip_the_first_route() {
+    let frames = {
+        let first_left = true;
+        let second_left = false;
+        let frames = core::cell::Cell::new(Vec::new());
+        let carrier = RecordingCarrier {
+            inner: TestTransport::new(),
+            frames: &frames,
+        };
+        let mut slab = [0; 128 * 1024];
+        let mut storage = SessionKitStorage::<RecordingCarrier>::uninit();
+        let rv = storage.init().rendezvous(&mut slab, carrier).unwrap();
+        let program: RoleProgram<0> = project(&rolled_adjacent_choices());
+        let mut origin = rv.enter(SessionId::new(1), &program).unwrap();
+        (async {
+            if first_left {
+                origin.send::<Msg<180, u32>>(&18).await.unwrap();
+            } else {
+                origin.send::<Msg<200, u32>>(&20).await.unwrap();
+            }
+            if second_left {
+                origin.send::<Msg<190, u32>>(&19).await.unwrap();
+            } else {
+                origin.send::<Msg<210, u32>>(&21).await.unwrap();
+            }
+        })
+        .await;
+        frames.take()
+    };
     let carrier = TestTransport::new();
     let mut slab = [0; 128 * 1024];
     let mut storage = SessionKitStorage::<TestTransport>::uninit();

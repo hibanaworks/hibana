@@ -384,8 +384,9 @@ fn transport_open_reentry_cannot_publish_endpoint_into_poisoned_session() {
     drop(fresh);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolver_callback_reentry_cannot_materialize_branch_after_peer_drop() {
+async fn resolver_callback_reentry_cannot_materialize_branch_after_peer_drop() {
     let role0 = callback_resolver_program::<0>();
     let role1 = callback_resolver_program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -409,7 +410,7 @@ fn resolver_callback_reentry_cannot_materialize_branch_after_peer_drop() {
     let mut peer = Some(rendezvous.enter(sid, &role1).expect("peer"));
     resolver_state.arm(&mut peer);
 
-    let result = futures::executor::block_on(controller.offer());
+    let result = (controller.offer()).await;
 
     assert!(resolver_state.fired.get());
     assert!(peer.is_none());
@@ -422,8 +423,9 @@ fn resolver_callback_reentry_cannot_materialize_branch_after_peer_drop() {
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolver_callback_reentry_cannot_prepare_send_after_peer_drop() {
+async fn resolver_callback_reentry_cannot_prepare_send_after_peer_drop() {
     let role0 = callback_resolver_program::<0>();
     let role1 = callback_resolver_program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -447,7 +449,7 @@ fn resolver_callback_reentry_cannot_prepare_send_after_peer_drop() {
     let mut peer = Some(rendezvous.enter(sid, &role1).expect("peer"));
     resolver_state.arm(&mut peer);
 
-    let result = futures::executor::block_on(controller.send::<Msg<44, u32>>(&44));
+    let result = (controller.send::<Msg<44, u32>>(&44)).await;
 
     assert!(resolver_state.fired.get());
     assert!(peer.is_none());
@@ -456,8 +458,9 @@ fn resolver_callback_reentry_cannot_prepare_send_after_peer_drop() {
     assert!(format!("{error:?}").contains("EndpointDropped"));
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolver_callback_reentrant_attach_is_rejected_before_endpoint_image_read() {
+async fn resolver_callback_reentrant_attach_is_rejected_before_endpoint_image_read() {
     let role0 = callback_resolver_program::<0>();
     let role1 = callback_resolver_program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -484,7 +487,8 @@ fn resolver_callback_reentrant_attach_is_rejected_before_endpoint_image_read() {
     REENTRANT_ATTACH_SESSION.with(|slot| slot.set(sid.raw()));
     REENTRANT_ATTACH_REJECTED.with(|slot| slot.set(false));
 
-    futures::executor::block_on(controller.send::<Msg<44, u32>>(&141))
+    (controller.send::<Msg<44, u32>>(&141))
+        .await
         .expect("rejected callback attach must not reject the selected send");
 
     REENTRANT_ATTACH_RENDEZVOUS.with(|slot| slot.set(core::ptr::null()));
@@ -502,8 +506,9 @@ fn resolver_callback_reentrant_attach_is_rejected_before_endpoint_image_read() {
     assert!(format!("{error:?}").contains("session-membership-sealed"));
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn transport_recv_callback_reentry_cannot_commit_frame_after_peer_drop() {
+async fn transport_recv_callback_reentry_cannot_commit_frame_after_peer_drop() {
     let role0 = program::<0>();
     let role1 = program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -524,7 +529,7 @@ fn transport_recv_callback_reentry_cannot_commit_frame_after_peer_drop() {
     let mut receiver = rendezvous.enter(sid, &role1).expect("receiver");
     state.arm(&mut peer);
 
-    let result = futures::executor::block_on(receiver.recv::<Msg<1, u32>>());
+    let result = (receiver.recv::<Msg<1, u32>>()).await;
 
     assert!(state.fired.get());
     assert!(peer.is_none());
@@ -533,8 +538,9 @@ fn transport_recv_callback_reentry_cannot_commit_frame_after_peer_drop() {
     assert!(format!("{error:?}").contains("EndpointDropped"));
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn payload_validation_callback_reentry_cannot_commit_after_peer_drop() {
+async fn payload_validation_callback_reentry_cannot_commit_after_peer_drop() {
     let role0 = callback_validation_program::<0>();
     let role1 = callback_validation_program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -560,9 +566,7 @@ fn payload_validation_callback_reentry_cannot_commit_after_peer_drop() {
     drop_state.arm(&mut peer);
     VALIDATOR_DROP_STATE.with(|slot| slot.set(core::ptr::from_ref(&drop_state)));
 
-    let result = futures::executor::block_on(
-        receiver.recv::<Msg<CALLBACK_VALIDATION_LABEL, CallbackValidatedU32>>(),
-    );
+    let result = (receiver.recv::<Msg<CALLBACK_VALIDATION_LABEL, CallbackValidatedU32>>()).await;
     VALIDATOR_DROP_STATE.with(|slot| slot.set(core::ptr::null()));
 
     assert!(drop_state.fired.get());
@@ -571,8 +575,9 @@ fn payload_validation_callback_reentry_cannot_commit_after_peer_drop() {
     assert!(format!("{error:?}").contains("EndpointDropped"));
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn payload_encoding_callback_reentry_cannot_commit_after_peer_drop() {
+async fn payload_encoding_callback_reentry_cannot_commit_after_peer_drop() {
     let role0 = callback_encoding_program::<0>();
     let role1 = callback_encoding_program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -588,9 +593,9 @@ fn payload_encoding_callback_reentry_cannot_commit_after_peer_drop() {
     drop_state.arm(&mut peer);
     ENCODER_DROP_STATE.with(|slot| slot.set(core::ptr::from_ref(&drop_state)));
 
-    let result = futures::executor::block_on(
-        sender.send::<Msg<CALLBACK_ENCODING_LABEL, CallbackEncodedU32>>(&CallbackEncodedU32),
-    );
+    let result = (sender
+        .send::<Msg<CALLBACK_ENCODING_LABEL, CallbackEncodedU32>>(&CallbackEncodedU32))
+    .await;
     ENCODER_DROP_STATE.with(|slot| slot.set(core::ptr::null()));
 
     assert!(drop_state.fired.get());
@@ -599,8 +604,9 @@ fn payload_encoding_callback_reentry_cannot_commit_after_peer_drop() {
     assert!(format!("{error:?}").contains("EndpointDropped"));
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn transport_send_callback_reentry_cannot_commit_after_peer_drop() {
+async fn transport_send_callback_reentry_cannot_commit_after_peer_drop() {
     let role0 = program::<0>();
     let role1 = program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
@@ -620,7 +626,7 @@ fn transport_send_callback_reentry_cannot_commit_after_peer_drop() {
     let mut peer = Some(rendezvous.enter(sid, &role1).expect("peer"));
     state.arm(&mut peer);
 
-    let result = futures::executor::block_on(sender.send::<Msg<1, u32>>(&13));
+    let result = (sender.send::<Msg<1, u32>>(&13)).await;
 
     assert!(state.fired.get());
     assert!(peer.is_none());
@@ -656,7 +662,7 @@ fn transport_cancel_callback_reentry_consumes_cleanup_authority_once() {
     let payload = 17u32;
     {
         let mut send = pin!(sender.send::<Msg<2, u32>>(&payload));
-        let waker = futures::task::noop_waker_ref();
+        let waker = core::task::Waker::noop();
         let mut cx = Context::from_waker(waker);
 
         assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));

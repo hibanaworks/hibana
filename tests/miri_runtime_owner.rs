@@ -6,6 +6,9 @@ use core::{
 };
 use std::rc::Rc;
 
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
+
 use hibana::{
     g::{self, Msg},
     runtime::{
@@ -244,8 +247,9 @@ fn fanout_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn fatal_codec_error_retires_transport_handles_before_endpoint_drop() {
+async fn fatal_codec_error_retires_transport_handles_before_endpoint_drop() {
     let role1 = program::<1>();
     let drops = Rc::new(Cell::new(0));
     let mut slab = AlignedSlab([0; 65_536]);
@@ -263,7 +267,8 @@ fn fatal_codec_error_retires_transport_handles_before_endpoint_drop() {
         .enter(SessionId::new(22), &role1)
         .expect("attach receiver");
 
-    let error = futures::executor::block_on(endpoint.recv::<Msg<1, u32>>())
+    let error = (endpoint.recv::<Msg<1, u32>>())
+        .await
         .expect_err("empty u32 payload must fail validation");
 
     assert!(format!("{error:?}").contains("Truncated"));
@@ -347,8 +352,9 @@ fn public_runtime_owner_stays_alias_clean_across_multiple_attaches() {
     core::hint::black_box((&endpoint1, &endpoint2));
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn session_generation_rejects_mixed_program_images_before_mutation() {
+async fn session_generation_rejects_mixed_program_images_before_mutation() {
     let role0 = program::<0>();
     let role1 = program::<1>();
     let unrelated_role1 = fanout_program::<1>();
@@ -373,7 +379,8 @@ fn session_generation_rejects_mixed_program_images_before_mutation() {
     let peer = rv
         .enter(sid, &role1)
         .expect("rejected attach must leave the original session binding unchanged");
-    futures::executor::block_on(origin.send::<Msg<1, u32>>(&34))
+    (origin.send::<Msg<1, u32>>(&34))
+        .await
         .expect("original endpoint must remain live after rejected attach");
     core::hint::black_box(peer);
 }
@@ -410,8 +417,9 @@ fn session_generation_cannot_split_across_rendezvous_owners() {
     core::hint::black_box((origin, peer));
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn transport_handle_drop_cannot_reenter_partial_endpoint_drop() {
+async fn transport_handle_drop_cannot_reenter_partial_endpoint_drop() {
     let role0 = program::<0>();
     let role1 = program::<1>();
     let state = Rc::new(TransportHandleDropState::new());
@@ -428,7 +436,8 @@ fn transport_handle_drop_cannot_reenter_partial_endpoint_drop() {
         .expect("register rendezvous");
     let sid = SessionId::new(36);
     let mut origin = rendezvous.enter(sid, &role0).expect("attach origin");
-    futures::executor::block_on(origin.send::<Msg<1, u32>>(&36))
+    (origin.send::<Msg<1, u32>>(&36))
+        .await
         .expect("complete origin before drop reentry");
     let context = TransportHandleDropContext {
         rendezvous: core::ptr::from_ref(&rendezvous).cast(),
@@ -448,8 +457,9 @@ fn transport_handle_drop_cannot_reenter_partial_endpoint_drop() {
     core::hint::black_box(peer);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolver_replacement_survives_sidecar_relocation_and_typed_dispatch() {
+async fn resolver_replacement_survives_sidecar_relocation_and_typed_dispatch() {
     let outer = DecisionArm::Left;
     let inner = DecisionArm::Right;
     let role0 = nested_resolver_program::<0>();
@@ -474,12 +484,14 @@ fn resolver_replacement_survives_sidecar_relocation_and_typed_dispatch() {
     )
     .expect("grow resolver table after endpoint sidecars exist");
 
-    futures::executor::block_on(endpoint.send::<Msg<42, u32>>(&42))
+    (endpoint.send::<Msg<42, u32>>(&42))
+        .await
         .expect("dispatch relocated outer and replaced inner resolver entries");
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolver_registration_keeps_distinct_program_image_identity() {
+async fn resolver_registration_keeps_distinct_program_image_identity() {
     let left = DecisionArm::Left;
     let right = DecisionArm::Right;
     let first = wide_roll_shared_site_program::<0>();
@@ -509,14 +521,17 @@ fn resolver_registration_keeps_distinct_program_image_identity() {
     let mut second_endpoint = rv
         .enter(SessionId::new(32), &second)
         .expect("attach second program");
-    futures::executor::block_on(first_endpoint.send::<Msg<44, u32>>(&44))
+    (first_endpoint.send::<Msg<44, u32>>(&44))
+        .await
         .expect("first program keeps its left resolver");
-    futures::executor::block_on(second_endpoint.send::<Msg<45, u32>>(&45))
+    (second_endpoint.send::<Msg<45, u32>>(&45))
+        .await
         .expect("second program keeps its right resolver");
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
+async fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
     let left = DecisionArm::Left;
     let right = DecisionArm::Right;
     let first = wide_roll_shared_site_program::<0>();
@@ -524,7 +539,7 @@ fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
 
     // Establish encoding capacity before testing resolver rollback. Attaching
     // the resident state alone does not guarantee payload workspace.
-    let first_dispatch_fits = |slab_bytes: usize| {
+    let first_dispatch_fits = async |slab_bytes: usize| {
         let mut slab = AlignedSlab([0; 65_536]);
         let mut storage = SessionKitStorage::<NoopTransport>::uninit();
         let kit = storage.init();
@@ -543,18 +558,18 @@ fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
         let Ok(mut endpoint) = rv.enter(SessionId::new(33), &first) else {
             return false;
         };
-        futures::executor::block_on(endpoint.send::<Msg<44, u32>>(&44)).is_ok()
+        (endpoint.send::<Msg<44, u32>>(&44)).await.is_ok()
     };
 
     let mut first_fitting_bytes = 1usize;
     let mut upper = 8192usize;
     assert!(
-        first_dispatch_fits(upper),
+        first_dispatch_fits(upper).await,
         "proof fixture upper bound must fit"
     );
     while first_fitting_bytes < upper {
         let midpoint = first_fitting_bytes + (upper - first_fitting_bytes) / 2;
-        if first_dispatch_fits(midpoint) {
+        if first_dispatch_fits(midpoint).await {
             upper = midpoint;
         } else {
             first_fitting_bytes = midpoint + 1;
@@ -586,12 +601,14 @@ fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
         "fixture must fail at resolver storage exhaustion: {growth_error:?}"
     );
 
-    futures::executor::block_on(endpoint.send::<Msg<44, u32>>(&44))
+    (endpoint.send::<Msg<44, u32>>(&44))
+        .await
         .expect("failed growth must preserve the first resolver registration");
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn failed_peer_attach_abort_keeps_existing_endpoint_live() {
+async fn failed_peer_attach_abort_keeps_existing_endpoint_live() {
     let role0 = program::<0>();
     let role1 = program::<1>();
     let mut exercised = false;
@@ -611,7 +628,8 @@ fn failed_peer_attach_abort_keeps_existing_endpoint_live() {
             continue;
         }
 
-        futures::executor::block_on(endpoint0.send::<Msg<1, u32>>(&4))
+        (endpoint0.send::<Msg<1, u32>>(&4))
+            .await
             .expect("existing endpoint survives failed peer attach abort");
         exercised = true;
         break;
@@ -623,8 +641,9 @@ fn failed_peer_attach_abort_keeps_existing_endpoint_live() {
     );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn payload_schema_mismatch_poison_session_without_publishing() {
+async fn payload_schema_mismatch_poison_session_without_publishing() {
     let role0 = program::<0>();
     let mut slab = AlignedSlab([0; 65_536]);
     let mut storage = SessionKitStorage::<NoopTransport>::uninit();
@@ -634,13 +653,15 @@ fn payload_schema_mismatch_poison_session_without_publishing() {
         .expect("register send rendezvous");
     let mut endpoint = rv.enter(SessionId::new(6), &role0).expect("attach sender");
 
-    let mismatch = futures::executor::block_on(endpoint.send::<Msg<1, i32>>(&7))
+    let mismatch = (endpoint.send::<Msg<1, i32>>(&7))
+        .await
         .expect_err("same-width payload with the wrong schema must be rejected");
     assert!(
         format!("{mismatch:?}").contains("PayloadMismatch"),
         "wrong payload schema must remain distinguishable: {mismatch:?}"
     );
-    let poisoned = futures::executor::block_on(endpoint.send::<Msg<1, u32>>(&7))
+    let poisoned = (endpoint.send::<Msg<1, u32>>(&7))
+        .await
         .expect_err("schema rejection must poison the affine session");
     assert!(
         format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"),
@@ -706,8 +727,9 @@ impl Transport for ReceiveTransport {
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn receive_receipt_resolves_valid_borrowed_frame() {
+async fn receive_receipt_resolves_valid_borrowed_frame() {
     let role1 = program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
     let state = Rc::new(ReceiveState {
@@ -730,7 +752,8 @@ fn receive_receipt_resolves_valid_borrowed_frame() {
         .expect("attach receiver");
 
     assert_eq!(
-        futures::executor::block_on(endpoint.recv::<Msg<1, u32>>())
+        (endpoint.recv::<Msg<1, u32>>())
+            .await
             .expect("borrowed receive frame is valid"),
         0x1122_3344
     );
@@ -738,8 +761,9 @@ fn receive_receipt_resolves_valid_borrowed_frame() {
     assert_eq!(state.requeues.get(), 0);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn payload_schema_mismatch_precedes_receive_transport_poll() {
+async fn payload_schema_mismatch_precedes_receive_transport_poll() {
     let role1 = program::<1>();
     let mut slab = AlignedSlab([0; 65_536]);
     let state = Rc::new(ReceiveState {
@@ -761,7 +785,8 @@ fn payload_schema_mismatch_precedes_receive_transport_poll() {
         .enter(SessionId::new(7), &role1)
         .expect("attach receiver");
 
-    let mismatch = futures::executor::block_on(endpoint.recv::<Msg<1, i32>>())
+    let mismatch = (endpoint.recv::<Msg<1, i32>>())
+        .await
         .expect_err("same-width payload with the wrong schema must be rejected");
     assert!(
         format!("{mismatch:?}").contains("PayloadMismatch"),
@@ -871,7 +896,7 @@ fn pending_sends_do_not_borrow_shared_scratch_across_polls() {
     let second = 0xaabb_ccddu32;
     let mut send0 = pin!(sender0.send::<Msg<1, u32>>(&first));
     let mut send1 = pin!(sender1.send::<Msg<1, u32>>(&second));
-    let waker = futures::task::noop_waker_ref();
+    let waker = core::task::Waker::noop();
     let mut cx = Context::from_waker(waker);
 
     assert!(send0.as_mut().poll(&mut cx).is_pending());

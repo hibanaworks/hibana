@@ -342,7 +342,7 @@ mod tests {
         type Loan<'r> = g::Msg<253, Endpoint<'r, 3>>;
         let global = g::seq(
             g::par(g::send::<1, 1, Local>(), g::send::<3, 0, Notice>()),
-            g::send::<1, 2, Loan<'_>>(),
+            g::send::<1, 2, Loan>(),
         );
         let owner = project::<1>(&global);
         let peer = project::<0>(&global);

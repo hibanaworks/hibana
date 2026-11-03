@@ -1,20 +1,21 @@
-//! No new Hibana API: explicit operation completion and private resource ownership.
+//! Actual resource loans return only after their current I/O completions.
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
+
 use common::TestTransport;
 use core::{
-    cell::Cell,
     future::Future,
     pin::pin,
     task::{Context, Poll, Waker},
 };
-use futures::{channel::oneshot, executor::block_on, join};
 use hibana::{
     Endpoint, EndpointError,
     g::{self, Msg},
     runtime::{
         SessionKitStorage,
         ids::SessionId,
-        program::{RoleProgram, project},
+        program::{Projectable, RoleProgram, project},
     },
 };
 
@@ -22,264 +23,288 @@ const RX: u8 = 0;
 const TX: u8 = 1;
 const OWNER: u8 = 2;
 const NEXT: u8 = 3;
+const R: u8 = 4;
+const S: u8 = 5;
 
-type RxFlow = g::Seq<
-    g::Send<OWNER, RX, Msg<0, u64>>,
-    g::Route<g::Send<RX, OWNER, Msg<1, u64>>, g::Send<RX, OWNER, Msg<2, u64>>>,
->;
-type TxFlow = g::Seq<
-    g::Send<OWNER, TX, Msg<3, u64>>,
-    g::Route<g::Send<TX, OWNER, Msg<4, u64>>, g::Send<TX, OWNER, Msg<5, u64>>>,
->;
-type Flow = g::Seq<
-    g::Par<RxFlow, TxFlow>,
-    g::Seq<
-        g::Route<g::Send<OWNER, NEXT, Msg<6, u64>>, g::Send<OWNER, NEXT, Msg<7, u64>>>,
-        g::Send<NEXT, OWNER, Msg<8, u64>>,
-    >,
->;
-fn choreography() -> g::Program<Flow> {
+type LoanR<'r> = Msg<9, Endpoint<'r, R>>;
+type LoanS<'r> = Msg<10, Endpoint<'r, S>>;
+type Read = Msg<0, u64>;
+type ReadOk = Msg<1, u64>;
+type ReadFailed = Msg<2, u64>;
+type Write = Msg<3, u64>;
+type WriteOk = Msg<4, u64>;
+type WriteFailed = Msg<5, u64>;
+type Reuse = Msg<6, u64>;
+type Abort = Msg<7, u64>;
+type Taken = Msg<8, u64>;
+type ReusedR = Msg<11, u64>;
+type ReusedS = Msg<12, u64>;
+
+fn choreography() -> impl Projectable {
     g::seq(
         g::par(
             g::seq(
-                g::send::<OWNER, RX, Msg<0, u64>>(),
-                g::route(
-                    g::send::<RX, OWNER, Msg<1, u64>>(),
-                    g::send::<RX, OWNER, Msg<2, u64>>(),
+                g::send::<OWNER, RX, LoanR>(),
+                g::seq(
+                    g::send::<OWNER, R, Read>(),
+                    g::seq(
+                        g::route(
+                            g::send::<R, OWNER, ReadOk>(),
+                            g::send::<R, OWNER, ReadFailed>(),
+                        ),
+                        g::send::<RX, OWNER, LoanR>(),
+                    ),
                 ),
             ),
             g::seq(
-                g::send::<OWNER, TX, Msg<3, u64>>(),
-                g::route(
-                    g::send::<TX, OWNER, Msg<4, u64>>(),
-                    g::send::<TX, OWNER, Msg<5, u64>>(),
+                g::send::<OWNER, TX, LoanS>(),
+                g::seq(
+                    g::send::<OWNER, S, Write>(),
+                    g::seq(
+                        g::route(
+                            g::send::<S, OWNER, WriteOk>(),
+                            g::send::<S, OWNER, WriteFailed>(),
+                        ),
+                        g::send::<TX, OWNER, LoanS>(),
+                    ),
                 ),
             ),
         ),
-        g::seq(
-            g::route(
-                g::send::<OWNER, NEXT, Msg<6, u64>>(),
-                g::send::<OWNER, NEXT, Msg<7, u64>>(),
+        g::route(
+            g::seq(
+                g::send::<OWNER, NEXT, Reuse>(),
+                g::seq(
+                    g::send::<OWNER, NEXT, LoanR>(),
+                    g::seq(
+                        g::send::<OWNER, NEXT, LoanS>(),
+                        g::seq(
+                            g::par(
+                                g::send::<R, OWNER, ReusedR>(),
+                                g::send::<S, OWNER, ReusedS>(),
+                            ),
+                            g::send::<NEXT, OWNER, Taken>(),
+                        ),
+                    ),
+                ),
             ),
-            g::send::<NEXT, OWNER, Msg<8, u64>>(),
+            g::send::<OWNER, NEXT, Abort>(),
         ),
     )
 }
 
-mod resource {
-    use super::*;
-    pub struct Operation {
-        pub serial: u64,
-    }
-    pub struct Resource<'a> {
-        operation: &'a Operation,
-        uses: Cell<usize>,
-    }
-    pub struct Use<'a> {
-        uses: &'a Cell<usize>,
-    }
-    pub struct Joined<'a> {
-        operation: &'a Operation,
-    }
-    pub struct Owner<'a> {
-        resource: Resource<'a>,
-    }
-    impl<'a> Owner<'a> {
-        pub fn new(operation: &'a Operation) -> Self {
-            Self {
-                resource: Resource {
-                    operation,
-                    uses: Cell::new(0),
-                },
-            }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn normal_reuse_requires_both_current_successful_completions() -> Result<(), EndpointError> {
+    let global = choreography();
+    let (p0, p1, p2, p3, p4, p5) = (
+        project::<RX>(&global),
+        project::<TX>(&global),
+        project::<OWNER>(&global),
+        project::<NEXT>(&global),
+        project::<R>(&global),
+        project::<S>(&global),
+    );
+    for (rx_ok, tx_ok, stale) in [
+        (true, true, false),
+        (false, true, false),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        let network = TestTransport::new();
+        let [mut slab0, mut slab1, mut slab2, mut slab3] = [[0; 32 * 1024]; 4];
+        let [mut s0, mut s1, mut s2, mut s3] = [(); 4].map(|_| SessionKitStorage::uninit());
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+        let rv3 = s3.init().rendezvous(&mut slab3, network.clone()).unwrap();
+        let sid = SessionId::new(0x7070);
+        let mut owner = rv0.enter(sid, &p2).unwrap();
+        let r = rv0.enter(sid, &p4).unwrap();
+        let s = rv0.enter(sid, &p5).unwrap();
+        let mut rx = rv1.enter(sid, &p0).unwrap();
+        let mut tx = rv2.enter(sid, &p1).unwrap();
+        let mut next = rv3.enter(sid, &p3).unwrap();
+        let mut read_bytes = Vec::new();
+        let mut written_bytes = Vec::new();
+        async {
+            async {
+                let ((r, read), (s, written)) = async {
+                    let [mut read, mut write] = owner.par()?;
+                    async {
+                        read.send::<LoanR>(r).await?;
+                        read.send::<Read>(&7).await?;
+                        let branch = read.offer().await?;
+                        let result = match branch.label() {
+                            1 => Some(branch.recv::<ReadOk>().await?),
+                            2 => {
+                                branch.recv::<ReadFailed>().await?;
+                                None
+                            }
+                            label => panic!("unexpected read result {label}"),
+                        };
+                        let r = read.recv::<LoanR>().await?;
+                        Ok((r, result))
+                    };
+                    async {
+                        write.send::<LoanS>(s).await?;
+                        write.send::<Write>(&7).await?;
+                        let branch = write.offer().await?;
+                        let result = match branch.label() {
+                            4 => Some(branch.recv::<WriteOk>().await?),
+                            5 => {
+                                branch.recv::<WriteFailed>().await?;
+                                None
+                            }
+                            label => panic!("unexpected write result {label}"),
+                        };
+                        let s = write.recv::<LoanS>().await?;
+                        Ok((s, result))
+                    };
+                }
+                .await?;
+                // Result values are application data. Affine custody and the
+                // communication join are enforced by the actual Endpoint loans.
+                if read == Some(7) && written == Some(7) {
+                    owner.send::<Reuse>(&7).await?;
+                    owner.send::<LoanR>(r).await?;
+                    owner.send::<LoanS>(s).await?;
+                    let (read, written) = async {
+                        let [mut read, mut write] = owner.par()?;
+                        async { read.recv::<ReusedR>().await };
+                        async { write.recv::<ReusedS>().await };
+                    }
+                    .await?;
+                    assert_eq!((read, written), (7, 7));
+                    assert_eq!(owner.recv::<Taken>().await?, 7);
+                } else {
+                    owner.send::<Abort>(&7).await?;
+                }
+                Ok(())
+            };
+            async {
+                let mut r = rx.recv::<LoanR>().await?;
+                let serial = r.recv::<Read>().await?;
+                assert_eq!(serial, 7);
+                hibana_runtime::yield_now().await;
+                read_bytes.extend_from_slice(&serial.to_be_bytes());
+                if rx_ok {
+                    r.send::<ReadOk>(&if stale { 6 } else { serial }).await?;
+                } else {
+                    r.send::<ReadFailed>(&serial).await?;
+                }
+                rx.send::<LoanR>(r).await?;
+                Ok(())
+            };
+            async {
+                let mut s = tx.recv::<LoanS>().await?;
+                let serial = s.recv::<Write>().await?;
+                assert_eq!(serial, 7);
+                hibana_runtime::yield_now().await;
+                written_bytes.extend_from_slice(&serial.to_be_bytes());
+                if tx_ok {
+                    s.send::<WriteOk>(&serial).await?;
+                } else {
+                    s.send::<WriteFailed>(&serial).await?;
+                }
+                tx.send::<LoanS>(s).await?;
+                Ok(())
+            };
+            async {
+                let branch = next.offer().await?;
+                match branch.label() {
+                    6 => {
+                        assert!(rx_ok && tx_ok && !stale);
+                        assert_eq!(branch.recv::<Reuse>().await?, 7);
+                        let mut r = next.recv::<LoanR>().await?;
+                        let mut s = next.recv::<LoanS>().await?;
+                        async {
+                            async { r.send::<ReusedR>(&7).await };
+                            async { s.send::<ReusedS>(&7).await };
+                        }
+                        .await?;
+                        next.send::<Taken>(&7).await?;
+                    }
+                    7 => {
+                        assert!(!rx_ok || !tx_ok || stale);
+                        assert_eq!(branch.recv::<Abort>().await?, 7);
+                    }
+                    label => panic!("unexpected publication {label}"),
+                }
+                Ok(())
+            };
         }
-        pub fn usage(&self) -> Use<'_> {
-            Use {
-                uses: &self.resource.uses,
-            }
-        }
-        pub fn return_owned(self, joined: Joined<'_>) -> Result<Resource<'a>, Self> {
-            if core::ptr::eq(self.resource.operation, joined.operation) {
-                Ok(self.resource)
-            } else {
-                Err(self)
-            }
-        }
+        .await?;
+        assert_eq!(read_bytes, 7u64.to_be_bytes());
+        assert_eq!(written_bytes, 7u64.to_be_bytes());
+        assert!(network.queue_is_empty());
     }
-    impl Use<'_> {
-        pub fn work(&self) {
-            self.uses.set(self.uses.get() + 1);
-        }
-    }
-    impl Resource<'_> {
-        pub fn retire(self) -> usize {
-            self.uses.get()
-        }
-    }
-    // The only normal-completion constructor lives beside actual recv operations.
-    pub async fn complete<'a>(
-        endpoint: &mut Endpoint<'_, OWNER>,
-        operation: &'a Operation,
-    ) -> Result<Option<Joined<'a>>, EndpointError> {
-        endpoint.send::<Msg<0, u64>>(&operation.serial).await?;
-        endpoint.send::<Msg<3, u64>>(&operation.serial).await?;
-        // Parallel branches may arrive in either order. Consume the actual
-        // offered label rather than assuming RX precedes TX.
-        let first = endpoint.offer().await?;
-        let (first_is_rx, first_done) = match first.label() {
-            1 => (true, first.recv::<Msg<1, u64>>().await? == operation.serial),
-            2 => {
-                let _ = first.recv::<Msg<2, u64>>().await?;
-                (true, false)
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn reuse_cannot_precede_actual_completion_receives() -> Result<(), EndpointError> {
+    let global = choreography();
+    let (p0, p1, p2, p3, p4, p5) = (
+        project::<RX>(&global),
+        project::<TX>(&global),
+        project::<OWNER>(&global),
+        project::<NEXT>(&global),
+        project::<R>(&global),
+        project::<S>(&global),
+    );
+    for (receive_read, complete_write) in [(true, false), (true, true), (false, true)] {
+        let network = TestTransport::new();
+        let [mut slab0, mut slab1, mut slab2, mut slab3] = [[0; 32 * 1024]; 4];
+        let [mut s0, mut s1, mut s2, mut s3] = [(); 4].map(|_| SessionKitStorage::uninit());
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+        let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+        let rv3 = s3.init().rendezvous(&mut slab3, network.clone()).unwrap();
+        let sid = SessionId::new(0x7072);
+        let mut owner = rv0.enter(sid, &p2).unwrap();
+        let r = rv0.enter(sid, &p4).unwrap();
+        let s = rv0.enter(sid, &p5).unwrap();
+        let mut rx = rv1.enter(sid, &p0).unwrap();
+        let mut tx = rv2.enter(sid, &p1).unwrap();
+        let next = rv3.enter(sid, &p3).unwrap();
+        owner.send::<LoanR>(r).await?;
+        owner.send::<Read>(&7).await?;
+        owner.send::<LoanS>(s).await?;
+        owner.send::<Write>(&7).await?;
+        let mut r = rx.recv::<LoanR>().await?;
+        let mut s = tx.recv::<LoanS>().await?;
+        assert_eq!(r.recv::<Read>().await?, 7);
+        assert_eq!(s.recv::<Write>().await?, 7);
+        r.send::<ReadOk>(&7).await?;
+        rx.send::<LoanR>(r).await?;
+        if receive_read {
+            assert_eq!(owner.recv::<ReadOk>().await?, 7);
+            let returned = owner.recv::<LoanR>().await?;
+            core::hint::black_box(&returned);
+            // Keep the returned view alive until after the rejected operation.
+            if complete_write {
+                s.send::<WriteOk>(&7).await?;
+                tx.send::<LoanS>(s).await?;
             }
-            4 => (
-                false,
-                first.recv::<Msg<4, u64>>().await? == operation.serial,
-            ),
-            5 => {
-                let _ = first.recv::<Msg<5, u64>>().await?;
-                (false, false)
-            }
-            other => panic!("unexpected completion label {other}"),
-        };
-        let second = endpoint.offer().await?;
-        let second_done = match (first_is_rx, second.label()) {
-            (true, 4) => second.recv::<Msg<4, u64>>().await? == operation.serial,
-            (true, 5) => {
-                let _ = second.recv::<Msg<5, u64>>().await?;
-                false
-            }
-            (false, 1) => second.recv::<Msg<1, u64>>().await? == operation.serial,
-            (false, 2) => {
-                let _ = second.recv::<Msg<2, u64>>().await?;
-                false
-            }
-            (_, other) => panic!("duplicate or unexpected completion label {other}"),
-        };
-        let (rx_done, tx_done) = if first_is_rx {
-            (first_done, second_done)
+            assert!(owner.send::<Reuse>(&7).await.is_err());
         } else {
-            (second_done, first_done)
-        };
-        // These are results of the two actual current-operation receives, not
-        // an independently updated lifecycle or a transport acceptance flag.
-        if rx_done && tx_done {
-            endpoint.send::<Msg<6, u64>>(&operation.serial).await?;
-        } else {
-            endpoint.send::<Msg<7, u64>>(&operation.serial).await?;
+            s.send::<WriteOk>(&7).await?;
+            tx.send::<LoanS>(s).await?;
+            assert!(owner.send::<Reuse>(&7).await.is_err());
         }
-        let taken = endpoint.recv::<Msg<8, u64>>().await?;
-        Ok((rx_done && tx_done && taken == operation.serial).then_some(Joined { operation }))
+        drop(next);
     }
+    Ok(())
 }
 
 fn once<F: Future>(future: core::pin::Pin<&mut F>) -> Poll<F::Output> {
     future.poll(&mut Context::from_waker(Waker::noop()))
 }
-fn scenario(rx_ok: bool, tx_ok: bool, stale: bool) {
-    let global = choreography();
-    let rp: RoleProgram<RX> = project(&global);
-    let tp: RoleProgram<TX> = project(&global);
-    let op: RoleProgram<OWNER> = project(&global);
-    let np: RoleProgram<NEXT> = project(&global);
-    let mut slab = [0; 16384];
-    let mut storage = SessionKitStorage::uninit();
-    let rv = storage
-        .init()
-        .rendezvous(&mut slab, TestTransport::new())
-        .unwrap();
-    let id = SessionId::new(0x7070);
-    let mut rx = rv.enter(id, &rp).unwrap();
-    let mut tx = rv.enter(id, &tp).unwrap();
-    let mut owner_ep = rv.enter(id, &op).unwrap();
-    let mut next = rv.enter(id, &np).unwrap();
-    let operation = resource::Operation { serial: 7 };
-    let owner = resource::Owner::new(&operation);
-    let joined;
-    {
-        let rx_use = owner.usage();
-        let tx_use = owner.usage();
-        let (release_io, io_finished) = oneshot::channel::<()>();
-        let mut completion = pin!(resource::complete(&mut owner_ep, &operation));
-        assert!(once(completion.as_mut()).is_pending());
-        block_on(async {
-            assert_eq!(rx.recv::<Msg<0, u64>>().await.unwrap(), 7);
-            rx_use.work();
-            if rx_ok {
-                rx.send::<Msg<1, u64>>(&if stale { 6 } else { 7 })
-                    .await
-                    .unwrap();
-            } else {
-                rx.send::<Msg<2, u64>>(&7).await.unwrap();
-            }
-        });
-        assert!(
-            once(completion.as_mut()).is_pending(),
-            "RX completion does not imply TX completion"
-        );
-        let mut tx_task = pin!(async {
-            assert_eq!(tx.recv::<Msg<3, u64>>().await?, 7);
-            // Receiving the request/acceptance is not actual IO completion.
-            io_finished.await.unwrap();
-            tx_use.work();
-            if tx_ok {
-                tx.send::<Msg<4, u64>>(&7).await?;
-            } else {
-                tx.send::<Msg<5, u64>>(&7).await?;
-            }
-            Ok::<(), EndpointError>(())
-        });
-        assert!(once(tx_task.as_mut()).is_pending());
-        assert!(once(completion.as_mut()).is_pending());
-        release_io.send(()).unwrap();
-        joined = block_on(async {
-            let consumer = async {
-                let branch = next.offer().await?;
-                let success = branch.label() == 6;
-                let value = if success {
-                    branch.recv::<Msg<6, u64>>().await?
-                } else {
-                    branch.recv::<Msg<7, u64>>().await?
-                };
-                assert_eq!(success, rx_ok && tx_ok && !stale);
-                next.send::<Msg<8, u64>>(&value).await?;
-                Ok::<(), EndpointError>(())
-            };
-            let (done, tx, received) = join!(completion.as_mut(), tx_task.as_mut(), consumer);
-            tx.expect("TX");
-            let done = done.expect("OWNER");
-            received.expect("NEXT");
-            done
-        });
-    }
-    if let Some(joined) = joined {
-        let resource = owner
-            .return_owned(joined)
-            .unwrap_or_else(|_| panic!("wrong operation"));
-        assert_eq!(resource.retire(), 2);
-    }
-    // No normal return/reuse capability is issued on failure or stale IO.
-    // This fixture has no native resource to tear down.
-}
-#[test]
-fn normal_return_waits_for_both_actual_completions() {
-    scenario(true, true, false);
-}
-#[test]
-fn failed_receive_cannot_mint_normal_return() {
-    scenario(false, true, false);
-}
-#[test]
-fn cancelled_transmit_cannot_mint_normal_return() {
-    scenario(true, false, false);
-}
-#[test]
-fn previous_operation_completion_cannot_mint_normal_return() {
-    scenario(true, true, true);
-}
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn emergency_stop_does_not_wait_for_a_resident_branch_or_io_join() {
+async fn emergency_stop_does_not_wait_for_a_resident_branch_or_io_join() {
     let global = g::par(
         g::send::<0, 1, Msg<20, ()>>().roll(),
         g::par(
@@ -309,14 +334,11 @@ fn emergency_stop_does_not_wait_for_a_resident_branch_or_io_join() {
     let mut owner = rv.enter(sid, &op).unwrap();
     let mut io = rv.enter(sid, &ip).unwrap();
     let mut next = rv.enter(sid, &np).unwrap();
-    let stopped = Cell::new(false);
-    block_on(async {
+    {
         // Model the independent native stop before any communication. This
         // assertion is about the integration's ordering, not hardware timing.
-        stopped.set(true);
         stop.send::<Msg<21, ()>>(&()).await.unwrap();
         owner.recv::<Msg<21, ()>>().await.unwrap();
-        assert!(stopped.get());
         {
             let mut waiting = pin!(owner.recv::<Msg<22, ()>>());
             assert!(once(waiting.as_mut()).is_pending());
@@ -331,41 +353,8 @@ fn emergency_stop_does_not_wait_for_a_resident_branch_or_io_join() {
         // Reuse did not require termination of the resident roll.
         resident.send::<Msg<20, ()>>(&()).await.unwrap();
         command.recv::<Msg<20, ()>>().await.unwrap();
-    });
+    }
 }
 
-#[test]
-fn existing_contract_rejects_return_before_actual_receives() {
-    let global = choreography();
-    let rp: RoleProgram<RX> = project(&global);
-    let tp: RoleProgram<TX> = project(&global);
-    let op: RoleProgram<OWNER> = project(&global);
-    let np: RoleProgram<NEXT> = project(&global);
-    let mut slab = [0; 16384];
-    let mut storage = SessionKitStorage::uninit();
-    let rv = storage
-        .init()
-        .rendezvous(&mut slab, TestTransport::new())
-        .unwrap();
-    let id = SessionId::new(0x7072);
-    let mut rx = rv.enter(id, &rp).unwrap();
-    let mut tx = rv.enter(id, &tp).unwrap();
-    let mut owner = rv.enter(id, &op).unwrap();
-    let next = rv.enter(id, &np).unwrap();
-    block_on(async {
-        owner.send::<Msg<0, u64>>(&7).await.unwrap();
-        owner.send::<Msg<3, u64>>(&7).await.unwrap();
-        rx.recv::<Msg<0, u64>>().await.unwrap();
-        tx.recv::<Msg<3, u64>>().await.unwrap();
-        rx.send::<Msg<1, u64>>(&7).await.unwrap();
-        tx.send::<Msg<4, u64>>(&7).await.unwrap();
-        // Carrier acceptance of both notifications does not authorize return:
-        // OWNER still has to consume the two actual messages.
-        assert!(owner.send::<Msg<6, u64>>(&7).await.is_err());
-    });
-    drop(next);
-}
-
-static_assertions::assert_not_impl_any!(resource::Owner<'static>: Clone, Copy);
-static_assertions::assert_not_impl_any!(resource::Resource<'static>: Clone, Copy);
-static_assertions::assert_not_impl_any!(resource::Joined<'static>: Clone, Copy);
+static_assertions::assert_not_impl_any!(Endpoint<'static,R>:Clone,Copy);
+static_assertions::assert_not_impl_any!(Endpoint<'static,S>:Clone,Copy);

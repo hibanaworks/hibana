@@ -68,10 +68,7 @@ mod tests {
                 g::send::<0, 1, g::Msg<0, ()>>(),
                 g::send::<0, 3, g::Msg<1, ()>>(),
             ),
-            g::seq(
-                g::send::<1, 2, Loan<'_>>(),
-                g::send::<0, 3, g::Msg<3, ()>>(),
-            ),
+            g::seq(g::send::<1, 2, Loan>(), g::send::<0, 3, g::Msg<3, ()>>()),
         );
         let program = project::<1>(&global);
         super::super::validated_metadata_tests::with_rows(program.role_image_ref(), |cursor| {

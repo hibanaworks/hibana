@@ -1,10 +1,6 @@
 mod common;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
-
-use core::cell::UnsafeCell;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use common::TestTransport;
 use hibana::{
@@ -12,17 +8,6 @@ use hibana::{
     runtime::program::{RoleProgram, project},
     runtime::{SessionKitStorage, ids::SessionId, tap},
 };
-use runtime_support::with_runtime_workspace;
-use tls_ref_support::with_resident_tls_ref;
-
-type TestKitStorage = SessionKitStorage<'static, TestTransport>;
-
-std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-}
-
 fn controller_program() -> RoleProgram<0> {
     let program = g::send::<0, 1, Msg<1, ()>>();
     project(&program)
@@ -80,65 +65,66 @@ fn collect_endpoint_lifecycle_event_ids(mut port: impl Iterator<Item = tap::TapE
 
 #[test]
 fn lane_lifecycle_emits_acquire_and_release_taps() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        let (acquire_count, release_count, has_expected_acquire, has_expected_release) =
-            with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-                let slab = unsafe { &mut *slab_ptr };
-                let rv = cluster
-                    .rendezvous(slab, transport.clone())
-                    .expect("register rendezvous");
-                let mut tap = rv.tap();
+        let (acquire_count, release_count, has_expected_acquire, has_expected_release) = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
+            let rv = cluster
+                .rendezvous(&mut slab, transport.clone())
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
 
-                let sid = SessionId::new(7);
-                let controller_program = controller_program();
-                {
-                    let endpoint = rv.enter(sid, &controller_program).expect("attach cursor");
-                    core::hint::black_box(&endpoint);
-                }
+            let sid = SessionId::new(7);
+            let controller_program = controller_program();
+            {
+                let endpoint = rv.enter(sid, &controller_program).expect("attach cursor");
+                core::hint::black_box(&endpoint);
+            }
 
-                let mut acquire_count = 0usize;
-                let mut release_count = 0usize;
-                let mut has_expected_acquire = false;
-                let mut has_expected_release = false;
-                for event in &mut tap {
-                    if event.id() == tap::LANE_ACQUIRE {
-                        acquire_count += 1;
-                        let (event_rv, event_lane) = decode_rv_lane(event.arg1());
-                        has_expected_acquire |=
-                            event.arg0() == sid.raw() && event_rv == 1u32 && event_lane == 0;
-                    } else if event.id() == tap::LANE_RELEASE {
-                        release_count += 1;
-                        let (event_rv, event_lane) = decode_rv_lane(event.arg1());
-                        has_expected_release |=
-                            event.arg0() == sid.raw() && event_rv == 1u32 && event_lane == 0;
-                    }
+            let mut acquire_count = 0usize;
+            let mut release_count = 0usize;
+            let mut has_expected_acquire = false;
+            let mut has_expected_release = false;
+            for event in &mut tap {
+                if event.id() == tap::LANE_ACQUIRE {
+                    acquire_count += 1;
+                    let (event_rv, event_lane) = decode_rv_lane(event.arg1());
+                    has_expected_acquire |=
+                        event.arg0() == sid.raw() && event_rv == 1u32 && event_lane == 0;
+                } else if event.id() == tap::LANE_RELEASE {
+                    release_count += 1;
+                    let (event_rv, event_lane) = decode_rv_lane(event.arg1());
+                    has_expected_release |=
+                        event.arg0() == sid.raw() && event_rv == 1u32 && event_lane == 0;
                 }
-                (
-                    acquire_count,
-                    release_count,
-                    has_expected_acquire,
-                    has_expected_release,
-                )
-            });
+            }
+            (
+                acquire_count,
+                release_count,
+                has_expected_acquire,
+                has_expected_release,
+            )
+        };
 
         assert!(has_expected_acquire, "expected lane acquire event");
         assert!(has_expected_release, "expected lane release event");
         assert_eq!(acquire_count, 1, "expected exactly one acquire event");
         assert_eq!(release_count, 1, "expected exactly one release event");
-    });
+    };
 }
 
 #[test]
 fn lane_lifecycle_keeps_full_session_id_in_evidence() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let slab = unsafe { &mut *slab_ptr };
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let controller_program = controller_program();
 
@@ -150,7 +136,7 @@ fn lane_lifecycle_keeps_full_session_id_in_evidence() {
             }
 
             collect_lane_events(rv.tap())
-        });
+        };
 
         assert_eq!(
             events,
@@ -186,47 +172,49 @@ fn lane_lifecycle_keeps_full_session_id_in_evidence() {
             ],
             "lane lifecycle evidence must retain all SessionId bits"
         );
-    });
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn duplicate_live_session_role_endpoint_lease_fails_without_runtime_evidence() {
-    with_runtime_workspace(|slab| {
+async fn duplicate_live_session_role_endpoint_lease_fails_without_runtime_evidence() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        let (initial_events, duplicate_debug, duplicate_events, release_events) =
-            with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-                let slab = unsafe { &mut *slab_ptr };
-                let rv = cluster
-                    .rendezvous(slab, transport.clone())
-                    .expect("register rendezvous");
-                let mut tap_port = rv.tap();
+        let (initial_events, duplicate_debug, duplicate_events, release_events) = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
+            let rv = cluster
+                .rendezvous(&mut slab, transport.clone())
+                .expect("register rendezvous");
+            let mut tap_port = rv.tap();
 
-                let sid = SessionId::new(11);
-                let controller_program = controller_program();
-                let mut endpoint = rv
-                    .enter(sid, &controller_program)
-                    .expect("attach first cursor");
-                let initial_events = collect_endpoint_lifecycle_event_ids(tap_port.by_ref());
-                let duplicate_debug = match rv.enter(sid, &controller_program) {
-                    Ok(endpoint) => {
-                        drop(endpoint);
-                        panic!("duplicate live session-role endpoint lease must fail");
-                    }
-                    Err(error) => format!("{error:?}"),
-                };
-                let duplicate_events = collect_endpoint_lifecycle_event_ids(tap_port.by_ref());
-                futures::executor::block_on(endpoint.send::<Msg<1, ()>>(&()))
-                    .expect("original endpoint must still progress after duplicate lease failure");
-                drop(endpoint);
-                let release_events = collect_endpoint_lifecycle_event_ids(tap_port);
-                (
-                    initial_events,
-                    duplicate_debug,
-                    duplicate_events,
-                    release_events,
-                )
-            });
+            let sid = SessionId::new(11);
+            let controller_program = controller_program();
+            let mut endpoint = rv
+                .enter(sid, &controller_program)
+                .expect("attach first cursor");
+            let initial_events = collect_endpoint_lifecycle_event_ids(tap_port.by_ref());
+            let duplicate_debug = match rv.enter(sid, &controller_program) {
+                Ok(endpoint) => {
+                    drop(endpoint);
+                    panic!("duplicate live session-role endpoint lease must fail");
+                }
+                Err(error) => format!("{error:?}"),
+            };
+            let duplicate_events = collect_endpoint_lifecycle_event_ids(tap_port.by_ref());
+            (endpoint.send::<Msg<1, ()>>(&()))
+                .await
+                .expect("original endpoint must still progress after duplicate lease failure");
+            drop(endpoint);
+            let release_events = collect_endpoint_lifecycle_event_ids(tap_port);
+            (
+                initial_events,
+                duplicate_debug,
+                duplicate_events,
+                release_events,
+            )
+        };
 
         assert_eq!(
             initial_events,
@@ -247,18 +235,19 @@ fn duplicate_live_session_role_endpoint_lease_fails_without_runtime_evidence() {
             vec![tap::LANE_RELEASE],
             "dropping the original endpoint must release the single live endpoint lease"
         );
-    });
+    };
 }
 
 #[test]
 fn dropped_endpoint_lease_allows_same_session_role_to_reenter() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let slab = unsafe { &mut *slab_ptr };
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let sid = SessionId::new(12);
             let controller_program = controller_program();
@@ -273,7 +262,7 @@ fn dropped_endpoint_lease_allows_same_session_role_to_reenter() {
             drop(endpoint);
 
             collect_lane_events(rv.tap())
-        });
+        };
 
         assert_eq!(
             events.iter().map(|event| event.id).collect::<Vec<_>>(),
@@ -285,16 +274,19 @@ fn dropped_endpoint_lease_allows_same_session_role_to_reenter() {
             ],
             "same session-role must re-enter only after the live endpoint lease is released"
         );
-    });
+    };
 }
 
 #[test]
 fn poisoned_session_reenter_rejects_before_lane_lease_construction() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let controller_program = controller_program();
             let worker_program = worker_program();
@@ -317,19 +309,20 @@ fn poisoned_session_reenter_rejects_before_lane_lease_construction() {
                 .expect("failed reentry must release registry and endpoint lease ownership");
             drop(fresh);
             drop(worker);
-        });
-    });
+        };
+    };
 }
 
 #[test]
 fn distinct_session_or_role_endpoint_leases_can_coexist() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let slab = unsafe { &mut *slab_ptr };
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let controller_program = controller_program();
             let worker_program = worker_program();
@@ -347,19 +340,20 @@ fn distinct_session_or_role_endpoint_leases_can_coexist() {
             drop(endpoint_c);
             drop(endpoint_b);
             drop(endpoint_a);
-        });
-    });
+        };
+    };
 }
 
 #[test]
 fn same_role_sessions_are_limited_by_endpoint_leases_not_role_domain() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let slab = unsafe { &mut *slab_ptr };
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let controller_program = controller_program();
             let mut endpoints = Vec::new();
@@ -374,17 +368,18 @@ fn same_role_sessions_are_limited_by_endpoint_leases_not_role_domain() {
             }
 
             drop(endpoints);
-        });
-    });
+        };
+    };
 }
 
 #[test]
 fn same_session_role_on_different_rendezvous_is_mismatch() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        let (error_debug, second_rv_events) = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let slab = unsafe { &mut *slab_ptr };
+        let (error_debug, second_rv_events) = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let midpoint = slab.len() / 2;
             let (left_slab, right_slab) = slab.split_at_mut(midpoint);
             let rv_a = cluster
@@ -408,7 +403,7 @@ fn same_session_role_on_different_rendezvous_is_mismatch() {
             let second_rv_events = collect_endpoint_lifecycle_event_ids(rv_b.tap());
             drop(endpoint);
             (error_debug, second_rv_events)
-        });
+        };
 
         assert!(
             error_debug.contains("rv-mismatch"),
@@ -419,18 +414,19 @@ fn same_session_role_on_different_rendezvous_is_mismatch() {
             Vec::<u16>::new(),
             "mismatched rendezvous endpoint lease must not emit lifecycle evidence on the second rendezvous"
         );
-    });
+    };
 }
 
 #[test]
 fn new_tap_port_reads_all_runtime_events_before_wrap() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let slab = unsafe { &mut *slab_ptr };
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let controller_program = controller_program();
 
@@ -442,7 +438,7 @@ fn new_tap_port_reads_all_runtime_events_before_wrap() {
             }
 
             collect_lane_events(rv.tap())
-        });
+        };
 
         assert_eq!(
             events.len(),
@@ -451,18 +447,19 @@ fn new_tap_port_reads_all_runtime_events_before_wrap() {
         );
         assert_eq!(events.first().map(|event| event.ts), Some(0));
         assert_eq!(events.last().map(|event| event.ts), Some(19));
-    });
+    };
 }
 
 #[test]
 fn new_tap_port_reads_byte_budgeted_runtime_window_after_wrap() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        let slab_ptr = slab as *mut [u8];
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let slab = unsafe { &mut *slab_ptr };
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let controller_program = controller_program();
 
@@ -475,7 +472,7 @@ fn new_tap_port_reads_byte_budgeted_runtime_window_after_wrap() {
             }
 
             collect_lane_events(rv.tap())
-        });
+        };
 
         assert_eq!(
             events.len(),
@@ -504,5 +501,5 @@ fn new_tap_port_reads_byte_budgeted_runtime_window_after_wrap() {
                 .count(),
             11
         );
-    });
+    };
 }

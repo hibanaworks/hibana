@@ -66,7 +66,7 @@ async fn a_received_endpoint_does_not_enable_the_later_resolver_before_its_recei
     type Left = g::Msg<12, ()>;
     type Right = g::Msg<13, ()>;
     let global = g::seq(
-        g::seq(g::send::<0, 1, Loan<'_>>(), g::send::<2, 1, Need>()),
+        g::seq(g::send::<0, 1, Loan>(), g::send::<2, 1, Need>()),
         g::route(g::send::<1, 0, Left>(), g::send::<1, 0, Right>()).resolve::<17>(),
     );
     let owner_program = project::<0>(&global);
@@ -98,8 +98,8 @@ async fn a_received_endpoint_does_not_enable_the_later_resolver_before_its_recei
     let mut worker = worker_runtime.enter(session, &worker_program).unwrap();
     let resource = owner_runtime.enter(session, &resource_program).unwrap();
     async {
-        owner.send::<Loan<'_>>(resource).await.unwrap();
-        let _resource = worker.recv::<Loan<'_>>().await.unwrap();
+        owner.send::<Loan>(resource).await.unwrap();
+        let _resource = worker.recv::<Loan>().await.unwrap();
         let result = (worker.send::<Left>(&())).await;
         assert!(
             result.is_err(),

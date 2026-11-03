@@ -109,8 +109,8 @@ async fn an_acquired_view_guards_repeated_requests_before_the_owner_continuation
     type Value = Msg<3, u32>;
     let work = g::seq(g::send::<2, 3, Read>(), g::send::<3, 2, Value>());
     let cycle = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
-        g::seq(work, g::send::<1, 0, Loan<'_>>()),
+        g::send::<0, 1, Loan>(),
+        g::seq(work, g::send::<1, 0, Loan>()),
     );
     let global = g::seq(cycle.roll(), work);
     assert_eq!(g::diagnose(&global), None);
@@ -145,18 +145,18 @@ async fn an_acquired_view_guards_repeated_requests_before_the_owner_continuation
         {
             let owner_run = async {
                 for _ in 0..2 {
-                    owner.send::<Loan<'_>>(db).await.unwrap();
-                    db = owner.recv::<Loan<'_>>().await.unwrap();
+                    owner.send::<Loan>(db).await.unwrap();
+                    db = owner.recv::<Loan>().await.unwrap();
                 }
                 db.send::<Read>(&99).await.unwrap();
                 assert_eq!(db.recv::<Value>().await.unwrap(), 109);
             };
             let worker_run = async {
                 for value in [11, 12] {
-                    let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+                    let mut db = worker.recv::<Loan>().await.unwrap();
                     db.send::<Read>(&value).await.unwrap();
                     assert_eq!(db.recv::<Value>().await.unwrap(), value + 10);
-                    worker.send::<Loan<'_>>(db).await.unwrap();
+                    worker.send::<Loan>(db).await.unwrap();
                 }
             };
             let service_run = async {

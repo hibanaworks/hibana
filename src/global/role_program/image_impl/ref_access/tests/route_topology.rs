@@ -185,7 +185,7 @@ fn compiled_offer_topology_matches_exhaustive_source_queries() {
 fn compiled_offer_topology_separates_delegated_co_resident_views() {
     type Loan<'r> = Msg<1, Endpoint<'r, 2>>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::par(
                 g::route(
@@ -194,7 +194,7 @@ fn compiled_offer_topology_separates_delegated_co_resident_views() {
                 ),
                 g::send::<1, 3, Msg<6, ()>>(),
             ),
-            g::send::<1, 0, Loan<'_>>(),
+            g::send::<1, 0, Loan>(),
         ),
     )
     .roll();

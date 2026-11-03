@@ -1,17 +1,11 @@
 mod common;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
-
-use core::cell::UnsafeCell;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use common::TestTransport;
 use hibana::g::{self, Message, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{SessionKitStorage, ids::SessionId};
-use runtime_support::with_runtime_workspace;
-use tls_ref_support::with_resident_tls_ref;
 
 fn nested_input_roll_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(
@@ -42,171 +36,202 @@ fn nested_input_roll_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     )
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_input_roll_accepts_failure_ack_after_retained_samples() {
+async fn nested_input_roll_accepts_failure_ack_after_retained_samples() {
     for samples in [0, 1, 3] {
-        with_visible_reentry_workspace(
-            1210 + samples,
-            nested_input_roll_program::<0>(),
-            nested_input_roll_program::<1>(),
-            |source, receiver| {
-                futures::executor::block_on(async {
-                    source.send::<Msg<128, ()>>(&()).await.unwrap();
+        {
+            let controller_program = nested_input_roll_program::<0>();
+            let worker_program = nested_input_roll_program::<1>();
+            let mut slab = [0; 64 * 1024];
+            let mut storage = SessionKitStorage::uninit();
+            let rv = storage
+                .init()
+                .rendezvous(&mut slab, TestTransport::new())
+                .expect("register rendezvous");
+            let sid = SessionId::new(1210 + samples);
+            let mut source = rv
+                .enter(sid, &controller_program)
+                .expect("attach controller");
+            let mut receiver = rv.enter(sid, &worker_program).expect("attach worker");
+            (async {
+                source.send::<Msg<128, ()>>(&()).await.unwrap();
+                receiver
+                    .offer()
+                    .await
+                    .unwrap()
+                    .recv::<Msg<128, ()>>()
+                    .await
+                    .unwrap();
+                receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+                source.recv::<Msg<129, ()>>().await.unwrap();
+                for index in 0..samples {
+                    let frame = [index as u8; 7];
+                    source.send::<Msg<110, [u8; 7]>>(&frame).await.unwrap();
+                    assert_eq!(
+                        receiver
+                            .offer()
+                            .await
+                            .unwrap()
+                            .recv::<Msg<110, [u8; 7]>>()
+                            .await
+                            .unwrap(),
+                        frame
+                    );
+                    receiver.send::<Msg<111, [u8; 7]>>(&frame).await.unwrap();
+                    assert_eq!(source.recv::<Msg<111, [u8; 7]>>().await.unwrap(), frame);
+                }
+                source.send::<Msg<130, u16>>(&1).await.unwrap();
+                assert_eq!(
                     receiver
                         .offer()
                         .await
                         .unwrap()
-                        .recv::<Msg<128, ()>>()
+                        .recv::<Msg<130, u16>>()
                         .await
-                        .unwrap();
-                    receiver.send::<Msg<129, ()>>(&()).await.unwrap();
-                    source.recv::<Msg<129, ()>>().await.unwrap();
-                    for index in 0..samples {
-                        let frame = [index as u8; 7];
-                        source.send::<Msg<110, [u8; 7]>>(&frame).await.unwrap();
-                        assert_eq!(
-                            receiver
-                                .offer()
-                                .await
-                                .unwrap()
-                                .recv::<Msg<110, [u8; 7]>>()
-                                .await
-                                .unwrap(),
-                            frame
-                        );
-                        receiver.send::<Msg<111, [u8; 7]>>(&frame).await.unwrap();
-                        assert_eq!(source.recv::<Msg<111, [u8; 7]>>().await.unwrap(), frame);
-                    }
-                    source.send::<Msg<130, u16>>(&1).await.unwrap();
-                    assert_eq!(
-                        receiver
-                            .offer()
-                            .await
-                            .unwrap()
-                            .recv::<Msg<130, u16>>()
-                            .await
-                            .unwrap(),
-                        1
-                    );
-                    receiver.send::<Msg<131, u16>>(&1).await.unwrap();
-                    assert_eq!(
-                        source.recv::<Msg<131, u16>>().await.unwrap(),
-                        1,
-                        "{samples} actual samples before failure"
-                    );
-                    // Reenter the enclosing visit after its actual completion.
-                    // Neither the old connection nor the old failure may grant
-                    // authority to this new visit's acknowledgement.
-                    source.send::<Msg<134, u16>>(&2).await.unwrap();
-                    assert_eq!(
-                        receiver
-                            .offer()
-                            .await
-                            .unwrap()
-                            .recv::<Msg<134, u16>>()
-                            .await
-                            .unwrap(),
-                        2
-                    );
-                    receiver.send::<Msg<135, u16>>(&2).await.unwrap();
-                    assert_eq!(source.recv::<Msg<135, u16>>().await.unwrap(), 2);
-                    source.send::<Msg<128, ()>>(&()).await.unwrap();
+                        .unwrap(),
+                    1
+                );
+                receiver.send::<Msg<131, u16>>(&1).await.unwrap();
+                assert_eq!(
+                    source.recv::<Msg<131, u16>>().await.unwrap(),
+                    1,
+                    "{samples} actual samples before failure"
+                );
+                // Reenter the enclosing visit after its actual completion.
+                // Neither the old connection nor the old failure may grant
+                // authority to this new visit's acknowledgement.
+                source.send::<Msg<134, u16>>(&2).await.unwrap();
+                assert_eq!(
                     receiver
                         .offer()
                         .await
                         .unwrap()
-                        .recv::<Msg<128, ()>>()
+                        .recv::<Msg<134, u16>>()
                         .await
-                        .unwrap();
-                    receiver.send::<Msg<129, ()>>(&()).await.unwrap();
-                    source.recv::<Msg<129, ()>>().await.unwrap();
-                    source.send::<Msg<130, u16>>(&3).await.unwrap();
-                    assert_eq!(
-                        receiver
-                            .offer()
-                            .await
-                            .unwrap()
-                            .recv::<Msg<130, u16>>()
-                            .await
-                            .unwrap(),
-                        3
-                    );
-                    receiver.send::<Msg<131, u16>>(&3).await.unwrap();
-                    assert_eq!(source.recv::<Msg<131, u16>>().await.unwrap(), 3);
-                })
-            },
-        );
+                        .unwrap(),
+                    2
+                );
+                receiver.send::<Msg<135, u16>>(&2).await.unwrap();
+                assert_eq!(source.recv::<Msg<135, u16>>().await.unwrap(), 2);
+                source.send::<Msg<128, ()>>(&()).await.unwrap();
+                receiver
+                    .offer()
+                    .await
+                    .unwrap()
+                    .recv::<Msg<128, ()>>()
+                    .await
+                    .unwrap();
+                receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+                source.recv::<Msg<129, ()>>().await.unwrap();
+                source.send::<Msg<130, u16>>(&3).await.unwrap();
+                assert_eq!(
+                    receiver
+                        .offer()
+                        .await
+                        .unwrap()
+                        .recv::<Msg<130, u16>>()
+                        .await
+                        .unwrap(),
+                    3
+                );
+                receiver.send::<Msg<131, u16>>(&3).await.unwrap();
+                assert_eq!(source.recv::<Msg<131, u16>>().await.unwrap(), 3);
+            })
+            .await
+        };
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_input_roll_rejects_switch_before_retention() {
-    with_visible_reentry_workspace(
-        1218,
-        nested_input_roll_program::<0>(),
-        nested_input_roll_program::<1>(),
-        |source, receiver| {
-            futures::executor::block_on(async {
-                source.send::<Msg<128, ()>>(&()).await.unwrap();
-                receiver
-                    .offer()
-                    .await
-                    .unwrap()
-                    .recv::<Msg<128, ()>>()
-                    .await
-                    .unwrap();
-                receiver.send::<Msg<129, ()>>(&()).await.unwrap();
-                source.recv::<Msg<129, ()>>().await.unwrap();
-                source.send::<Msg<110, [u8; 7]>>(&[1; 7]).await.unwrap();
-                receiver
-                    .offer()
-                    .await
-                    .unwrap()
-                    .recv::<Msg<110, [u8; 7]>>()
-                    .await
-                    .unwrap();
-                assert!(source.send::<Msg<130, u16>>(&1).await.is_err());
-            })
-        },
-    );
+async fn nested_input_roll_rejects_switch_before_retention() {
+    {
+        let controller_program = nested_input_roll_program::<0>();
+        let worker_program = nested_input_roll_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1218);
+        let mut source = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut receiver = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            source.send::<Msg<128, ()>>(&()).await.unwrap();
+            receiver
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<128, ()>>()
+                .await
+                .unwrap();
+            receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+            source.recv::<Msg<129, ()>>().await.unwrap();
+            source.send::<Msg<110, [u8; 7]>>(&[1; 7]).await.unwrap();
+            receiver
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<110, [u8; 7]>>()
+                .await
+                .unwrap();
+            assert!(source.send::<Msg<130, u16>>(&1).await.is_err());
+        })
+        .await
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_input_roll_rejects_duplicate_failure_ack() {
-    with_visible_reentry_workspace(
-        1219,
-        nested_input_roll_program::<0>(),
-        nested_input_roll_program::<1>(),
-        |source, receiver| {
-            futures::executor::block_on(async {
-                source.send::<Msg<128, ()>>(&()).await.unwrap();
-                receiver
-                    .offer()
-                    .await
-                    .unwrap()
-                    .recv::<Msg<128, ()>>()
-                    .await
-                    .unwrap();
-                receiver.send::<Msg<129, ()>>(&()).await.unwrap();
-                source.recv::<Msg<129, ()>>().await.unwrap();
-                source.send::<Msg<130, u16>>(&1).await.unwrap();
-                receiver
-                    .offer()
-                    .await
-                    .unwrap()
-                    .recv::<Msg<130, u16>>()
-                    .await
-                    .unwrap();
-                receiver.send::<Msg<131, u16>>(&1).await.unwrap();
-                source.recv::<Msg<131, u16>>().await.unwrap();
-                assert!(receiver.send::<Msg<131, u16>>(&1).await.is_err());
-            })
-        },
-    );
+async fn nested_input_roll_rejects_duplicate_failure_ack() {
+    {
+        let controller_program = nested_input_roll_program::<0>();
+        let worker_program = nested_input_roll_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1219);
+        let mut source = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut receiver = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            source.send::<Msg<128, ()>>(&()).await.unwrap();
+            receiver
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<128, ()>>()
+                .await
+                .unwrap();
+            receiver.send::<Msg<129, ()>>(&()).await.unwrap();
+            source.recv::<Msg<129, ()>>().await.unwrap();
+            source.send::<Msg<130, u16>>(&1).await.unwrap();
+            receiver
+                .offer()
+                .await
+                .unwrap()
+                .recv::<Msg<130, u16>>()
+                .await
+                .unwrap();
+            receiver.send::<Msg<131, u16>>(&1).await.unwrap();
+            source.recv::<Msg<131, u16>>().await.unwrap();
+            assert!(receiver.send::<Msg<131, u16>>(&1).await.is_err());
+        })
+        .await
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_input_roll_preserves_prefix_when_parallel_right_lane_reenters_first() {
+async fn nested_input_roll_preserves_prefix_when_parallel_right_lane_reenters_first() {
     fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
         project(
             &g::route(
@@ -241,8 +266,21 @@ fn nested_input_roll_preserves_prefix_when_parallel_right_lane_reenters_first() 
             .roll(),
         )
     }
-    with_visible_reentry_workspace(1220, program::<0>(), program::<1>(), |source, receiver| {
-        futures::executor::block_on(async {
+    {
+        let controller_program = program::<0>();
+        let worker_program = program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1220);
+        let mut source = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut receiver = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
             source.send::<Msg<128, ()>>(&()).await.unwrap();
             receiver
                 .offer()
@@ -286,10 +324,9 @@ fn nested_input_roll_preserves_prefix_when_parallel_right_lane_reenters_first() 
             receiver.send::<Msg<131, u16>>(&3).await.unwrap();
             source.recv::<Msg<131, u16>>().await.unwrap();
         })
-    });
+        .await
+    };
 }
-
-type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const TOP_BODY_REQ: u8 = 151;
 const TOP_BODY_ACK: u8 = 152;
@@ -409,12 +446,6 @@ const WASI_FD_FILESTAT_REQ: u8 = 157;
 const WASI_FD_FILESTAT_ACK: u8 = 158;
 const WASI_PATH_FILESTAT_REQ: u8 = 159;
 const WASI_PATH_FILESTAT_ACK: u8 = 160;
-
-std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-}
 
 macro_rules! request_response_row {
     ($req:ident, $ack:ident) => {
@@ -937,1280 +968,9078 @@ fn rolled_balanced_repeated_label_seq_arm_program<const ROLE: u8>() -> RoleProgr
     )
 }
 
-fn with_visible_reentry_workspace(
-    sid: u32,
-    controller_program: RoleProgram<0>,
-    worker_program: RoleProgram<1>,
-    run: impl FnOnce(&mut hibana::Endpoint<'static, 0>, &mut hibana::Endpoint<'static, 1>),
-) {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            let sid = SessionId::new(sid);
-            let mut controller = rv
-                .enter(sid, &controller_program)
-                .expect("attach controller");
-            let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
-            run(&mut controller, &mut worker);
-        });
-    });
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_seq_reenters_by_repeated_head_without_loop_control() {
+    {
+        let controller_program = visible_reentry_program::<0>();
+        let worker_program = visible_reentry_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(960);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<TOP_BODY_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {TOP_BODY_REQ}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<TOP_BODY_REQ, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {TOP_BODY_REQ}: {err:?}"))
+                },
+                10
+            );
+            {
+                let value: u8 = 11;
+                worker
+                    .send::<Msg<TOP_BODY_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {TOP_BODY_ACK}: {err:?}"));
+            };
+            assert_eq!(
+                controller
+                    .recv::<Msg<TOP_BODY_ACK, u8>>()
+                    .await
+                    .expect("controller recv first ack"),
+                11
+            );
+
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<TOP_BODY_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {TOP_BODY_REQ}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<TOP_BODY_REQ, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {TOP_BODY_REQ}: {err:?}"))
+                },
+                20
+            );
+            {
+                let value: u8 = 21;
+                worker
+                    .send::<Msg<TOP_BODY_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {TOP_BODY_ACK}: {err:?}"));
+            };
+            assert_eq!(
+                controller
+                    .recv::<Msg<TOP_BODY_ACK, u8>>()
+                    .await
+                    .expect("controller recv second ack"),
+                21
+            );
+
+            {
+                let value: u8 = 99;
+                controller
+                    .send::<Msg<TOP_EXIT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {TOP_EXIT}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<TOP_EXIT, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {TOP_EXIT}: {err:?}"))
+                },
+                99
+            );
+        })
+        .await;
+    };
 }
 
-async fn send_from_controller<const MSG: u8>(
-    controller: &mut hibana::Endpoint<'static, 0>,
-    value: u8,
-) {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_par_reenters_only_after_both_lanes_settle() {
+    {
+        let controller_program = visible_parallel_reentry_program::<0>();
+        let worker_program = visible_parallel_reentry_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1962);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {let value:u8=10;
     controller
-        .send::<Msg<MSG, u8>>(&value)
+        .send::<Msg<PAR_LEFT, u8>>(&value)
         .await
-        .unwrap_or_else(|err| panic!("controller send label {MSG}: {err:?}"));
-}
-
-async fn send_from_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>, value: u8) {
+        .unwrap_or_else(|err| panic!("controller send label {PAR_LEFT}: {err:?}"));
+};
+                assert_eq!({
     worker
-        .send::<Msg<MSG, u8>>(&value)
+        .recv::<Msg<PAR_LEFT, u8>>()
         .await
-        .unwrap_or_else(|err| panic!("worker send label {MSG}: {err:?}"));
+        .unwrap_or_else(|err| panic!("worker recv label {PAR_LEFT}: {err:?}"))
+}, 10);
+                {
+    let err = match controller.send::<Msg<PAR_LEFT, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {PAR_LEFT} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {PAR_LEFT} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program = visible_parallel_reentry_program::<0>();
+        let worker_program = visible_parallel_reentry_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(2962);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {let value:u8=10;
+    controller
+        .send::<Msg<PAR_LEFT, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {PAR_LEFT}: {err:?}"));
+};
+                assert_eq!({
+    worker
+        .recv::<Msg<PAR_LEFT, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {PAR_LEFT}: {err:?}"))
+}, 10);
+                {
+    let err = match controller.send::<Msg<PAR_EXIT, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {PAR_EXIT} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {PAR_EXIT} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program = visible_parallel_reentry_program::<0>();
+        let worker_program = visible_parallel_reentry_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(3962);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {let value:u8=10;
+    controller
+        .send::<Msg<PAR_LEFT, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {PAR_LEFT}: {err:?}"));
+};
+                {let value:u8=11;
+    controller
+        .send::<Msg<PAR_RIGHT, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {PAR_RIGHT}: {err:?}"));
+};
+                {let value:u8=20;
+    controller
+        .send::<Msg<PAR_LEFT, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {PAR_LEFT}: {err:?}"));
+};
+                assert_eq!({
+    worker
+        .recv::<Msg<PAR_LEFT, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {PAR_LEFT}: {err:?}"))
+}, 10);
+                assert_eq!({
+    worker
+        .recv::<Msg<PAR_RIGHT, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {PAR_RIGHT}: {err:?}"))
+}, 11);
+                assert_eq!({
+    worker
+        .recv::<Msg<PAR_LEFT, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {PAR_LEFT}: {err:?}"))
+}, 20);
+                {
+    let err = match controller.send::<Msg<PAR_EXIT, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {PAR_EXIT} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {PAR_EXIT} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program = visible_parallel_reentry_program::<0>();
+        let worker_program = visible_parallel_reentry_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(962);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<PAR_LEFT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {PAR_LEFT}: {err:?}"));
+            };
+            {
+                let value: u8 = 11;
+                controller
+                    .send::<Msg<PAR_RIGHT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {PAR_RIGHT}: {err:?}"));
+            };
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<PAR_LEFT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {PAR_LEFT}: {err:?}"));
+            };
+            {
+                let value: u8 = 21;
+                controller
+                    .send::<Msg<PAR_RIGHT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {PAR_RIGHT}: {err:?}"));
+            };
+            {
+                let value: u8 = 99;
+                controller
+                    .send::<Msg<PAR_EXIT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {PAR_EXIT}: {err:?}"));
+            };
+
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<PAR_LEFT, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {PAR_LEFT}: {err:?}"))
+                },
+                10
+            );
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<PAR_RIGHT, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {PAR_RIGHT}: {err:?}"))
+                },
+                11
+            );
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<PAR_LEFT, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {PAR_LEFT}: {err:?}"))
+                },
+                20
+            );
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<PAR_RIGHT, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {PAR_RIGHT}: {err:?}"))
+                },
+                21
+            );
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<PAR_EXIT, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {PAR_EXIT}: {err:?}"))
+                },
+                99
+            );
+        })
+        .await;
+    };
 }
 
-async fn offer_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) -> u8 {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn nested_rolled_route_reenters_before_outer_body_continues() {
+    {
+        let controller_program = nested_visible_reentry_program::<0>();
+        let worker_program = nested_visible_reentry_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(961);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 1;
+                controller
+                    .send::<Msg<OUTER_OPEN, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {OUTER_OPEN}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {OUTER_OPEN}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<OUTER_OPEN, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<OUTER_OPEN, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                1
+            );
+
+            {
+                let value: u8 = 2;
+                controller
+                    .send::<Msg<INNER_BODY, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {INNER_BODY}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {INNER_BODY}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<INNER_BODY, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<INNER_BODY, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                2
+            );
+
+            {
+                let value: u8 = 3;
+                controller
+                    .send::<Msg<INNER_BODY, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {INNER_BODY}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {INNER_BODY}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<INNER_BODY, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<INNER_BODY, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                3
+            );
+
+            {
+                let value: u8 = 4;
+                controller
+                    .send::<Msg<INNER_EXIT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {INNER_EXIT}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {INNER_EXIT}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<INNER_EXIT, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<INNER_EXIT, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                4
+            );
+
+            {
+                let value: u8 = 5;
+                worker
+                    .send::<Msg<OUTER_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {OUTER_ACK}: {err:?}"));
+            };
+            assert_eq!(
+                controller
+                    .recv::<Msg<OUTER_ACK, u8>>()
+                    .await
+                    .expect("controller recv outer ack"),
+                5
+            );
+
+            {
+                let value: u8 = 6;
+                controller
+                    .send::<Msg<OUTER_EXIT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {OUTER_EXIT}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {OUTER_EXIT}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<OUTER_EXIT, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<OUTER_EXIT, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                6
+            );
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn nested_roll_scopes_reenter_inner_until_outer_scope_completes() {
+    {
+        let controller_program = nested_seq_roll_program::<0>();
+        let worker_program = nested_seq_roll_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1963);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {let value:u8=10;
+    controller
+        .send::<Msg<NESTED_BODY, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {NESTED_BODY}: {err:?}"));
+};
+                assert_eq!({
+    worker
+        .recv::<Msg<NESTED_BODY, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {NESTED_BODY}: {err:?}"))
+}, 10);
+                {let value:u8=11;
+    worker
+        .send::<Msg<NESTED_OTHER, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {NESTED_OTHER}: {err:?}"));
+};
+                assert_eq!({
+    controller
+        .recv::<Msg<NESTED_OTHER, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {NESTED_OTHER}: {err:?}"))
+}, 11);
+                {let value:u8=20;
+    controller
+        .send::<Msg<NESTED_BODY, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {NESTED_BODY}: {err:?}"));
+};
+                assert_eq!({
+    worker
+        .recv::<Msg<NESTED_BODY, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {NESTED_BODY}: {err:?}"))
+}, 20);
+                {let value:u8=21;
+    worker
+        .send::<Msg<NESTED_OTHER, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {NESTED_OTHER}: {err:?}"));
+};
+                assert_eq!({
+    controller
+        .recv::<Msg<NESTED_OTHER, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {NESTED_OTHER}: {err:?}"))
+}, 21);
+                {let value:u8=30;
+    controller
+        .send::<Msg<NESTED_TAIL, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {NESTED_TAIL}: {err:?}"));
+};
+                assert_eq!({
+    worker
+        .recv::<Msg<NESTED_TAIL, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {NESTED_TAIL}: {err:?}"))
+}, 30);
+                {let value:u8=40;
+    controller
+        .send::<Msg<NESTED_BODY, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {NESTED_BODY}: {err:?}"));
+};
+                assert_eq!({
+    worker
+        .recv::<Msg<NESTED_BODY, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {NESTED_BODY}: {err:?}"))
+}, 40);
+                {let value:u8=41;
+    worker
+        .send::<Msg<NESTED_OTHER, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {NESTED_OTHER}: {err:?}"));
+};
+                assert_eq!({
+    controller
+        .recv::<Msg<NESTED_OTHER, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {NESTED_OTHER}: {err:?}"))
+}, 41);
+                {
+    let err = match controller.send::<Msg<NESTED_EXIT, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {NESTED_EXIT} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {NESTED_EXIT} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program = nested_seq_roll_program::<0>();
+        let worker_program = nested_seq_roll_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(963);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<NESTED_BODY, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {NESTED_BODY}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<NESTED_BODY, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {NESTED_BODY}: {err:?}"))
+                },
+                10
+            );
+            {
+                let value: u8 = 11;
+                worker
+                    .send::<Msg<NESTED_OTHER, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {NESTED_OTHER}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<NESTED_OTHER, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {NESTED_OTHER}: {err:?}")
+                        })
+                },
+                11
+            );
+
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<NESTED_BODY, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {NESTED_BODY}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<NESTED_BODY, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {NESTED_BODY}: {err:?}"))
+                },
+                20
+            );
+            {
+                let value: u8 = 21;
+                worker
+                    .send::<Msg<NESTED_OTHER, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {NESTED_OTHER}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<NESTED_OTHER, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {NESTED_OTHER}: {err:?}")
+                        })
+                },
+                21
+            );
+
+            {
+                let value: u8 = 30;
+                controller
+                    .send::<Msg<NESTED_TAIL, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {NESTED_TAIL}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<NESTED_TAIL, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {NESTED_TAIL}: {err:?}"))
+                },
+                30
+            );
+
+            {
+                let value: u8 = 40;
+                controller
+                    .send::<Msg<NESTED_BODY, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {NESTED_BODY}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<NESTED_BODY, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {NESTED_BODY}: {err:?}"))
+                },
+                40
+            );
+            {
+                let value: u8 = 41;
+                worker
+                    .send::<Msg<NESTED_OTHER, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {NESTED_OTHER}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<NESTED_OTHER, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {NESTED_OTHER}: {err:?}")
+                        })
+                },
+                41
+            );
+            {
+                let value: u8 = 50;
+                controller
+                    .send::<Msg<NESTED_TAIL, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {NESTED_TAIL}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<NESTED_TAIL, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {NESTED_TAIL}: {err:?}"))
+                },
+                50
+            );
+            {
+                let value: u8 = 60;
+                controller
+                    .send::<Msg<NESTED_EXIT, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("controller send label {NESTED_EXIT}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<NESTED_EXIT, u8>>()
+                        .await
+                        .unwrap_or_else(|err| panic!("worker recv label {NESTED_EXIT}: {err:?}"))
+                },
+                60
+            );
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_nested_route_reenters_to_sibling_nested_arm() {
+    {
+        let controller_program = rolled_nested_route_program::<0>();
+        let worker_program = rolled_nested_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(964);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<NESTED_ROUTE_B_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {NESTED_ROUTE_B_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {NESTED_ROUTE_B_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<NESTED_ROUTE_B_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<NESTED_ROUTE_B_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                10
+            );
+            {
+                let value: u8 = 11;
+                worker
+                    .send::<Msg<NESTED_ROUTE_B_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("worker send label {NESTED_ROUTE_B_ACK}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<NESTED_ROUTE_B_ACK, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {NESTED_ROUTE_B_ACK}: {err:?}")
+                        })
+                },
+                11
+            );
+
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<NESTED_ROUTE_C_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {NESTED_ROUTE_C_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {NESTED_ROUTE_C_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<NESTED_ROUTE_C_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<NESTED_ROUTE_C_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                20
+            );
+            {
+                let value: u8 = 21;
+                worker
+                    .send::<Msg<NESTED_ROUTE_C_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("worker send label {NESTED_ROUTE_C_ACK}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<NESTED_ROUTE_C_ACK, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {NESTED_ROUTE_C_ACK}: {err:?}")
+                        })
+                },
+                21
+            );
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_reenters_from_left_arm_to_nested_right_arm() {
+    {
+        let controller_program = rolled_nested_route_program::<0>();
+        let worker_program = rolled_nested_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(965);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<NESTED_ROUTE_A_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {NESTED_ROUTE_A_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {NESTED_ROUTE_A_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<NESTED_ROUTE_A_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<NESTED_ROUTE_A_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                10
+            );
+            {
+                let value: u8 = 11;
+                worker
+                    .send::<Msg<NESTED_ROUTE_A_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("worker send label {NESTED_ROUTE_A_ACK}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<NESTED_ROUTE_A_ACK, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {NESTED_ROUTE_A_ACK}: {err:?}")
+                        })
+                },
+                11
+            );
+
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<NESTED_ROUTE_B_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {NESTED_ROUTE_B_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {NESTED_ROUTE_B_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<NESTED_ROUTE_B_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<NESTED_ROUTE_B_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                20
+            );
+            {
+                let value: u8 = 21;
+                worker
+                    .send::<Msg<NESTED_ROUTE_B_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("worker send label {NESTED_ROUTE_B_ACK}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<NESTED_ROUTE_B_ACK, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {NESTED_ROUTE_B_ACK}: {err:?}")
+                        })
+                },
+                21
+            );
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_reenters_from_completed_outer_arm_to_deep_nested_arm() {
+    {
+        let controller_program = rolled_deep_nested_route_program::<0>();
+        let worker_program = rolled_deep_nested_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(966);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<DEEP_ROUTE_A_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {DEEP_ROUTE_A_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {DEEP_ROUTE_A_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_ROUTE_A_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<DEEP_ROUTE_A_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                10
+            );
+            {
+                let value: u8 = 11;
+                worker
+                    .send::<Msg<DEEP_ROUTE_A_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {DEEP_ROUTE_A_ACK}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<DEEP_ROUTE_A_ACK, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {DEEP_ROUTE_A_ACK}: {err:?}")
+                        })
+                },
+                11
+            );
+
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<DEEP_ROUTE_B_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {DEEP_ROUTE_B_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {DEEP_ROUTE_B_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_ROUTE_B_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<DEEP_ROUTE_B_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                20
+            );
+            {
+                let value: u8 = 21;
+                worker
+                    .send::<Msg<DEEP_ROUTE_B_ACK, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| panic!("worker send label {DEEP_ROUTE_B_ACK}: {err:?}"));
+            };
+            assert_eq!(
+                {
+                    controller
+                        .recv::<Msg<DEEP_ROUTE_B_ACK, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller recv label {DEEP_ROUTE_B_ACK}: {err:?}")
+                        })
+                },
+                21
+            );
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_right_spine_reenters_repeated_deep_rightmost_arm() {
+    {
+        let controller_program = rolled_right_spine_route_program::<0>();
+        let worker_program = rolled_right_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(967);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_A_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_B_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_B_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_B_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_C_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_C_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_C_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_C_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_C_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_C_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_C_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_C_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_D_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_D_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_D_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_D_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_D_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_D_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_D_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_D_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 50;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_E_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_E_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_E_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_E_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_E_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_E_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_E_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_E_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 60;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_H_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 70;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_H_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_right_spine_rejects_deep_response_without_reentered_request() {
+    {
+        let controller_program = rolled_right_spine_route_program::<0>();
+        let worker_program = rolled_right_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(970);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                { let value:u8=10;
+    {let value:u8=value;
+    controller
+        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {SPINE_A_REQ}: {err:?}"));
+};
+    assert_eq!({
+    worker
+        .recv::<Msg<SPINE_A_REQ, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {SPINE_A_REQ}: {err:?}"))
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<SPINE_A_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {SPINE_A_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+                { let value:u8=20;
+    {let value:u8=value;
+    controller
+        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {SPINE_H_REQ}: {err:?}"));
+};
+    assert_eq!({
+    worker
+        .recv::<Msg<SPINE_H_REQ, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {SPINE_H_REQ}: {err:?}"))
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<SPINE_H_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {SPINE_H_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+                {
+    let err = match worker.send::<Msg<SPINE_H_ACK, u8>>(&0).await {
+        Ok(()) => panic!("worker send label {SPINE_H_ACK} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "worker send label {SPINE_H_ACK} must remain blocked by roll progress: {rendered}"
+    );
+};
+            }).await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_right_spine_offer_reenters_through_left_chain() {
+    {
+        let controller_program = rolled_right_spine_route_program::<0>();
+        let worker_program = rolled_right_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(968);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_B_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_C_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_C_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_C_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_C_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_C_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_C_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_C_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_C_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_C_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_D_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_D_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_D_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_D_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_D_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_D_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_D_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_D_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_D_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 50;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_E_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_E_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_E_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_E_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_E_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_E_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_E_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_E_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_E_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_right_spine_offer_reenters_repeated_deep_rightmost_arm() {
+    {
+        let controller_program = rolled_right_spine_route_program::<0>();
+        let worker_program = rolled_right_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(971);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_B_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_C_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_C_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_C_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_C_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_C_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_C_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_C_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_C_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_C_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_D_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_D_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_D_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_D_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_D_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_D_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_D_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_D_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_D_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 50;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_E_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_E_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_E_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_E_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_E_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_E_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_E_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_E_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_E_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 60;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_H_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_H_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 70;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_H_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_H_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_left_spine_reenters_repeated_deep_leftmost_arm() {
+    {
+        let controller_program = rolled_left_spine_route_program::<0>();
+        let worker_program = rolled_left_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(969);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_H_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_G_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_G_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_G_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_G_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_G_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_G_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_G_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_G_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_A_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SPINE_A_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_left_spine_offer_enters_rightmost_arm() {
+    {
+        let controller_program = rolled_left_spine_route_program::<0>();
+        let worker_program = rolled_left_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(973);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_H_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_H_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_left_spine_offer_reenters_inner_right_arm() {
+    {
+        let controller_program = rolled_left_spine_route_program::<0>();
+        let worker_program = rolled_left_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(974);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_H_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_H_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_G_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_G_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_G_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_G_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_G_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_G_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_G_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_G_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_G_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_left_spine_offer_reenters_deep_left_arm_once() {
+    {
+        let controller_program = rolled_left_spine_route_program::<0>();
+        let worker_program = rolled_left_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(975);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_H_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_H_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_G_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_G_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_G_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_G_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_G_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_G_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_G_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_G_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_G_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_left_spine_offer_reenters_repeated_deep_leftmost_arm() {
+    {
+        let controller_program = rolled_left_spine_route_program::<0>();
+        let worker_program = rolled_left_spine_route_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(972);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_H_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_H_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_H_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_H_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_H_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_H_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_H_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_H_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_H_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_G_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_G_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_G_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_G_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_G_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_G_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_G_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_G_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_G_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SPINE_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SPINE_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SPINE_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SPINE_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SPINE_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SPINE_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SPINE_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SPINE_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SPINE_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_right_seq_arm_keeps_send_authority_for_continuation() {
+    {
+        let controller_program = rolled_right_seq_arm_program::<0>();
+        let worker_program = rolled_right_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(976);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ARM_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ARM_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SEQ_ARM_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SEQ_ARM_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SEQ_ARM_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ARM_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SEQ_ARM_B_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ARM_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ARM_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ARM_C_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ARM_C_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SEQ_ARM_C_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SEQ_ARM_C_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ARM_C_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SEQ_ARM_C_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ARM_C_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ARM_C_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_left_seq_arm_keeps_send_authority_for_continuation() {
+    {
+        let controller_program = rolled_left_seq_arm_program::<0>();
+        let worker_program = rolled_left_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(977);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ARM_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ARM_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SEQ_ARM_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SEQ_ARM_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SEQ_ARM_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ARM_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SEQ_ARM_A_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ARM_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ARM_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ARM_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ARM_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SEQ_ARM_B_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SEQ_ARM_B_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ARM_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SEQ_ARM_B_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ARM_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ARM_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_nested_right_route_seq_arm_keeps_send_authority_for_continuation() {
+    {
+        let controller_program = rolled_nested_right_seq_arm_program::<0>();
+        let worker_program = rolled_nested_right_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(978);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ARM_C_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ARM_C_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SEQ_ARM_C_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SEQ_ARM_C_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SEQ_ARM_C_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ARM_C_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SEQ_ARM_C_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ARM_C_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ARM_C_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ARM_D_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ARM_D_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SEQ_ARM_D_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SEQ_ARM_D_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ARM_D_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| panic!("worker send label {SEQ_ARM_D_ACK}: {err:?}"));
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ARM_D_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ARM_D_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_left_seq_roll_arm_reenters_inner_before_tail() {
+    {
+        let controller_program = rolled_route_left_seq_roll_arm_program::<0>();
+        let worker_program = rolled_route_left_seq_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(986);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<ROUTE_SEQ_ROLL_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {ROUTE_SEQ_ROLL_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_OTHER_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_SEQ_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_SEQ_ROLL_OTHER_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_SEQ_ROLL_OTHER_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_OTHER_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_OTHER_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_OTHER_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_OTHER_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_right_seq_roll_arm_reenters_inner_before_tail() {
+    {
+        let controller_program = rolled_route_right_seq_roll_arm_program::<0>();
+        let worker_program = rolled_route_right_seq_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(987);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_OTHER_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_SEQ_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_SEQ_ROLL_OTHER_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_SEQ_ROLL_OTHER_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_OTHER_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_OTHER_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_OTHER_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_OTHER_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_SEQ_ROLL_BODY_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_BODY_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_BODY_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_SEQ_ROLL_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_SEQ_ROLL_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<ROUTE_SEQ_ROLL_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {ROUTE_SEQ_ROLL_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_SEQ_ROLL_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_SEQ_ROLL_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_SEQ_ROLL_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_SEQ_ROLL_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_left_par_roll_arm_reenters_only_after_parallel_settles() {
+    {
+        let controller_program = rolled_route_left_par_roll_arm_program::<0>();
+        let worker_program = rolled_route_left_par_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1988);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {let value:u8=10;
+    controller
+        .send::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}"));
+};
+                assert_eq!({
     let branch = worker
         .offer()
         .await
-        .unwrap_or_else(|err| panic!("worker offer for label {MSG}: {err:?}"));
-    assert_eq!(branch.label(), <Msg<MSG, u8> as Message>::LOGICAL_LABEL);
-    branch.recv::<Msg<MSG, u8>>().await.expect("worker recv")
+        .unwrap_or_else(|err| panic!("worker offer for label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>().await.expect("worker recv")
+}, 10);
+                {
+    let err = match controller.send::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {ROUTE_PAR_ROLL_OTHER_REQ} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {ROUTE_PAR_ROLL_OTHER_REQ} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program = rolled_route_left_par_roll_arm_program::<0>();
+        let worker_program = rolled_route_left_par_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(988);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                10
+            );
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker recv label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                        })
+                },
+                20
+            );
+
+            {
+                let value: u8 = 30;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                30
+            );
+            {
+                let value: u8 = 40;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker recv label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                        })
+                },
+                40
+            );
+
+            {
+                let value: u8 = 50;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
-async fn recv_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) -> u8 {
-    worker
-        .recv::<Msg<MSG, u8>>()
-        .await
-        .unwrap_or_else(|err| panic!("worker recv label {MSG}: {err:?}"))
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_left_par_roll_arm_exits_after_parallel_settles_without_probe() {
+    {
+        let controller_program = rolled_route_left_par_roll_arm_program::<0>();
+        let worker_program = rolled_route_left_par_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(993);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                10
+            );
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker recv label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                        })
+                },
+                20
+            );
+
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
-async fn recv_controller<const MSG: u8>(controller: &mut hibana::Endpoint<'static, 0>) -> u8 {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_route_right_par_roll_arm_reenters_only_after_parallel_settles() {
+    {
+        let controller_program = rolled_route_right_par_roll_arm_program::<0>();
+        let worker_program = rolled_route_right_par_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1989);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                { let value:u8=10;
+    {let value:u8=value;
     controller
-        .recv::<Msg<MSG, u8>>()
+        .send::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>(&value)
         .await
-        .unwrap_or_else(|err| panic!("controller recv label {MSG}: {err:?}"))
-}
-
-async fn direct_request_response<const REQ: u8, const ACK: u8>(
-    controller: &mut hibana::Endpoint<'static, 0>,
-    worker: &mut hibana::Endpoint<'static, 1>,
-    value: u8,
-) {
-    send_from_controller::<REQ>(controller, value).await;
-    assert_eq!(recv_worker::<REQ>(worker).await, value);
-    send_from_worker::<ACK>(worker, value.wrapping_add(1)).await;
+        .unwrap_or_else(|err| panic!("controller send label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}"));
+};
     assert_eq!(
-        recv_controller::<ACK>(controller).await,
+        {
+    controller
+        .recv::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}"))
+},
         value.wrapping_add(1)
     );
-}
-
-async fn offer_request_response<const REQ: u8, const ACK: u8>(
-    controller: &mut hibana::Endpoint<'static, 0>,
-    worker: &mut hibana::Endpoint<'static, 1>,
-    value: u8,
-) {
-    send_from_controller::<REQ>(controller, value).await;
-    assert_eq!(offer_worker::<REQ>(worker).await, value);
-    send_from_worker::<ACK>(worker, value.wrapping_add(1)).await;
-    assert_eq!(
-        recv_controller::<ACK>(controller).await,
-        value.wrapping_add(1)
-    );
-}
-
-async fn assert_controller_send_blocked<const MSG: u8>(
-    controller: &mut hibana::Endpoint<'static, 0>,
-) {
-    let err = match controller.send::<Msg<MSG, u8>>(&0).await {
-        Ok(()) => panic!("controller send label {MSG} must be blocked"),
+};
+                {let value:u8=20;
+    controller
+        .send::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}"));
+};
+                assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>().await.expect("worker recv")
+}, 20);
+                {
+    let err = match controller.send::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {ROUTE_PAR_ROLL_OTHER_REQ} must be blocked"),
         Err(err) => err,
     };
     let rendered = format!("{err:?}");
     assert!(
         rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
-        "controller send label {MSG} must remain blocked by roll/par progress: {rendered}"
+        "controller send label {ROUTE_PAR_ROLL_OTHER_REQ} must remain blocked by roll/par progress: {rendered}"
     );
+};
+            }).await;
+    };
+    {
+        let controller_program = rolled_route_right_par_roll_arm_program::<0>();
+        let worker_program = rolled_route_right_par_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(989);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {ROUTE_PAR_ROLL_OTHER_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<ROUTE_PAR_ROLL_OTHER_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<ROUTE_PAR_ROLL_OTHER_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {ROUTE_PAR_ROLL_OTHER_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+
+            {
+                let value: u8 = 20;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                20
+            );
+            {
+                let value: u8 = 30;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker recv label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                        })
+                },
+                30
+            );
+            {
+                let value: u8 = 40;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    let branch = worker.offer().await.unwrap_or_else(|err| {
+                        panic!("worker offer for label {ROUTE_PAR_ROLL_RIGHT_REQ}: {err:?}")
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8> as Message>::LOGICAL_LABEL
+                    );
+                    branch
+                        .recv::<Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>()
+                        .await
+                        .expect("worker recv")
+                },
+                40
+            );
+            {
+                let value: u8 = 50;
+                controller
+                    .send::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(&value)
+                    .await
+                    .unwrap_or_else(|err| {
+                        panic!("controller send label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                    });
+            };
+            assert_eq!(
+                {
+                    worker
+                        .recv::<Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>()
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker recv label {ROUTE_PAR_ROLL_LEFT_REQ}: {err:?}")
+                        })
+                },
+                50
+            );
+        })
+        .await;
+    };
 }
 
-async fn assert_worker_send_blocked<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) {
-    let err = match worker.send::<Msg<MSG, u8>>(&0).await {
-        Ok(()) => panic!("worker send label {MSG} must be blocked"),
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn rolled_par_left_route_roll_arm_reenters_before_parallel_sibling_settles() {
+    {
+        let controller_program = rolled_par_left_route_roll_arm_program::<0>();
+        let worker_program = rolled_par_left_route_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1990);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                { let value:u8=10;
+    {let value:u8=value;
+    controller
+        .send::<Msg<PAR_ROUTE_ROLL_A_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {PAR_ROUTE_ROLL_A_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {PAR_ROUTE_ROLL_A_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<PAR_ROUTE_ROLL_A_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<PAR_ROUTE_ROLL_A_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<PAR_ROUTE_ROLL_A_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {PAR_ROUTE_ROLL_A_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<PAR_ROUTE_ROLL_A_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {PAR_ROUTE_ROLL_A_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+                { let value:u8=20;
+    {let value:u8=value;
+    controller
+        .send::<Msg<PAR_ROUTE_ROLL_B_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {PAR_ROUTE_ROLL_B_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {PAR_ROUTE_ROLL_B_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<PAR_ROUTE_ROLL_B_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<PAR_ROUTE_ROLL_B_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<PAR_ROUTE_ROLL_B_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {PAR_ROUTE_ROLL_B_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<PAR_ROUTE_ROLL_B_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {PAR_ROUTE_ROLL_B_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+                {
+    let err = match controller.send::<Msg<PAR_ROUTE_ROLL_EXIT_REQ, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {PAR_ROUTE_ROLL_EXIT_REQ} must be blocked"),
         Err(err) => err,
     };
     let rendered = format!("{err:?}");
     assert!(
         rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
-        "worker send label {MSG} must remain blocked by roll progress: {rendered}"
+        "controller send label {PAR_ROUTE_ROLL_EXIT_REQ} must remain blocked by roll/par progress: {rendered}"
     );
-}
-
-async fn drive_mixed_route_prefix(
-    controller: &mut hibana::Endpoint<'static, 0>,
-    worker: &mut hibana::Endpoint<'static, 1>,
-) {
-    offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(controller, worker, 10).await;
-    offer_request_response::<MIX_INNER_LEFT_REQ, MIX_INNER_LEFT_ACK>(controller, worker, 20).await;
-    offer_request_response::<MIX_DEEP_A_REQ, MIX_DEEP_A_ACK>(controller, worker, 30).await;
-    offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 40).await;
-}
-
-async fn drive_left_mixed_route_prefix(
-    controller: &mut hibana::Endpoint<'static, 0>,
-    worker: &mut hibana::Endpoint<'static, 1>,
-) {
-    offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(controller, worker, 10).await;
-    offer_request_response::<MIX_INNER_LEFT_REQ, MIX_INNER_LEFT_ACK>(controller, worker, 20).await;
-    direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(controller, worker, 30)
-        .await;
-    offer_request_response::<MIX_DEEP_A_REQ, MIX_DEEP_A_ACK>(controller, worker, 40).await;
-    offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 50).await;
-}
-
-async fn drive_long_rolled_route_commit_flow(
-    controller: &mut hibana::Endpoint<'static, 0>,
-    worker: &mut hibana::Endpoint<'static, 1>,
-) {
-    offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(controller, worker, 10)
-        .await;
-    direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
-        controller, worker, 20,
-    )
-    .await;
-    direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(controller, worker, 30)
-        .await;
-    direct_request_response::<WASI_PATH_FILESTAT_REQ, WASI_PATH_FILESTAT_ACK>(
-        controller, worker, 40,
-    )
-    .await;
-    direct_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(controller, worker, 50).await;
-    direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(controller, worker, 60).await;
-    direct_request_response::<WASI_FD_FILESTAT_REQ, WASI_FD_FILESTAT_ACK>(controller, worker, 70)
-        .await;
-    direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 80).await;
-    direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 90).await;
-    direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(controller, worker, 100).await;
-
-    direct_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(controller, worker, 110)
-        .await;
-    direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(controller, worker, 120)
-        .await;
-    direct_request_response::<WASI_FD_WRITE_REFINED_REQ, WASI_FD_WRITE_REFINED_ACK>(
-        controller, worker, 130,
-    )
-    .await;
-    direct_request_response::<WASI_FD_WRITE_REFINED_REQ, WASI_FD_WRITE_REFINED_ACK>(
-        controller, worker, 140,
-    )
-    .await;
-    direct_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(controller, worker, 150).await;
-    direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(controller, worker, 160).await;
-}
-
-#[test]
-fn rolled_seq_reenters_by_repeated_head_without_loop_control() {
-    with_visible_reentry_workspace(
-        960,
-        visible_reentry_program::<0>(),
-        visible_reentry_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<TOP_BODY_REQ>(controller, 10).await;
-                assert_eq!(recv_worker::<TOP_BODY_REQ>(worker).await, 10);
-                send_from_worker::<TOP_BODY_ACK>(worker, 11).await;
-                assert_eq!(
+};
+            }).await;
+    };
+    {
+        let controller_program = rolled_par_left_route_roll_arm_program::<0>();
+        let worker_program = rolled_par_left_route_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(990);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
                     controller
-                        .recv::<Msg<TOP_BODY_ACK, u8>>()
+                        .send::<Msg<PAR_ROUTE_ROLL_A_REQ, u8>>(&value)
                         .await
-                        .expect("controller recv first ack"),
-                    11
-                );
-
-                send_from_controller::<TOP_BODY_REQ>(controller, 20).await;
-                assert_eq!(recv_worker::<TOP_BODY_REQ>(worker).await, 20);
-                send_from_worker::<TOP_BODY_ACK>(worker, 21).await;
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                };
                 assert_eq!(
-                    controller
-                        .recv::<Msg<TOP_BODY_ACK, u8>>()
-                        .await
-                        .expect("controller recv second ack"),
-                    21
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {PAR_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<PAR_ROUTE_ROLL_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<PAR_ROUTE_ROLL_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
                 );
-
-                send_from_controller::<TOP_EXIT>(controller, 99).await;
-                assert_eq!(recv_worker::<TOP_EXIT>(worker).await, 99);
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_par_reenters_only_after_both_lanes_settle() {
-    with_visible_reentry_workspace(
-        1962,
-        visible_parallel_reentry_program::<0>(),
-        visible_parallel_reentry_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<PAR_LEFT>(controller, 10).await;
-                assert_eq!(recv_worker::<PAR_LEFT>(worker).await, 10);
-                assert_controller_send_blocked::<PAR_LEFT>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        2962,
-        visible_parallel_reentry_program::<0>(),
-        visible_parallel_reentry_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<PAR_LEFT>(controller, 10).await;
-                assert_eq!(recv_worker::<PAR_LEFT>(worker).await, 10);
-                assert_controller_send_blocked::<PAR_EXIT>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        3962,
-        visible_parallel_reentry_program::<0>(),
-        visible_parallel_reentry_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<PAR_LEFT>(controller, 10).await;
-                send_from_controller::<PAR_RIGHT>(controller, 11).await;
-                send_from_controller::<PAR_LEFT>(controller, 20).await;
-                assert_eq!(recv_worker::<PAR_LEFT>(worker).await, 10);
-                assert_eq!(recv_worker::<PAR_RIGHT>(worker).await, 11);
-                assert_eq!(recv_worker::<PAR_LEFT>(worker).await, 20);
-                assert_controller_send_blocked::<PAR_EXIT>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        962,
-        visible_parallel_reentry_program::<0>(),
-        visible_parallel_reentry_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<PAR_LEFT>(controller, 10).await;
-                send_from_controller::<PAR_RIGHT>(controller, 11).await;
-                send_from_controller::<PAR_LEFT>(controller, 20).await;
-                send_from_controller::<PAR_RIGHT>(controller, 21).await;
-                send_from_controller::<PAR_EXIT>(controller, 99).await;
-
-                assert_eq!(recv_worker::<PAR_LEFT>(worker).await, 10);
-                assert_eq!(recv_worker::<PAR_RIGHT>(worker).await, 11);
-                assert_eq!(recv_worker::<PAR_LEFT>(worker).await, 20);
-                assert_eq!(recv_worker::<PAR_RIGHT>(worker).await, 21);
-                assert_eq!(recv_worker::<PAR_EXIT>(worker).await, 99);
-            });
-        },
-    );
-}
-
-#[test]
-fn nested_rolled_route_reenters_before_outer_body_continues() {
-    with_visible_reentry_workspace(
-        961,
-        nested_visible_reentry_program::<0>(),
-        nested_visible_reentry_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<OUTER_OPEN>(controller, 1).await;
-                assert_eq!(offer_worker::<OUTER_OPEN>(worker).await, 1);
-
-                send_from_controller::<INNER_BODY>(controller, 2).await;
-                assert_eq!(offer_worker::<INNER_BODY>(worker).await, 2);
-
-                send_from_controller::<INNER_BODY>(controller, 3).await;
-                assert_eq!(offer_worker::<INNER_BODY>(worker).await, 3);
-
-                send_from_controller::<INNER_EXIT>(controller, 4).await;
-                assert_eq!(offer_worker::<INNER_EXIT>(worker).await, 4);
-
-                send_from_worker::<OUTER_ACK>(worker, 5).await;
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_A_ACK}: {err:?}")
+                        });
+                };
                 assert_eq!(
-                    controller
-                        .recv::<Msg<OUTER_ACK, u8>>()
-                        .await
-                        .expect("controller recv outer ack"),
-                    5
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {PAR_ROUTE_ROLL_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
                 );
-
-                send_from_controller::<OUTER_EXIT>(controller, 6).await;
-                assert_eq!(offer_worker::<OUTER_EXIT>(worker).await, 6);
-            });
-        },
-    );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<PAR_ROUTE_ROLL_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {PAR_ROUTE_ROLL_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<PAR_ROUTE_ROLL_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<PAR_ROUTE_ROLL_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_B_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {PAR_ROUTE_ROLL_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<PAR_ROUTE_ROLL_SIBLING_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_SIBLING_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<PAR_ROUTE_ROLL_SIBLING_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {PAR_ROUTE_ROLL_SIBLING_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_SIBLING_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_SIBLING_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_SIBLING_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!(
+                                    "controller recv label {PAR_ROUTE_ROLL_SIBLING_ACK}: {err:?}"
+                                )
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<PAR_ROUTE_ROLL_EXIT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_EXIT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<PAR_ROUTE_ROLL_EXIT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {PAR_ROUTE_ROLL_EXIT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_EXIT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_EXIT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_EXIT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {PAR_ROUTE_ROLL_EXIT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_roll_scopes_reenter_inner_until_outer_scope_completes() {
-    with_visible_reentry_workspace(
-        1963,
-        nested_seq_roll_program::<0>(),
-        nested_seq_roll_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<NESTED_BODY>(controller, 10).await;
-                assert_eq!(recv_worker::<NESTED_BODY>(worker).await, 10);
-                send_from_worker::<NESTED_OTHER>(worker, 11).await;
-                assert_eq!(recv_controller::<NESTED_OTHER>(controller).await, 11);
-                send_from_controller::<NESTED_BODY>(controller, 20).await;
-                assert_eq!(recv_worker::<NESTED_BODY>(worker).await, 20);
-                send_from_worker::<NESTED_OTHER>(worker, 21).await;
-                assert_eq!(recv_controller::<NESTED_OTHER>(controller).await, 21);
-                send_from_controller::<NESTED_TAIL>(controller, 30).await;
-                assert_eq!(recv_worker::<NESTED_TAIL>(worker).await, 30);
-                send_from_controller::<NESTED_BODY>(controller, 40).await;
-                assert_eq!(recv_worker::<NESTED_BODY>(worker).await, 40);
-                send_from_worker::<NESTED_OTHER>(worker, 41).await;
-                assert_eq!(recv_controller::<NESTED_OTHER>(controller).await, 41);
-                assert_controller_send_blocked::<NESTED_EXIT>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        963,
-        nested_seq_roll_program::<0>(),
-        nested_seq_roll_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<NESTED_BODY>(controller, 10).await;
-                assert_eq!(recv_worker::<NESTED_BODY>(worker).await, 10);
-                send_from_worker::<NESTED_OTHER>(worker, 11).await;
-                assert_eq!(recv_controller::<NESTED_OTHER>(controller).await, 11);
-
-                send_from_controller::<NESTED_BODY>(controller, 20).await;
-                assert_eq!(recv_worker::<NESTED_BODY>(worker).await, 20);
-                send_from_worker::<NESTED_OTHER>(worker, 21).await;
-                assert_eq!(recv_controller::<NESTED_OTHER>(controller).await, 21);
-
-                send_from_controller::<NESTED_TAIL>(controller, 30).await;
-                assert_eq!(recv_worker::<NESTED_TAIL>(worker).await, 30);
-
-                send_from_controller::<NESTED_BODY>(controller, 40).await;
-                assert_eq!(recv_worker::<NESTED_BODY>(worker).await, 40);
-                send_from_worker::<NESTED_OTHER>(worker, 41).await;
-                assert_eq!(recv_controller::<NESTED_OTHER>(controller).await, 41);
-                send_from_controller::<NESTED_TAIL>(controller, 50).await;
-                assert_eq!(recv_worker::<NESTED_TAIL>(worker).await, 50);
-                send_from_controller::<NESTED_EXIT>(controller, 60).await;
-                assert_eq!(recv_worker::<NESTED_EXIT>(worker).await, 60);
-            });
-        },
-    );
+async fn rolled_par_right_route_roll_arm_reenters_before_parallel_sibling_settles() {
+    {
+        let controller_program = rolled_par_right_route_roll_arm_program::<0>();
+        let worker_program = rolled_par_right_route_roll_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(991);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<PAR_ROUTE_ROLL_SIBLING_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_SIBLING_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<PAR_ROUTE_ROLL_SIBLING_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {PAR_ROUTE_ROLL_SIBLING_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_SIBLING_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_SIBLING_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_SIBLING_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!(
+                                    "controller recv label {PAR_ROUTE_ROLL_SIBLING_ACK}: {err:?}"
+                                )
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<PAR_ROUTE_ROLL_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {PAR_ROUTE_ROLL_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<PAR_ROUTE_ROLL_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<PAR_ROUTE_ROLL_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_B_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {PAR_ROUTE_ROLL_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<PAR_ROUTE_ROLL_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {PAR_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<PAR_ROUTE_ROLL_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<PAR_ROUTE_ROLL_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_A_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {PAR_ROUTE_ROLL_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<PAR_ROUTE_ROLL_EXIT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {PAR_ROUTE_ROLL_EXIT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<PAR_ROUTE_ROLL_EXIT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {PAR_ROUTE_ROLL_EXIT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<PAR_ROUTE_ROLL_EXIT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {PAR_ROUTE_ROLL_EXIT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<PAR_ROUTE_ROLL_EXIT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {PAR_ROUTE_ROLL_EXIT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_nested_route_reenters_to_sibling_nested_arm() {
-    with_visible_reentry_workspace(
-        964,
-        rolled_nested_route_program::<0>(),
-        rolled_nested_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<NESTED_ROUTE_B_REQ>(controller, 10).await;
-                assert_eq!(offer_worker::<NESTED_ROUTE_B_REQ>(worker).await, 10);
-                send_from_worker::<NESTED_ROUTE_B_ACK>(worker, 11).await;
-                assert_eq!(recv_controller::<NESTED_ROUTE_B_ACK>(controller).await, 11);
+async fn rolled_seq_route_roll_head_reenters_before_seq_tail_and_outer_exit() {
+    {
+        let controller_program = rolled_seq_route_roll_head_program::<0>();
+        let worker_program = rolled_seq_route_roll_head_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(992);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ROUTE_ROLL_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SEQ_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SEQ_ROUTE_ROLL_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SEQ_ROUTE_ROLL_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ROUTE_ROLL_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {SEQ_ROUTE_ROLL_A_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ROUTE_ROLL_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ROUTE_ROLL_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ROUTE_ROLL_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ROUTE_ROLL_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SEQ_ROUTE_ROLL_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SEQ_ROUTE_ROLL_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SEQ_ROUTE_ROLL_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ROUTE_ROLL_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {SEQ_ROUTE_ROLL_B_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ROUTE_ROLL_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ROUTE_ROLL_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ROUTE_ROLL_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ROUTE_ROLL_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SEQ_ROUTE_ROLL_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SEQ_ROUTE_ROLL_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ROUTE_ROLL_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {SEQ_ROUTE_ROLL_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ROUTE_ROLL_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ROUTE_ROLL_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
 
-                send_from_controller::<NESTED_ROUTE_C_REQ>(controller, 20).await;
-                assert_eq!(offer_worker::<NESTED_ROUTE_C_REQ>(worker).await, 20);
-                send_from_worker::<NESTED_ROUTE_C_ACK>(worker, 21).await;
-                assert_eq!(recv_controller::<NESTED_ROUTE_C_ACK>(controller).await, 21);
-            });
-        },
-    );
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ROUTE_ROLL_A_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {SEQ_ROUTE_ROLL_A_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<SEQ_ROUTE_ROLL_A_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<SEQ_ROUTE_ROLL_A_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ROUTE_ROLL_A_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {SEQ_ROUTE_ROLL_A_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ROUTE_ROLL_A_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ROUTE_ROLL_A_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 50;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ROUTE_ROLL_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ROUTE_ROLL_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SEQ_ROUTE_ROLL_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SEQ_ROUTE_ROLL_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ROUTE_ROLL_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {SEQ_ROUTE_ROLL_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ROUTE_ROLL_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ROUTE_ROLL_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 60;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<SEQ_ROUTE_ROLL_EXIT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {SEQ_ROUTE_ROLL_EXIT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<SEQ_ROUTE_ROLL_EXIT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {SEQ_ROUTE_ROLL_EXIT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<SEQ_ROUTE_ROLL_EXIT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {SEQ_ROUTE_ROLL_EXIT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<SEQ_ROUTE_ROLL_EXIT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {SEQ_ROUTE_ROLL_EXIT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_route_reenters_from_left_arm_to_nested_right_arm() {
-    with_visible_reentry_workspace(
-        965,
-        rolled_nested_route_program::<0>(),
-        rolled_nested_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<NESTED_ROUTE_A_REQ>(controller, 10).await;
-                assert_eq!(offer_worker::<NESTED_ROUTE_A_REQ>(worker).await, 10);
-                send_from_worker::<NESTED_ROUTE_A_ACK>(worker, 11).await;
-                assert_eq!(recv_controller::<NESTED_ROUTE_A_ACK>(controller).await, 11);
-
-                send_from_controller::<NESTED_ROUTE_B_REQ>(controller, 20).await;
-                assert_eq!(offer_worker::<NESTED_ROUTE_B_REQ>(worker).await, 20);
-                send_from_worker::<NESTED_ROUTE_B_ACK>(worker, 21).await;
-                assert_eq!(recv_controller::<NESTED_ROUTE_B_ACK>(controller).await, 21);
-            });
-        },
+async fn rolled_route_route_par_seq_route_roll_mixed_reentry_keeps_single_authority() {
+    {
+        let controller_program = rolled_route_route_par_seq_route_roll_mixed_program::<0>();
+        let worker_program = rolled_route_route_par_seq_route_roll_mixed_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1994);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {
+    { let value:u8=10;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_OUTER_LEFT_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_OUTER_LEFT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_OUTER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_OUTER_LEFT_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_OUTER_LEFT_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_OUTER_LEFT_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_OUTER_LEFT_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_OUTER_LEFT_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
     );
+};
+    { let value:u8=20;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_INNER_LEFT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_INNER_LEFT_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_INNER_LEFT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_INNER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_INNER_LEFT_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_INNER_LEFT_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_INNER_LEFT_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_INNER_LEFT_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_INNER_LEFT_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=30;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_DEEP_A_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_DEEP_A_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_DEEP_A_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_DEEP_A_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_DEEP_A_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_DEEP_A_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_DEEP_A_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_DEEP_A_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_DEEP_A_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=40;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_DEEP_B_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_DEEP_B_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_DEEP_B_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_DEEP_B_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_DEEP_B_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_DEEP_B_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_DEEP_B_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_DEEP_B_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_DEEP_B_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+};
+                {
+    let err = match controller.send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {MIX_OUTER_LEFT_REQ} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {MIX_OUTER_LEFT_REQ} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program = rolled_route_route_par_seq_route_roll_mixed_program::<0>();
+        let worker_program = rolled_route_route_par_seq_route_roll_mixed_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(2994);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {
+    { let value:u8=10;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_OUTER_LEFT_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_OUTER_LEFT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_OUTER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_OUTER_LEFT_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_OUTER_LEFT_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_OUTER_LEFT_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_OUTER_LEFT_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_OUTER_LEFT_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=20;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_INNER_LEFT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_INNER_LEFT_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_INNER_LEFT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_INNER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_INNER_LEFT_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_INNER_LEFT_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_INNER_LEFT_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_INNER_LEFT_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_INNER_LEFT_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=30;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_DEEP_A_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_DEEP_A_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_DEEP_A_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_DEEP_A_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_DEEP_A_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_DEEP_A_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_DEEP_A_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_DEEP_A_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_DEEP_A_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=40;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_DEEP_B_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_DEEP_B_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_DEEP_B_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_DEEP_B_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_DEEP_B_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_DEEP_B_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_DEEP_B_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_DEEP_B_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_DEEP_B_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+};
+                { let value:u8=50;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_SEQ_TAIL_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_SEQ_TAIL_REQ}: {err:?}"));
+};
+    assert_eq!({
+    worker
+        .recv::<Msg<MIX_SEQ_TAIL_REQ, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {MIX_SEQ_TAIL_REQ}: {err:?}"))
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_SEQ_TAIL_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_SEQ_TAIL_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_SEQ_TAIL_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_SEQ_TAIL_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+                {
+    let err = match controller.send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {MIX_OUTER_LEFT_REQ} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {MIX_OUTER_LEFT_REQ} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program = rolled_route_route_par_seq_route_roll_mixed_program::<0>();
+        let worker_program = rolled_route_route_par_seq_route_roll_mixed_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(994);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                {
+                    let value: u8 = 10;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_OUTER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_OUTER_LEFT_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_OUTER_LEFT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_OUTER_LEFT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 20;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_INNER_LEFT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_INNER_LEFT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_INNER_LEFT_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_INNER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_INNER_LEFT_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_INNER_LEFT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_INNER_LEFT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_INNER_LEFT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_INNER_LEFT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 30;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_DEEP_A_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_DEEP_A_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_DEEP_A_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_DEEP_A_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_DEEP_A_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_DEEP_A_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_DEEP_A_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_DEEP_A_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_DEEP_A_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 40;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_DEEP_B_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_DEEP_B_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_DEEP_B_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_DEEP_B_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_DEEP_B_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_DEEP_B_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_DEEP_B_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_DEEP_B_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_DEEP_B_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+            };
+            {
+                let value: u8 = 50;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_SEQ_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<MIX_SEQ_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_SEQ_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_SEQ_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 60;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_PAR_SIBLING_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<MIX_PAR_SIBLING_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_PAR_SIBLING_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_PAR_SIBLING_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 70;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_DEEP_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_DEEP_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {MIX_DEEP_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<MIX_DEEP_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<MIX_DEEP_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_DEEP_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_DEEP_B_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_DEEP_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_DEEP_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 80;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_SEQ_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<MIX_SEQ_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_SEQ_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_SEQ_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 90;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_PAR_SIBLING_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<MIX_PAR_SIBLING_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_PAR_SIBLING_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_PAR_SIBLING_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+
+            {
+                let value: u8 = 100;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<MIX_OUTER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<MIX_OUTER_LEFT_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_OUTER_LEFT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_OUTER_LEFT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_route_reenters_from_completed_outer_arm_to_deep_nested_arm() {
-    with_visible_reentry_workspace(
-        966,
-        rolled_deep_nested_route_program::<0>(),
-        rolled_deep_nested_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<DEEP_ROUTE_A_REQ>(controller, 10).await;
-                assert_eq!(offer_worker::<DEEP_ROUTE_A_REQ>(worker).await, 10);
-                send_from_worker::<DEEP_ROUTE_A_ACK>(worker, 11).await;
-                assert_eq!(recv_controller::<DEEP_ROUTE_A_ACK>(controller).await, 11);
-
-                send_from_controller::<DEEP_ROUTE_B_REQ>(controller, 20).await;
-                assert_eq!(offer_worker::<DEEP_ROUTE_B_REQ>(worker).await, 20);
-                send_from_worker::<DEEP_ROUTE_B_ACK>(worker, 21).await;
-                assert_eq!(recv_controller::<DEEP_ROUTE_B_ACK>(controller).await, 21);
-            });
-        },
+async fn rolled_left_route_left_route_par_seq_route_roll_mixed_reentry_keeps_single_authority() {
+    {
+        let controller_program =
+            rolled_left_route_left_route_par_seq_route_roll_mixed_program::<0>();
+        let worker_program = rolled_left_route_left_route_par_seq_route_roll_mixed_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(1995);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+                {
+    { let value:u8=10;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_OUTER_LEFT_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_OUTER_LEFT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_OUTER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_OUTER_LEFT_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_OUTER_LEFT_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_OUTER_LEFT_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_OUTER_LEFT_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_OUTER_LEFT_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
     );
+};
+    { let value:u8=20;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_INNER_LEFT_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_INNER_LEFT_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_INNER_LEFT_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_INNER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_INNER_LEFT_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_INNER_LEFT_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_INNER_LEFT_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_INNER_LEFT_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_INNER_LEFT_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=30;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_PAR_SIBLING_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_PAR_SIBLING_REQ}: {err:?}"));
+};
+    assert_eq!({
+    worker
+        .recv::<Msg<MIX_PAR_SIBLING_REQ, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {MIX_PAR_SIBLING_REQ}: {err:?}"))
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_PAR_SIBLING_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_PAR_SIBLING_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_PAR_SIBLING_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_PAR_SIBLING_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=40;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_DEEP_A_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_DEEP_A_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_DEEP_A_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_DEEP_A_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_DEEP_A_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_DEEP_A_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_DEEP_A_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_DEEP_A_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_DEEP_A_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+    { let value:u8=50;
+    {let value:u8=value;
+    controller
+        .send::<Msg<MIX_DEEP_B_REQ, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("controller send label {MIX_DEEP_B_REQ}: {err:?}"));
+};
+    assert_eq!({
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MIX_DEEP_B_REQ}: {err:?}"));
+    assert_eq!(branch.label(), <Msg<MIX_DEEP_B_REQ, u8> as Message>::LOGICAL_LABEL);
+    branch.recv::<Msg<MIX_DEEP_B_REQ, u8>>().await.expect("worker recv")
+}, value);
+    {let value:u8=value.wrapping_add(1);
+    worker
+        .send::<Msg<MIX_DEEP_B_ACK, u8>>(&value)
+        .await
+        .unwrap_or_else(|err| panic!("worker send label {MIX_DEEP_B_ACK}: {err:?}"));
+};
+    assert_eq!(
+        {
+    controller
+        .recv::<Msg<MIX_DEEP_B_ACK, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("controller recv label {MIX_DEEP_B_ACK}: {err:?}"))
+},
+        value.wrapping_add(1)
+    );
+};
+};
+                {
+    let err = match controller.send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {MIX_OUTER_LEFT_REQ} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        "controller send label {MIX_OUTER_LEFT_REQ} must remain blocked by roll/par progress: {rendered}"
+    );
+};
+            }).await;
+    };
+    {
+        let controller_program =
+            rolled_left_route_left_route_par_seq_route_roll_mixed_program::<0>();
+        let worker_program = rolled_left_route_left_route_par_seq_route_roll_mixed_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(995);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                {
+                    let value: u8 = 10;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_OUTER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_OUTER_LEFT_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_OUTER_LEFT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_OUTER_LEFT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 20;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_INNER_LEFT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_INNER_LEFT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_INNER_LEFT_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_INNER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_INNER_LEFT_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_INNER_LEFT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_INNER_LEFT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_INNER_LEFT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_INNER_LEFT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 30;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_PAR_SIBLING_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<MIX_PAR_SIBLING_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_PAR_SIBLING_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_PAR_SIBLING_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 40;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_DEEP_A_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_DEEP_A_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_DEEP_A_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_DEEP_A_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_DEEP_A_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_DEEP_A_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_DEEP_A_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_DEEP_A_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_DEEP_A_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 50;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<MIX_DEEP_B_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {MIX_DEEP_B_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {MIX_DEEP_B_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<MIX_DEEP_B_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<MIX_DEEP_B_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<MIX_DEEP_B_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {MIX_DEEP_B_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<MIX_DEEP_B_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {MIX_DEEP_B_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+            };
+            {
+                let value: u8 = 60;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_SEQ_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<MIX_SEQ_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_SEQ_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_SEQ_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 70;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_DEEP_B_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_DEEP_B_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {MIX_DEEP_B_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<MIX_DEEP_B_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<MIX_DEEP_B_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_DEEP_B_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_DEEP_B_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_DEEP_B_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_DEEP_B_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 80;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_SEQ_TAIL_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<MIX_SEQ_TAIL_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {MIX_SEQ_TAIL_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_SEQ_TAIL_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_SEQ_TAIL_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_SEQ_TAIL_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 90;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_PAR_SIBLING_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<MIX_PAR_SIBLING_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {MIX_PAR_SIBLING_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_PAR_SIBLING_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_PAR_SIBLING_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_PAR_SIBLING_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+
+            {
+                let value: u8 = 100;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<MIX_OUTER_LEFT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {MIX_OUTER_LEFT_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<MIX_OUTER_LEFT_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<MIX_OUTER_LEFT_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<MIX_OUTER_LEFT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<MIX_OUTER_LEFT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {MIX_OUTER_LEFT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_right_spine_reenters_repeated_deep_rightmost_arm() {
-    with_visible_reentry_workspace(
-        967,
-        rolled_right_spine_route_program::<0>(),
-        rolled_right_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
-                direct_request_response::<SPINE_B_REQ, SPINE_B_ACK>(controller, worker, 20).await;
-                direct_request_response::<SPINE_C_REQ, SPINE_C_ACK>(controller, worker, 30).await;
-                direct_request_response::<SPINE_D_REQ, SPINE_D_ACK>(controller, worker, 40).await;
-                direct_request_response::<SPINE_E_REQ, SPINE_E_ACK>(controller, worker, 50).await;
-                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 60).await;
-                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 70).await;
-            });
-        },
-    );
+async fn wasi_shape_rolled_route_seq_arm_keeps_send_authority_for_continuation() {
+    {
+        let controller_program = wasi_shape_rolled_route_seq_arm_program::<0>();
+        let worker_program = wasi_shape_rolled_route_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(979);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_PRESTAT_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 40;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_PATH_FILESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_PATH_FILESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_PATH_FILESTAT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_PATH_FILESTAT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_PATH_FILESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_PATH_FILESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_PATH_FILESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_PATH_FILESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 50;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_FDSTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_FDSTAT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_FDSTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_FDSTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 60;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_PATH_OPEN_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_PATH_OPEN_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_PATH_OPEN_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_PATH_OPEN_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_PATH_OPEN_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_PATH_OPEN_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_PATH_OPEN_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_PATH_OPEN_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 70;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_FILESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_FILESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_FILESTAT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_FILESTAT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_FILESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_FILESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_FILESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_FILESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 80;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 90;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_right_spine_rejects_deep_response_without_reentered_request() {
-    with_visible_reentry_workspace(
-        970,
-        rolled_right_spine_route_program::<0>(),
-        rolled_right_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
-                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 20).await;
-                assert_worker_send_blocked::<SPINE_H_ACK>(worker).await;
-            });
-        },
-    );
+async fn wasi_shape_rolled_route_seq_arm_survives_prior_sibling_arms() {
+    {
+        let controller_program = wasi_shape_rolled_route_seq_arm_program::<0>();
+        let worker_program = wasi_shape_rolled_route_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(980);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 1;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_WRITE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_WRITE_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_WRITE_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_WRITE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_WRITE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_WRITE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_WRITE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 2;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_READ_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 3;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_FDSTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_FDSTAT_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_FDSTAT_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_FDSTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_FDSTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 4;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_PATH_OPEN_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_PATH_OPEN_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_PATH_OPEN_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_PATH_OPEN_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_PATH_OPEN_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_PATH_OPEN_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_PATH_OPEN_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_PATH_OPEN_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_PRESTAT_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_right_spine_offer_reenters_through_left_chain() {
-    with_visible_reentry_workspace(
-        968,
-        rolled_right_spine_route_program::<0>(),
-        rolled_right_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
-                offer_request_response::<SPINE_B_REQ, SPINE_B_ACK>(controller, worker, 20).await;
-                offer_request_response::<SPINE_C_REQ, SPINE_C_ACK>(controller, worker, 30).await;
-                offer_request_response::<SPINE_D_REQ, SPINE_D_ACK>(controller, worker, 40).await;
-                offer_request_response::<SPINE_E_REQ, SPINE_E_ACK>(controller, worker, 50).await;
-            });
-        },
-    );
+async fn wasi_shape_rolled_route_seq_arm_survives_prompt_read_after_open_selector() {
+    {
+        let controller_program = wasi_shape_rolled_route_seq_arm_program::<0>();
+        let worker_program = wasi_shape_rolled_route_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(981);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 1;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_WRITE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_WRITE_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_WRITE_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_WRITE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_WRITE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_WRITE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_WRITE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 2;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_READ_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 3;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_FDSTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_FDSTAT_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_FDSTAT_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_FDSTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_FDSTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 4;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_PATH_OPEN_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_PATH_OPEN_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_PATH_OPEN_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_PATH_OPEN_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_PATH_OPEN_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_PATH_OPEN_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_PATH_OPEN_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_PATH_OPEN_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 5;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_WRITE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_WRITE_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_WRITE_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_WRITE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_WRITE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_WRITE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_WRITE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 6;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_READ_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_PRESTAT_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_right_spine_offer_reenters_repeated_deep_rightmost_arm() {
-    with_visible_reentry_workspace(
-        971,
-        rolled_right_spine_route_program::<0>(),
-        rolled_right_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
-                offer_request_response::<SPINE_B_REQ, SPINE_B_ACK>(controller, worker, 20).await;
-                offer_request_response::<SPINE_C_REQ, SPINE_C_ACK>(controller, worker, 30).await;
-                offer_request_response::<SPINE_D_REQ, SPINE_D_ACK>(controller, worker, 40).await;
-                offer_request_response::<SPINE_E_REQ, SPINE_E_ACK>(controller, worker, 50).await;
-                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 60).await;
-                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 70).await;
-            });
-        },
-    );
+async fn completed_long_route_arm_reenters_without_visit_capacity_abort() {
+    {
+        let controller_program = wasi_shape_rolled_route_seq_arm_program::<0>();
+        let worker_program = wasi_shape_rolled_route_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(986);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                {
+                    let value: u8 = 10;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            let branch = worker.offer().await.unwrap_or_else(|err| {
+                                panic!("worker offer for label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                            });
+                            assert_eq!(
+                                branch.label(),
+                                <Msg<WASI_FD_PRESTAT_REQ, u8> as Message>::LOGICAL_LABEL
+                            );
+                            branch
+                                .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                                .await
+                                .expect("worker recv")
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 20;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_PRESTAT_DIR_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_PRESTAT_DIR_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_PRESTAT_DIR_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!(
+                                        "controller recv label {WASI_FD_PRESTAT_DIR_ACK}: {err:?}"
+                                    )
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 30;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_PRESTAT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_PRESTAT_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_PRESTAT_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_PRESTAT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_PRESTAT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_PRESTAT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 40;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_PATH_FILESTAT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_PATH_FILESTAT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_PATH_FILESTAT_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_PATH_FILESTAT_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_PATH_FILESTAT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_PATH_FILESTAT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_PATH_FILESTAT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!(
+                                        "controller recv label {WASI_PATH_FILESTAT_ACK}: {err:?}"
+                                    )
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 50;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_FDSTAT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_FDSTAT_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_FDSTAT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_FDSTAT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 60;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_PATH_OPEN_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_PATH_OPEN_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_PATH_OPEN_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_PATH_OPEN_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_PATH_OPEN_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_PATH_OPEN_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_PATH_OPEN_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_PATH_OPEN_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 70;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_FILESTAT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_FILESTAT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_FILESTAT_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_FILESTAT_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_FILESTAT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_FILESTAT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_FILESTAT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_FILESTAT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 80;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 90;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 100;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_CLOSE_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_CLOSE_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_CLOSE_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_CLOSE_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_CLOSE_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_CLOSE_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_CLOSE_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_CLOSE_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+
+                {
+                    let value: u8 = 110;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_FDSTAT_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_FDSTAT_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_FDSTAT_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_FDSTAT_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_FDSTAT_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_FDSTAT_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 120;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_PATH_OPEN_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_PATH_OPEN_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_PATH_OPEN_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_PATH_OPEN_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_PATH_OPEN_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_PATH_OPEN_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_PATH_OPEN_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_PATH_OPEN_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 130;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_WRITE_REFINED_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_WRITE_REFINED_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_WRITE_REFINED_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_WRITE_REFINED_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_WRITE_REFINED_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_WRITE_REFINED_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_WRITE_REFINED_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!(
+                                        "controller recv label {WASI_FD_WRITE_REFINED_ACK}: {err:?}"
+                                    )
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 140;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_WRITE_REFINED_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_WRITE_REFINED_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_WRITE_REFINED_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_WRITE_REFINED_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_WRITE_REFINED_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_WRITE_REFINED_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_WRITE_REFINED_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!(
+                                        "controller recv label {WASI_FD_WRITE_REFINED_ACK}: {err:?}"
+                                    )
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 150;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_WRITE_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_WRITE_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_WRITE_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_WRITE_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_WRITE_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_WRITE_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_WRITE_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_WRITE_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+                {
+                    let value: u8 = 160;
+                    {
+                        let value: u8 = value;
+                        controller
+                            .send::<Msg<WASI_FD_CLOSE_REQ, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller send label {WASI_FD_CLOSE_REQ}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            worker
+                                .recv::<Msg<WASI_FD_CLOSE_REQ, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("worker recv label {WASI_FD_CLOSE_REQ}: {err:?}")
+                                })
+                        },
+                        value
+                    );
+                    {
+                        let value: u8 = value.wrapping_add(1);
+                        worker
+                            .send::<Msg<WASI_FD_CLOSE_ACK, u8>>(&value)
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker send label {WASI_FD_CLOSE_ACK}: {err:?}")
+                            });
+                    };
+                    assert_eq!(
+                        {
+                            controller
+                                .recv::<Msg<WASI_FD_CLOSE_ACK, u8>>()
+                                .await
+                                .unwrap_or_else(|err| {
+                                    panic!("controller recv label {WASI_FD_CLOSE_ACK}: {err:?}")
+                                })
+                        },
+                        value.wrapping_add(1)
+                    );
+                };
+            };
+            {
+                let value: u8 = 200;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_WRITE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_WRITE_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_WRITE_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_WRITE_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_WRITE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_WRITE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_WRITE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_WRITE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_left_spine_reenters_repeated_deep_leftmost_arm() {
-    with_visible_reentry_workspace(
-        969,
-        rolled_left_spine_route_program::<0>(),
-        rolled_left_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
-                direct_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
-                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 30).await;
-                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 40).await;
-            });
-        },
-    );
+async fn rolled_route_left_repeated_label_seq_arm_keeps_continuation() {
+    {
+        let controller_program = rolled_left_repeated_label_seq_arm_program::<0>();
+        let worker_program = rolled_left_repeated_label_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(982);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_READ_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_CLOSE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_CLOSE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_CLOSE_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_CLOSE_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_CLOSE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_CLOSE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_CLOSE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_CLOSE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_left_spine_offer_enters_rightmost_arm() {
-    with_visible_reentry_workspace(
-        973,
-        rolled_left_spine_route_program::<0>(),
-        rolled_left_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
-            });
-        },
-    );
+async fn rolled_nested_right_route_repeated_label_seq_arm_keeps_continuation() {
+    {
+        let controller_program = rolled_nested_right_repeated_label_seq_arm_program::<0>();
+        let worker_program = rolled_nested_right_repeated_label_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(983);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_READ_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_CLOSE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_CLOSE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_CLOSE_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_CLOSE_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_CLOSE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_CLOSE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_CLOSE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_CLOSE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_left_spine_offer_reenters_inner_right_arm() {
-    with_visible_reentry_workspace(
-        974,
-        rolled_left_spine_route_program::<0>(),
-        rolled_left_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
-                offer_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
-            });
-        },
-    );
+async fn rolled_nested_left_route_repeated_label_seq_arm_keeps_continuation() {
+    {
+        let controller_program = rolled_nested_left_repeated_label_seq_arm_program::<0>();
+        let worker_program = rolled_nested_left_repeated_label_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(984);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_READ_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_CLOSE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_CLOSE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_CLOSE_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_CLOSE_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_CLOSE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_CLOSE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_CLOSE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_CLOSE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_left_spine_offer_reenters_deep_left_arm_once() {
-    with_visible_reentry_workspace(
-        975,
-        rolled_left_spine_route_program::<0>(),
-        rolled_left_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
-                offer_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
-                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 30).await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_left_spine_offer_reenters_repeated_deep_leftmost_arm() {
-    with_visible_reentry_workspace(
-        972,
-        rolled_left_spine_route_program::<0>(),
-        rolled_left_spine_route_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
-                offer_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
-                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 30).await;
-                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 40).await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_right_seq_arm_keeps_send_authority_for_continuation() {
-    with_visible_reentry_workspace(
-        976,
-        rolled_right_seq_arm_program::<0>(),
-        rolled_right_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SEQ_ARM_B_REQ, SEQ_ARM_B_ACK>(controller, worker, 10)
-                    .await;
-                direct_request_response::<SEQ_ARM_C_REQ, SEQ_ARM_C_ACK>(controller, worker, 20)
-                    .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_left_seq_arm_keeps_send_authority_for_continuation() {
-    with_visible_reentry_workspace(
-        977,
-        rolled_left_seq_arm_program::<0>(),
-        rolled_left_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SEQ_ARM_A_REQ, SEQ_ARM_A_ACK>(controller, worker, 10)
-                    .await;
-                direct_request_response::<SEQ_ARM_B_REQ, SEQ_ARM_B_ACK>(controller, worker, 20)
-                    .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_nested_right_route_seq_arm_keeps_send_authority_for_continuation() {
-    with_visible_reentry_workspace(
-        978,
-        rolled_nested_right_seq_arm_program::<0>(),
-        rolled_nested_right_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SEQ_ARM_C_REQ, SEQ_ARM_C_ACK>(controller, worker, 10)
-                    .await;
-                direct_request_response::<SEQ_ARM_D_REQ, SEQ_ARM_D_ACK>(controller, worker, 20)
-                    .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_left_seq_roll_arm_reenters_inner_before_tail() {
-    with_visible_reentry_workspace(
-        986,
-        rolled_route_left_seq_roll_arm_program::<0>(),
-        rolled_route_left_seq_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<ROUTE_SEQ_ROLL_TAIL_REQ, ROUTE_SEQ_ROLL_TAIL_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-                offer_request_response::<ROUTE_SEQ_ROLL_OTHER_REQ, ROUTE_SEQ_ROLL_OTHER_ACK>(
-                    controller, worker, 40,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_right_seq_roll_arm_reenters_inner_before_tail() {
-    with_visible_reentry_workspace(
-        987,
-        rolled_route_right_seq_roll_arm_program::<0>(),
-        rolled_route_right_seq_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<ROUTE_SEQ_ROLL_OTHER_REQ, ROUTE_SEQ_ROLL_OTHER_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-                direct_request_response::<ROUTE_SEQ_ROLL_TAIL_REQ, ROUTE_SEQ_ROLL_TAIL_ACK>(
-                    controller, worker, 40,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_left_par_roll_arm_reenters_only_after_parallel_settles() {
-    with_visible_reentry_workspace(
-        1988,
-        rolled_route_left_par_roll_arm_program::<0>(),
-        rolled_route_left_par_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 10).await;
-                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 10);
-                assert_controller_send_blocked::<ROUTE_PAR_ROLL_OTHER_REQ>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        988,
-        rolled_route_left_par_roll_arm_program::<0>(),
-        rolled_route_left_par_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 10).await;
-                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 10);
-                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 20).await;
-                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 20);
-
-                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 30).await;
-                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 30);
-                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 40).await;
-                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 40);
-
-                offer_request_response::<ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK>(
-                    controller, worker, 50,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_left_par_roll_arm_exits_after_parallel_settles_without_probe() {
-    with_visible_reentry_workspace(
-        993,
-        rolled_route_left_par_roll_arm_program::<0>(),
-        rolled_route_left_par_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 10).await;
-                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 10);
-                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 20).await;
-                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 20);
-
-                offer_request_response::<ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_right_par_roll_arm_reenters_only_after_parallel_settles() {
-    with_visible_reentry_workspace(
-        1989,
-        rolled_route_right_par_roll_arm_program::<0>(),
-        rolled_route_right_par_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 20).await;
-                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 20);
-                assert_controller_send_blocked::<ROUTE_PAR_ROLL_OTHER_REQ>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        989,
-        rolled_route_right_par_roll_arm_program::<0>(),
-        rolled_route_right_par_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-
-                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 20).await;
-                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 20);
-                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 30).await;
-                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 30);
-                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 40).await;
-                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 40);
-                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 50).await;
-                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 50);
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_par_left_route_roll_arm_reenters_before_parallel_sibling_settles() {
-    with_visible_reentry_workspace(
-        1990,
-        rolled_par_left_route_roll_arm_program::<0>(),
-        rolled_par_left_route_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<PAR_ROUTE_ROLL_A_REQ, PAR_ROUTE_ROLL_A_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                offer_request_response::<PAR_ROUTE_ROLL_B_REQ, PAR_ROUTE_ROLL_B_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                assert_controller_send_blocked::<PAR_ROUTE_ROLL_EXIT_REQ>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        990,
-        rolled_par_left_route_roll_arm_program::<0>(),
-        rolled_par_left_route_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<PAR_ROUTE_ROLL_A_REQ, PAR_ROUTE_ROLL_A_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                offer_request_response::<PAR_ROUTE_ROLL_B_REQ, PAR_ROUTE_ROLL_B_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<PAR_ROUTE_ROLL_SIBLING_REQ, PAR_ROUTE_ROLL_SIBLING_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-                direct_request_response::<PAR_ROUTE_ROLL_EXIT_REQ, PAR_ROUTE_ROLL_EXIT_ACK>(
-                    controller, worker, 40,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_par_right_route_roll_arm_reenters_before_parallel_sibling_settles() {
-    with_visible_reentry_workspace(
-        991,
-        rolled_par_right_route_roll_arm_program::<0>(),
-        rolled_par_right_route_roll_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                direct_request_response::<PAR_ROUTE_ROLL_SIBLING_REQ, PAR_ROUTE_ROLL_SIBLING_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                offer_request_response::<PAR_ROUTE_ROLL_B_REQ, PAR_ROUTE_ROLL_B_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                offer_request_response::<PAR_ROUTE_ROLL_A_REQ, PAR_ROUTE_ROLL_A_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-                direct_request_response::<PAR_ROUTE_ROLL_EXIT_REQ, PAR_ROUTE_ROLL_EXIT_ACK>(
-                    controller, worker, 40,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_seq_route_roll_head_reenters_before_seq_tail_and_outer_exit() {
-    with_visible_reentry_workspace(
-        992,
-        rolled_seq_route_roll_head_program::<0>(),
-        rolled_seq_route_roll_head_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<SEQ_ROUTE_ROLL_A_REQ, SEQ_ROUTE_ROLL_A_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                offer_request_response::<SEQ_ROUTE_ROLL_B_REQ, SEQ_ROUTE_ROLL_B_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<SEQ_ROUTE_ROLL_TAIL_REQ, SEQ_ROUTE_ROLL_TAIL_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-
-                offer_request_response::<SEQ_ROUTE_ROLL_A_REQ, SEQ_ROUTE_ROLL_A_ACK>(
-                    controller, worker, 40,
-                )
-                .await;
-                direct_request_response::<SEQ_ROUTE_ROLL_TAIL_REQ, SEQ_ROUTE_ROLL_TAIL_ACK>(
-                    controller, worker, 50,
-                )
-                .await;
-                direct_request_response::<SEQ_ROUTE_ROLL_EXIT_REQ, SEQ_ROUTE_ROLL_EXIT_ACK>(
-                    controller, worker, 60,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_route_par_seq_route_roll_mixed_reentry_keeps_single_authority() {
-    with_visible_reentry_workspace(
-        1994,
-        rolled_route_route_par_seq_route_roll_mixed_program::<0>(),
-        rolled_route_route_par_seq_route_roll_mixed_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                drive_mixed_route_prefix(controller, worker).await;
-                assert_controller_send_blocked::<MIX_OUTER_LEFT_REQ>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        2994,
-        rolled_route_route_par_seq_route_roll_mixed_program::<0>(),
-        rolled_route_route_par_seq_route_roll_mixed_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                drive_mixed_route_prefix(controller, worker).await;
-                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
-                    controller, worker, 50,
-                )
-                .await;
-                assert_controller_send_blocked::<MIX_OUTER_LEFT_REQ>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        994,
-        rolled_route_route_par_seq_route_roll_mixed_program::<0>(),
-        rolled_route_route_par_seq_route_roll_mixed_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                drive_mixed_route_prefix(controller, worker).await;
-                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
-                    controller, worker, 50,
-                )
-                .await;
-                direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(
-                    controller, worker, 60,
-                )
-                .await;
-                offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 70)
-                    .await;
-                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
-                    controller, worker, 80,
-                )
-                .await;
-                direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(
-                    controller, worker, 90,
-                )
-                .await;
-
-                offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(
-                    controller, worker, 100,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_left_route_left_route_par_seq_route_roll_mixed_reentry_keeps_single_authority() {
-    with_visible_reentry_workspace(
-        1995,
-        rolled_left_route_left_route_par_seq_route_roll_mixed_program::<0>(),
-        rolled_left_route_left_route_par_seq_route_roll_mixed_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                drive_left_mixed_route_prefix(controller, worker).await;
-                assert_controller_send_blocked::<MIX_OUTER_LEFT_REQ>(controller).await;
-            });
-        },
-    );
-    with_visible_reentry_workspace(
-        995,
-        rolled_left_route_left_route_par_seq_route_roll_mixed_program::<0>(),
-        rolled_left_route_left_route_par_seq_route_roll_mixed_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                drive_left_mixed_route_prefix(controller, worker).await;
-                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
-                    controller, worker, 60,
-                )
-                .await;
-                offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 70)
-                    .await;
-                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
-                    controller, worker, 80,
-                )
-                .await;
-                direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(
-                    controller, worker, 90,
-                )
-                .await;
-
-                offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(
-                    controller, worker, 100,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn wasi_shape_rolled_route_seq_arm_keeps_send_authority_for_continuation() {
-    with_visible_reentry_workspace(
-        979,
-        wasi_shape_rolled_route_seq_arm_program::<0>(),
-        wasi_shape_rolled_route_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-                direct_request_response::<WASI_PATH_FILESTAT_REQ, WASI_PATH_FILESTAT_ACK>(
-                    controller, worker, 40,
-                )
-                .await;
-                direct_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(
-                    controller, worker, 50,
-                )
-                .await;
-                direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(
-                    controller, worker, 60,
-                )
-                .await;
-                direct_request_response::<WASI_FD_FILESTAT_REQ, WASI_FD_FILESTAT_ACK>(
-                    controller, worker, 70,
-                )
-                .await;
-                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 80,
-                )
-                .await;
-                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 90,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn wasi_shape_rolled_route_seq_arm_survives_prior_sibling_arms() {
-    with_visible_reentry_workspace(
-        980,
-        wasi_shape_rolled_route_seq_arm_program::<0>(),
-        wasi_shape_rolled_route_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
-                    controller, worker, 1,
-                )
-                .await;
-                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 2)
-                    .await;
-                offer_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(
-                    controller, worker, 3,
-                )
-                .await;
-                direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(
-                    controller, worker, 4,
-                )
-                .await;
-
-                offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn wasi_shape_rolled_route_seq_arm_survives_prompt_read_after_open_selector() {
-    with_visible_reentry_workspace(
-        981,
-        wasi_shape_rolled_route_seq_arm_program::<0>(),
-        wasi_shape_rolled_route_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
-                    controller, worker, 1,
-                )
-                .await;
-                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 2)
-                    .await;
-                offer_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(
-                    controller, worker, 3,
-                )
-                .await;
-                direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(
-                    controller, worker, 4,
-                )
-                .await;
-                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
-                    controller, worker, 5,
-                )
-                .await;
-                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 6)
-                    .await;
-
-                offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn completed_long_route_arm_reenters_without_visit_capacity_abort() {
-    with_visible_reentry_workspace(
-        986,
-        wasi_shape_rolled_route_seq_arm_program::<0>(),
-        wasi_shape_rolled_route_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                drive_long_rolled_route_commit_flow(controller, worker).await;
-                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
-                    controller, worker, 200,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_route_left_repeated_label_seq_arm_keeps_continuation() {
-    with_visible_reentry_workspace(
-        982,
-        rolled_left_repeated_label_seq_arm_program::<0>(),
-        rolled_left_repeated_label_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_nested_right_route_repeated_label_seq_arm_keeps_continuation() {
-    with_visible_reentry_workspace(
-        983,
-        rolled_nested_right_repeated_label_seq_arm_program::<0>(),
-        rolled_nested_right_repeated_label_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_nested_left_route_repeated_label_seq_arm_keeps_continuation() {
-    with_visible_reentry_workspace(
-        984,
-        rolled_nested_left_repeated_label_seq_arm_program::<0>(),
-        rolled_nested_left_repeated_label_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-            });
-        },
-    );
-}
-
-#[test]
-fn rolled_balanced_route_repeated_label_seq_arm_keeps_continuation() {
-    with_visible_reentry_workspace(
-        985,
-        rolled_balanced_repeated_label_seq_arm_program::<0>(),
-        rolled_balanced_repeated_label_seq_arm_program::<1>(),
-        |controller, worker| {
-            futures::executor::block_on(async {
-                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 10,
-                )
-                .await;
-                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
-                    controller, worker, 20,
-                )
-                .await;
-                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
-                    controller, worker, 30,
-                )
-                .await;
-            });
-        },
-    );
+async fn rolled_balanced_route_repeated_label_seq_arm_keeps_continuation() {
+    {
+        let controller_program = rolled_balanced_repeated_label_seq_arm_program::<0>();
+        let worker_program = rolled_balanced_repeated_label_seq_arm_program::<1>();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, TestTransport::new())
+            .expect("register rendezvous");
+        let sid = SessionId::new(985);
+        let mut controller = rv
+            .enter(sid, &controller_program)
+            .expect("attach controller");
+        let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
+        (async {
+            {
+                let value: u8 = 10;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        let branch = worker.offer().await.unwrap_or_else(|err| {
+                            panic!("worker offer for label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                        assert_eq!(
+                            branch.label(),
+                            <Msg<WASI_FD_READ_REQ, u8> as Message>::LOGICAL_LABEL
+                        );
+                        branch
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .expect("worker recv")
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 20;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_READ_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_READ_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_READ_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_READ_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_READ_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_READ_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_READ_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_READ_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+            {
+                let value: u8 = 30;
+                {
+                    let value: u8 = value;
+                    controller
+                        .send::<Msg<WASI_FD_CLOSE_REQ, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("controller send label {WASI_FD_CLOSE_REQ}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        worker
+                            .recv::<Msg<WASI_FD_CLOSE_REQ, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("worker recv label {WASI_FD_CLOSE_REQ}: {err:?}")
+                            })
+                    },
+                    value
+                );
+                {
+                    let value: u8 = value.wrapping_add(1);
+                    worker
+                        .send::<Msg<WASI_FD_CLOSE_ACK, u8>>(&value)
+                        .await
+                        .unwrap_or_else(|err| {
+                            panic!("worker send label {WASI_FD_CLOSE_ACK}: {err:?}")
+                        });
+                };
+                assert_eq!(
+                    {
+                        controller
+                            .recv::<Msg<WASI_FD_CLOSE_ACK, u8>>()
+                            .await
+                            .unwrap_or_else(|err| {
+                                panic!("controller recv label {WASI_FD_CLOSE_ACK}: {err:?}")
+                            })
+                    },
+                    value.wrapping_add(1)
+                );
+            };
+        })
+        .await;
+    };
 }

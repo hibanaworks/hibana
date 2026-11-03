@@ -17,7 +17,7 @@ async fn delegated_resolver_starts_before_the_holders_later_send()
     type K = g::Msg<9, ()>;
     type L = g::Msg<10, ()>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::route(
                 g::seq(
@@ -39,7 +39,7 @@ async fn delegated_resolver_starts_before_the_holders_later_send()
                 g::seq(g::send::<3, 2, G>(), g::send::<3, 0, H>()),
             )
             .resolve::<0>(),
-            g::send::<1, 0, Loan<'_>>(),
+            g::send::<1, 0, Loan>(),
         ),
     );
     let p0 = project::<0>(&global);
@@ -69,15 +69,15 @@ async fn delegated_resolver_starts_before_the_holders_later_send()
     (async {
         async {
             async {
-                owner.send::<Loan<'_>>(db).await?;
+                owner.send::<Loan>(db).await?;
                 owner.offer().await?.recv::<B>().await?;
                 owner.offer().await?.recv::<D>().await?;
-                let _db = owner.recv::<Loan<'_>>().await?;
+                let _db = owner.recv::<Loan>().await?;
                 Ok::<_, crate::EndpointError>(())
             };
 
             async {
-                let mut db = worker.recv::<Loan<'_>>().await?;
+                let mut db = worker.recv::<Loan>().await?;
                 let branch = db.offer().await?;
                 assert_eq!(branch.label(), 1);
                 drop(branch);
@@ -87,7 +87,7 @@ async fn delegated_resolver_starts_before_the_holders_later_send()
                 db.send::<D>(&()).await?;
                 worker.send::<K>(&()).await?;
                 db.recv::<L>().await?;
-                worker.send::<Loan<'_>>(db).await
+                worker.send::<Loan>(db).await
             };
 
             async {

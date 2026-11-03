@@ -1,4 +1,6 @@
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 mod control {
     use hibana::g;
     pub type Plain = g::Msg<238, ()>;
@@ -31,8 +33,10 @@ type Stored = g::Msg<194, u64>;
 type Done = g::Msg<196, ()>;
 type Closed = g::Msg<197, ()>;
 const PAYLOADS: [u64; 6] = [17, u64::MAX, 0, 0x0102_0304_0506_0708, 31, 99];
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn offer_observes_delayed_receive_in_parallel_with_local_send_route() {
+async fn offer_observes_delayed_receive_in_parallel_with_local_send_route()
+-> Result<(), hibana::EndpointError> {
     let packets = g::seq(
         g::route(
             g::seq(
@@ -100,87 +104,67 @@ fn offer_observes_delayed_receive_in_parallel_with_local_send_route() {
     let mut c = rendezvous.enter(sid, &c).unwrap();
     let mut d = rendezvous.enter(sid, &d).unwrap();
     let mut e = rendezvous.enter(sid, &e).unwrap();
-    let source = async {
-        a.send::<control::Plain>(&())
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        println!("source plain sent");
-        a.recv::<control::StartupSettled>()
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        println!("source startup settled");
-        Ok::<_, String>(())
-    };
-    let sink = async {
-        c.recv::<control::PlainSink>()
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        println!("sink plain received");
-        for expected in PAYLOADS {
-            // Abandon the first preview; the owned frame must survive one
-            // cancellation before its subsequent committed receive.
-            let preview = c.offer().await.map_err(|e| format!("{e:?}"))?;
-            assert_eq!(preview.label(), 6);
-            drop(preview);
-            let o = c.offer().await.map_err(|e| format!("{e:?}"))?;
-            assert_eq!(o.label(), 6);
-            let v = o.recv::<Data>().await.map_err(|e| format!("{e:?}"))?;
-            assert_eq!(v, expected);
-            c.send::<Ack>(&v).await.map_err(|e| format!("{e:?}"))?;
-        }
-        c.offer()
-            .await
-            .map_err(|e| format!("{e:?}"))?
-            .recv::<End>()
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        c.send::<Done>(&()).await.map_err(|e| format!("{e:?}"))?;
-        c.recv::<Closed>().await.map_err(|e| format!("{e:?}"))?;
-        c.send::<Retired>(&()).await.map_err(|e| format!("{e:?}"))?;
-        Ok::<_, String>(())
-    };
-    let receive = async {
-        for value in PAYLOADS {
-            for _ in 0..5 {
-                // This test peer delays the physical arrival by one executor turn.
-                // Unlike the offer path, the finite delay must schedule itself.
-                std::future::poll_fn(|cx| {
-                    cx.waker().wake_by_ref();
-                    Poll::Ready(())
-                })
-                .await;
-                futures::pending!();
+    let execution = async {
+        async {
+            a.send::<control::Plain>(&()).await?;
+            println!("source plain sent");
+            a.recv::<control::StartupSettled>().await?;
+            println!("source startup settled");
+            Ok::<(), hibana::EndpointError>(())
+        };
+        async {
+            c.recv::<control::PlainSink>().await?;
+            println!("sink plain received");
+            for expected in PAYLOADS {
+                // Abandon the first preview; the owned frame must survive one
+                // cancellation before its subsequent committed receive.
+                let preview = c.offer().await?;
+                assert_eq!(preview.label(), 6);
+                drop(preview);
+                let o = c.offer().await?;
+                assert_eq!(o.label(), 6);
+                let v = o.recv::<Data>().await?;
+                assert_eq!(v, expected);
+                c.send::<Ack>(&v).await?;
             }
-            b.send::<Data>(&value).await.map_err(|e| format!("{e:?}"))?;
-            let ack = b.recv::<Ack>().await.map_err(|e| format!("{e:?}"))?;
-            assert_eq!(ack, value);
-        }
-        b.send::<End>(&()).await.map_err(|e| format!("{e:?}"))?;
-        b.recv::<Retired>().await.map_err(|e| format!("{e:?}"))?;
-        Ok::<_, String>(())
+            c.offer().await?.recv::<End>().await?;
+            c.send::<Done>(&()).await?;
+            c.recv::<Closed>().await?;
+            c.send::<Retired>(&()).await?;
+            Ok::<(), hibana::EndpointError>(())
+        };
+        async {
+            for value in PAYLOADS {
+                for _ in 0..5 {
+                    // Delay physical arrival for one scheduled turn.
+                    hibana_runtime::yield_now().await;
+                }
+                b.send::<Data>(&value).await?;
+                let ack = b.recv::<Ack>().await?;
+                assert_eq!(ack, value);
+            }
+            b.send::<End>(&()).await?;
+            b.recv::<Retired>().await?;
+            Ok::<(), hibana::EndpointError>(())
+        };
+        async {
+            let o = d.offer().await?;
+            o.recv::<control::Plain>().await?;
+            println!("owner plain received");
+            d.send::<control::PlainSink>(&()).await?;
+            println!("owner plain sink sent");
+            d.send::<control::StartupSettled>(&()).await?;
+            println!("owner startup sent");
+            Ok::<(), hibana::EndpointError>(())
+        };
+        async {
+            e.recv::<Done>().await?;
+            e.send::<Closed>(&()).await?;
+            Ok::<(), hibana::EndpointError>(())
+        };
+        Ok::<(), hibana::EndpointError>(())
     };
-    let owner = async {
-        let o = d.offer().await.map_err(|e| format!("{e:?}"))?;
-        o.recv::<control::Plain>()
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        println!("owner plain received");
-        d.send::<control::PlainSink>(&())
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        println!("owner plain sink sent");
-        d.send::<control::StartupSettled>(&())
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        println!("owner startup sent");
-        Ok::<_, String>(())
-    };
-    let collector = async {
-        e.recv::<Done>().await.map_err(|e| format!("{e:?}"))?;
-        e.send::<Closed>(&()).await.map_err(|e| format!("{e:?}"))?;
-        Ok::<_, String>(())
-    };
-    let mut all = pin!(async { futures::try_join!(source, sink, receive, owner, collector) });
+    let mut all = pin!(execution);
     struct WakeCount(std::sync::atomic::AtomicUsize);
     impl std::task::Wake for WakeCount {
         fn wake(self: std::sync::Arc<Self>) {
@@ -197,7 +181,7 @@ fn offer_observes_delayed_receive_in_parallel_with_local_send_route() {
         let before = wakes.0.load(std::sync::atomic::Ordering::SeqCst);
         if let Poll::Ready(result) = all.as_mut().poll(&mut cx) {
             assert!(result.is_ok(), "{result:?}");
-            return;
+            return Ok(());
         }
         assert!(
             wakes.0.load(std::sync::atomic::Ordering::SeqCst) > before,

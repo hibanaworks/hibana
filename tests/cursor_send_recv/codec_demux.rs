@@ -1,26 +1,31 @@
 use super::*;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn recv_codec_error_poisons_before_same_generation_continuation() {
-    with_runtime_workspace(|slab| {
+async fn recv_codec_error_poisons_before_same_generation_continuation() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(12);
             let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
-            futures::executor::block_on(origin_endpoint.send::<Msg<1, u32>>(&42))
+            (origin_endpoint.send::<Msg<1, u32>>(&42))
+                .await
                 .expect("send succeeds");
             transport.truncate_next_payload(1, 3);
 
-            let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>()) {
+            let err = match (target_endpoint.recv::<Msg<1, u32>>()).await {
                 Ok(_) => panic!("recv with malformed bytes must fail"),
                 Err(err) => err,
             };
@@ -35,7 +40,7 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 "first recv fault must not be replaced by session poison: {rendered}"
             );
 
-            let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>()) {
+            let err = match (target_endpoint.recv::<Msg<1, u32>>()).await {
                 Ok(_) => {
                     panic!("poisoned generation must not continue after recv decode fault")
                 }
@@ -47,33 +52,38 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 rendered.contains("SessionFault") && rendered.contains("DecodeFailed"),
                 "continuation must report the poisoned session cause: {rendered}"
             );
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn cursor_send_and_recv_high_logical_label_roundtrip() {
-    with_runtime_workspace(|slab| {
+async fn cursor_send_and_recv_high_logical_label_roundtrip() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<200, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(200);
             let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
-            let () =
-                futures::executor::block_on(origin_endpoint.send::<Msg<200, u32>>(&0xC8C8_C8C8))
-                    .expect("send succeeds");
-            let payload = futures::executor::block_on(target_endpoint.recv::<Msg<200, u32>>())
+            let () = (origin_endpoint.send::<Msg<200, u32>>(&0xC8C8_C8C8))
+                .await
+                .expect("send succeeds");
+            let payload = (target_endpoint.recv::<Msg<200, u32>>())
+                .await
                 .expect("recv succeeds");
             assert_eq!(payload, 0xC8C8_C8C8);
             assert!(transport.queue_is_empty());
-        });
-    });
+        };
+    };
 }

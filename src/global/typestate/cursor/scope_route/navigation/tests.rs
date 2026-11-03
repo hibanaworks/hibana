@@ -84,14 +84,14 @@ fn preview_ancestry_matches_parent_chains_through_parallel_and_repeated_routes()
 fn preview_ancestry_matches_parent_chains_in_delegated_views() {
     type Loan<'r> = Msg<9, Endpoint<'r, 3>>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::route(
                 g::route(g::send::<3, 2, Msg<1, ()>>(), g::send::<3, 2, Msg<2, ()>>()),
                 g::send::<3, 2, Msg<3, ()>>(),
             )
             .roll(),
-            g::send::<1, 0, Loan<'_>>(),
+            g::send::<1, 0, Loan>(),
         ),
     );
     compare(project::<0>(&global).role_image_ref());

@@ -1,21 +1,14 @@
-use core::cell::UnsafeCell;
+use core::cell::Cell;
 
 use hibana::{
     g::{self, Msg},
     runtime::{
-        SessionKitStorage,
         program::{RoleProgram, project},
         resolver::{DecisionArm, ResolverError},
         tap,
         wire::{CodecError, WireEncode},
     },
 };
-
-use crate::common::TestTransport;
-pub(crate) use crate::runtime_support::with_runtime_workspace;
-pub(crate) use crate::tls_ref_support::with_resident_tls_ref;
-
-type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 pub(crate) const ROUTE_RESOLVER: u16 = 0x91;
 pub(crate) const OUTER_ROUTE_RESOLVER: u16 = 0x92;
@@ -44,12 +37,7 @@ pub(crate) static RIGHT_ARM: DecisionArm = DecisionArm::Right;
 pub(crate) static UNIT: () = ();
 
 std::thread_local! {
-    pub(crate) static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static COUNTERS: UnsafeCell<ResolverCounters> = const {
-        UnsafeCell::new(ResolverCounters::new())
-    };
+    static COUNTERS: Cell<ResolverCounters> = const { Cell::new(ResolverCounters::new()) };
 }
 
 #[derive(Clone, Copy)]
@@ -74,19 +62,19 @@ impl ResolverCounters {
 }
 
 pub(crate) fn reset_counters() {
-    COUNTERS.with(|cell| unsafe {
-        *cell.get() = ResolverCounters::new();
-    });
+    COUNTERS.with(|cell| cell.set(ResolverCounters::new()));
 }
 
 fn update_counters(f: impl FnOnce(&mut ResolverCounters)) {
-    COUNTERS.with(|cell| unsafe {
-        f(&mut *cell.get());
+    COUNTERS.with(|cell| {
+        let mut counters = cell.get();
+        f(&mut counters);
+        cell.set(counters);
     });
 }
 
 pub(crate) fn read_counters() -> ResolverCounters {
-    COUNTERS.with(|cell| unsafe { *cell.get() })
+    COUNTERS.with(Cell::get)
 }
 
 pub(crate) fn choose_arm(arm: &DecisionArm) -> Result<DecisionArm, ResolverError> {

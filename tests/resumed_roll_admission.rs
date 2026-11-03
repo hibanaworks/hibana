@@ -156,10 +156,10 @@ async fn delegated_resumption_matches_every_bounded_complete_exchange_prefix()
             g::send::<0, 1, Prefix>(),
             g::seq(
                 g::seq(
-                    g::send::<0, 1, Loan<'_>>(),
+                    g::send::<0, 1, Loan>(),
                     g::seq(
                         g::send::<3, 2, Read>(),
-                        g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Returned<'_>>()),
+                        g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Returned>()),
                     ),
                 )
                 .roll(),
@@ -206,15 +206,15 @@ async fn delegated_resumption_matches_every_bounded_complete_exchange_prefix()
                         1 => {
                             let (returned, (), ()) = async {
                                 async {
-                                    owner.send::<Loan<'_>>(db).await?;
-                                    owner.recv::<Returned<'_>>().await
+                                    owner.send::<Loan>(db).await?;
+                                    owner.recv::<Returned>().await
                                 };
 
                                 async {
-                                    let mut db = worker.recv::<Loan<'_>>().await?;
+                                    let mut db = worker.recv::<Loan>().await?;
                                     db.send::<Read>(&41).await?;
                                     assert_eq!(db.recv::<Value>().await?, 42);
-                                    worker.send::<Returned<'_>>(db).await
+                                    worker.send::<Returned>(db).await
                                 };
 
                                 async {
@@ -237,7 +237,7 @@ async fn delegated_resumption_matches_every_bounded_complete_exchange_prefix()
                 }
                 let result = match query.probe {
                     0 => owner.send::<Prefix>(&()).await,
-                    1 => owner.send::<Loan<'_>>(db).await,
+                    1 => owner.send::<Loan>(db).await,
                     2 => owner.send::<Tail>(&()).await,
                     _ => unreachable!(),
                 };

@@ -300,7 +300,7 @@ async fn a_parallel_borrow_keeps_its_endpoint_payload_available_for_the_prefix()
     type Loan<'r> = g::Msg<2, Endpoint<'r, 3>>;
     let global = g::par(
         g::send::<0, 0, Tick>().roll(),
-        g::seq(g::send::<0, 3, Read>(), g::send::<1, 0, Loan<'_>>()),
+        g::seq(g::send::<0, 3, Read>(), g::send::<1, 0, Loan>()),
     );
     let owner_program = project::<0>(&global);
     let worker_program = project::<1>(&global);
@@ -335,7 +335,7 @@ async fn a_parallel_borrow_keeps_its_endpoint_payload_available_for_the_prefix()
                         };
                         let exchange = async {
                             exchange.send::<Read>(&()).await?;
-                            exchange.recv::<Loan<'_>>().await
+                            exchange.recv::<Loan>().await
                         };
                         let (_, resource) = async {
                             async { (ticks).await };
@@ -354,7 +354,7 @@ async fn a_parallel_borrow_keeps_its_endpoint_payload_available_for_the_prefix()
                         if !send_early {
                             resource.recv::<Read>().await?;
                         }
-                        transfer.send::<Loan<'_>>(resource).await
+                        transfer.send::<Loan>(resource).await
                     };
                     if reverse {
                         async {

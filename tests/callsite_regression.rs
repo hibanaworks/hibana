@@ -1,10 +1,6 @@
 mod common;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
-
-use core::cell::UnsafeCell;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use common::TestTransport;
 use hibana::{
@@ -16,17 +12,6 @@ use hibana::{
         resolver::{DecisionArm, ResolverError, ResolverRef},
     },
 };
-use runtime_support::with_runtime_workspace;
-use tls_ref_support::with_resident_tls_ref;
-
-type TestKitStorage = SessionKitStorage<'static, TestTransport>;
-
-std::thread_local! {
-    static TEST_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-}
-
 fn assert_endpoint_debug_boundary(error: hibana::EndpointError, operation: &str) {
     let rendered = format!("{error:?}");
     assert!(
@@ -81,8 +66,11 @@ fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
 
 #[test]
 fn runtime_registers_multiple_rendezvous_from_resident_resources() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+    {
+        let mut slab = [0; 6 * 16 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let (role0, _) = project_pair::<7>();
             let transport = TestTransport::new();
             const CHUNK: usize = 16 * 1024;
@@ -105,25 +93,33 @@ fn runtime_registers_multiple_rendezvous_from_resident_resources() {
                 core::hint::black_box(&endpoint);
                 drop(endpoint);
             }
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn endpoint_errors_keep_debug_boundaries() {
-    with_runtime_workspace(|slab| {
+async fn endpoint_errors_keep_debug_boundaries() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let (origin_program, target_program) = project_pair::<11>();
-            let rv = cluster.rendezvous(slab, transport.clone()).expect("rv");
+            let rv = cluster
+                .rendezvous(&mut slab, transport.clone())
+                .expect("rv");
             let sid = SessionId::new(411);
             let mut origin = rv.enter(sid, &origin_program).expect("origin");
             let target = rv.enter(sid, &target_program).expect("target");
 
-            let send_error = futures::executor::block_on(origin.send::<Msg<12, u32>>(&1234))
+            let send_error = (origin.send::<Msg<12, u32>>(&1234))
+                .await
                 .expect_err("wrong send label must fail");
             assert_endpoint_debug_boundary(send_error, "send");
-            let poisoned = futures::executor::block_on(origin.send::<Msg<11, u32>>(&1234))
+            let poisoned = (origin.send::<Msg<11, u32>>(&1234))
+                .await
                 .expect_err("wrong send label must poison the session");
             assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
 
@@ -132,37 +128,43 @@ fn endpoint_errors_keep_debug_boundaries() {
             let sid = SessionId::new(412);
             let mut origin = rv.enter(sid, &origin_program).expect("fresh origin");
             let mut target = rv.enter(sid, &target_program).expect("fresh target");
-            futures::executor::block_on(origin.send::<Msg<11, u32>>(&1234)).expect("send");
+            (origin.send::<Msg<11, u32>>(&1234)).await.expect("send");
 
-            let recv_result = futures::executor::block_on(target.recv::<Msg<11, i32>>());
+            let recv_result = (target.recv::<Msg<11, i32>>()).await;
             let recv_error = match recv_result {
                 Ok(_) => panic!("wrong recv payload must fail"),
                 Err(error) => error,
             };
             assert_endpoint_debug_boundary(recv_error, "recv");
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn payload_schema_mismatch_cannot_publish_send_or_consume_recv() {
-    with_runtime_workspace(|slab| {
+async fn payload_schema_mismatch_cannot_publish_send_or_consume_recv() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let (origin_program, target_program) = project_pair::<13>();
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("rendezvous");
             let sid = SessionId::new(412);
             let mut origin = rv.enter(sid, &origin_program).expect("origin");
             let target = rv.enter(sid, &target_program).expect("target");
 
-            let send_error = futures::executor::block_on(origin.send::<Msg<13, i32>>(&1234_i32))
+            let send_error = (origin.send::<Msg<13, i32>>(&1234_i32))
+                .await
                 .expect_err("same-width wrong send schema must fail before publication");
             assert!(format!("{send_error:?}").contains("PayloadMismatch"));
             assert!(transport.queue_is_empty());
 
-            let poisoned = futures::executor::block_on(origin.send::<Msg<13, u32>>(&1234_u32))
+            let poisoned = (origin.send::<Msg<13, u32>>(&1234_u32))
+                .await
                 .expect_err("wrong send schema must poison the session");
             assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
             assert!(transport.queue_is_empty());
@@ -172,29 +174,36 @@ fn payload_schema_mismatch_cannot_publish_send_or_consume_recv() {
             let sid = SessionId::new(414);
             let mut origin = rv.enter(sid, &origin_program).expect("fresh origin");
             let mut target = rv.enter(sid, &target_program).expect("fresh target");
-            futures::executor::block_on(origin.send::<Msg<13, u32>>(&1234_u32))
+            (origin.send::<Msg<13, u32>>(&1234_u32))
+                .await
                 .expect("fresh session must publish the declared payload");
             assert!(!transport.queue_is_empty());
 
-            let recv_error = futures::executor::block_on(target.recv::<Msg<13, i32>>())
+            let recv_error = (target.recv::<Msg<13, i32>>())
+                .await
                 .expect_err("same-width wrong recv schema must fail before frame consumption");
             assert!(format!("{recv_error:?}").contains("PayloadMismatch"));
             assert!(
                 !transport.queue_is_empty(),
                 "schema rejection must leave the queued frame unconsumed"
             );
-            let poisoned = futures::executor::block_on(target.recv::<Msg<13, u32>>())
+            let poisoned = (target.recv::<Msg<13, u32>>())
+                .await
                 .expect_err("wrong recv schema must poison the session");
             assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn payload_schema_tracks_selected_route_when_labels_match() {
-    with_runtime_workspace(|slab| {
+async fn payload_schema_tracks_selected_route_when_labels_match() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::route(
                 g::send::<0, 1, Msg<14, u32>>(),
                 g::send::<0, 1, Msg<14, i32>>(),
@@ -203,7 +212,7 @@ fn payload_schema_tracks_selected_route_when_labels_match() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("rendezvous");
             rv.set_resolver(
                 &origin_program,
@@ -217,12 +226,14 @@ fn payload_schema_tracks_selected_route_when_labels_match() {
             let mut origin = rv.enter(sid, &origin_program).expect("origin");
             let target = rv.enter(sid, &target_program).expect("target");
 
-            let mismatch = futures::executor::block_on(origin.send::<Msg<14, u32>>(&23))
+            let mismatch = (origin.send::<Msg<14, u32>>(&23))
+                .await
                 .expect_err("selected right arm must reject the left payload schema");
             assert!(format!("{mismatch:?}").contains("PayloadMismatch"));
             assert!(transport.queue_is_empty());
 
-            let poisoned = futures::executor::block_on(origin.send::<Msg<14, i32>>(&-17))
+            let poisoned = (origin.send::<Msg<14, i32>>(&-17))
+                .await
                 .expect_err("wrong selected-arm schema must poison the session");
             assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
 
@@ -231,35 +242,43 @@ fn payload_schema_tracks_selected_route_when_labels_match() {
             let sid = SessionId::new(414);
             let mut origin = rv.enter(sid, &origin_program).expect("fresh origin");
             let mut target = rv.enter(sid, &target_program).expect("fresh target");
-            futures::executor::block_on(origin.send::<Msg<14, i32>>(&-17))
+            (origin.send::<Msg<14, i32>>(&-17))
+                .await
                 .expect("selected right arm and payload schema must agree");
-            let branch = futures::executor::block_on(target.offer()).expect("offer right arm");
+            let branch = (target.offer()).await.expect("offer right arm");
             assert_eq!(branch.label(), 14);
             assert_eq!(
-                futures::executor::block_on(branch.recv::<Msg<14, i32>>())
+                (branch.recv::<Msg<14, i32>>())
+                    .await
                     .expect("branch receive schema must match the selected arm"),
                 -17
             );
             assert!(transport.queue_is_empty());
-        });
-    });
+        };
+    };
 }
 
 #[test]
 fn attach_and_resolver_errors_keep_debug_boundaries() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rendezvous_result = cluster.rendezvous(&mut slab[..1], TestTransport::new());
             let rendezvous_error = match rendezvous_result {
                 Ok(_) => panic!("resource-constrained rendezvous slab must fail"),
                 Err(error) => error,
             };
             assert_attach_debug_boundary(rendezvous_error, "rendezvous");
-        });
-    });
+        };
+    };
 
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let (origin_program, _target_program) = project_pair::<42>();
             let rv = cluster
                 .rendezvous(&mut slab[..2048], TestTransport::new())
@@ -284,71 +303,84 @@ fn attach_and_resolver_errors_keep_debug_boundaries() {
                 Err(error) => error,
             };
             assert_resolver_debug_boundary(set_resolver_error, "set_resolver");
-        });
-    });
+        };
+    };
 
     let reject_error = ResolverError::reject();
     assert_resolver_debug_boundary(reject_error, "reject");
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn completed_sender_drop_preserves_queued_peer_progress() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+async fn completed_sender_drop_preserves_queued_peer_progress() {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let (send_program, recv_program) = project_pair::<21>();
-            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+            let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
             let sid = SessionId::new(921);
             let mut sender = rv.enter(sid, &send_program).unwrap();
             let mut receiver = rv.enter(sid, &recv_program).unwrap();
-            futures::executor::block_on(sender.send::<Msg<21, u32>>(&7)).unwrap();
+            (sender.send::<Msg<21, u32>>(&7)).await.unwrap();
             drop(sender);
-            assert_eq!(
-                futures::executor::block_on(receiver.recv::<Msg<21, u32>>()).unwrap(),
-                7
-            );
-        });
-    });
+            assert_eq!((receiver.recv::<Msg<21, u32>>()).await.unwrap(), 7);
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn dropping_unexecuted_endpoint_faults_the_session() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+async fn dropping_unexecuted_endpoint_faults_the_session() {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let (send_program, recv_program) = project_pair::<22>();
-            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+            let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
             let sid = SessionId::new(922);
             let sender = rv.enter(sid, &send_program).unwrap();
             let mut receiver = rv.enter(sid, &recv_program).unwrap();
             drop(sender);
-            let error = futures::executor::block_on(receiver.recv::<Msg<22, u32>>()).unwrap_err();
+            let error = (receiver.recv::<Msg<22, u32>>()).await.unwrap_err();
             assert_endpoint_debug_boundary(error, "recv");
             assert!(format!("{error:?}").contains("SessionFault(EndpointDropped)"));
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn drop_preserves_a_committed_protocol_fault() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+async fn drop_preserves_a_committed_protocol_fault() {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let (send_program, recv_program) = project_pair::<23>();
-            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+            let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
             let sid = SessionId::new(923);
             let mut sender = rv.enter(sid, &send_program).unwrap();
             let mut receiver = rv.enter(sid, &recv_program).unwrap();
-            assert!(futures::executor::block_on(sender.send::<Msg<24, u32>>(&7)).is_err());
+            assert!((sender.send::<Msg<24, u32>>(&7)).await.is_err());
             drop(sender);
-            let error = futures::executor::block_on(receiver.recv::<Msg<23, u32>>()).unwrap_err();
+            let error = (receiver.recv::<Msg<23, u32>>()).await.unwrap_err();
             assert!(format!("{error:?}").contains("SessionFault(ProtocolViolation)"));
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn completed_parallel_drop_accepts_both_committed_arm_orders() {
+async fn completed_parallel_drop_accepts_both_committed_arm_orders() {
     for right_first in [false, true] {
-        with_runtime_workspace(|slab| {
-            with_resident_tls_ref(&TEST_SLOT, |cluster| {
+        {
+            let mut slab = [0; 64 * 1024];
+            {
+                let mut storage = SessionKitStorage::uninit();
+                let cluster = storage.init();
                 let global = g::par(
                     g::send::<0, 1, Msg<30, u32>>(),
                     g::send::<0, 2, Msg<31, u32>>(),
@@ -356,12 +388,12 @@ fn completed_parallel_drop_accepts_both_committed_arm_orders() {
                 let sender_program = project::<0>(&global);
                 let left_program = project::<1>(&global);
                 let right_program = project::<2>(&global);
-                let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+                let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
                 let sid = SessionId::new(930);
                 let mut sender = rv.enter(sid, &sender_program).unwrap();
                 let mut left = rv.enter(sid, &left_program).unwrap();
                 let mut right = rv.enter(sid, &right_program).unwrap();
-                futures::executor::block_on(async {
+                (async {
                     if right_first {
                         sender.send::<Msg<31, u32>>(&31).await.unwrap();
                         sender.send::<Msg<30, u32>>(&30).await.unwrap();
@@ -374,17 +406,22 @@ fn completed_parallel_drop_accepts_both_committed_arm_orders() {
                     drop(sender);
                     assert_eq!(left.recv::<Msg<30, u32>>().await.unwrap(), 30);
                     assert_eq!(right.recv::<Msg<31, u32>>().await.unwrap(), 31);
-                });
-            });
-        });
+                })
+                .await;
+            };
+        };
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn incomplete_parallel_drop_faults_each_remaining_arm() {
+async fn incomplete_parallel_drop_faults_each_remaining_arm() {
     for completed_arm in [None, Some(false), Some(true)] {
-        with_runtime_workspace(|slab| {
-            with_resident_tls_ref(&TEST_SLOT, |cluster| {
+        {
+            let mut slab = [0; 64 * 1024];
+            {
+                let mut storage = SessionKitStorage::uninit();
+                let cluster = storage.init();
                 let global = g::par(
                     g::send::<0, 1, Msg<32, u32>>(),
                     g::send::<0, 2, Msg<33, u32>>(),
@@ -392,12 +429,12 @@ fn incomplete_parallel_drop_faults_each_remaining_arm() {
                 let sender_program = project::<0>(&global);
                 let left_program = project::<1>(&global);
                 let right_program = project::<2>(&global);
-                let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+                let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
                 let sid = SessionId::new(932);
                 let mut sender = rv.enter(sid, &sender_program).unwrap();
                 let mut left = rv.enter(sid, &left_program).unwrap();
                 let mut right = rv.enter(sid, &right_program).unwrap();
-                futures::executor::block_on(async {
+                (async {
                     match completed_arm {
                         Some(true) => {
                             sender.send::<Msg<33, u32>>(&33).await.unwrap();
@@ -417,18 +454,23 @@ fn incomplete_parallel_drop_faults_each_remaining_arm() {
                     for error in [left_error, right_error] {
                         assert!(format!("{error:?}").contains("SessionFault(EndpointDropped)"));
                     }
-                });
-            });
-        });
+                })
+                .await;
+            };
+        };
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn parallel_drop_uses_committed_route_and_fresh_roll_visit() {
+async fn parallel_drop_uses_committed_route_and_fresh_roll_visit() {
     for complete_visits in 0..=3 {
         for begin_next_visit in [false, true] {
-            with_runtime_workspace(|slab| {
-                with_resident_tls_ref(&TEST_SLOT, |cluster| {
+            {
+                let mut slab = [0; 64 * 1024];
+                {
+                    let mut storage = SessionKitStorage::uninit();
+                    let cluster = storage.init();
                     let global = g::par(
                         g::seq(
                             g::send::<0, 1, Msg<36, ()>>(),
@@ -443,12 +485,12 @@ fn parallel_drop_uses_committed_route_and_fresh_roll_visit() {
                     let sender_program = project::<0>(&global);
                     let peer_program = project::<1>(&global);
                     let other_program = project::<2>(&global);
-                    let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+                    let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
                     let sid = SessionId::new(936);
                     let mut sender = rv.enter(sid, &sender_program).unwrap();
                     let mut peer = rv.enter(sid, &peer_program).unwrap();
                     let mut other = rv.enter(sid, &other_program).unwrap();
-                    futures::executor::block_on(async {
+                    (async {
                         sender.send::<Msg<39, ()>>(&()).await.unwrap();
                         for visit in 0..complete_visits {
                             sender.send::<Msg<36, ()>>(&()).await.unwrap();
@@ -474,9 +516,10 @@ fn parallel_drop_uses_committed_route_and_fresh_roll_visit() {
                             // Drop must leave the queued sibling consumable.
                             other.recv::<Msg<39, ()>>().await.unwrap();
                         }
-                    });
-                });
-            });
+                    })
+                    .await;
+                };
+            };
         }
     }
 }
@@ -509,7 +552,7 @@ fn unrelated_rolled_route_then_parallel_sends() -> impl hibana::runtime::program
     )
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ParallelCompletionProbe {
     Complete,
     MisplacedOffer,
@@ -518,23 +561,59 @@ enum ParallelCompletionProbe {
     IncompleteDrop,
 }
 
-fn check_routefree_parallel_progress(
-    graph: &impl hibana::runtime::program::Projectable,
-    right_first: bool,
-    probe: ParallelCompletionProbe,
-) {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
-            let sender_program = project::<2>(graph);
-            let left_program = project::<3>(graph);
-            let right_program = project::<4>(graph);
-            let transport = TestTransport::new();
-            let rv = cluster.rendezvous(slab, transport.clone()).unwrap();
-            let sid = SessionId::new(940);
-            let mut sender = rv.enter(sid, &sender_program).unwrap();
-            let mut left = rv.enter(sid, &left_program).unwrap();
-            let mut right = rv.enter(sid, &right_program).unwrap();
-            futures::executor::block_on(async {
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn routefree_parallel_progress_preserves_all_completion_and_fault_cases() {
+    let direct = routefree_parallel_sends();
+    let shifted = unrelated_route_then_parallel_sends();
+    let rolled = unrelated_rolled_route_then_parallel_sends();
+    let programs = [
+        (
+            "direct",
+            project::<2>(&direct),
+            project::<3>(&direct),
+            project::<4>(&direct),
+            project::<0>(&direct),
+        ),
+        (
+            "shifted",
+            project::<2>(&shifted),
+            project::<3>(&shifted),
+            project::<4>(&shifted),
+            project::<0>(&shifted),
+        ),
+        (
+            "rolled",
+            project::<2>(&rolled),
+            project::<3>(&rolled),
+            project::<4>(&rolled),
+            project::<0>(&rolled),
+        ),
+    ];
+    // All previous27 cases plus the three left-first misplaced-offer cases.
+    for (name, sender_program, left_program, right_program, observer_program) in &programs {
+        for right_first in [false, true] {
+            for probe in [
+                ParallelCompletionProbe::Complete,
+                ParallelCompletionProbe::MisplacedOffer,
+                ParallelCompletionProbe::ReplaySend,
+                ParallelCompletionProbe::ReplayRecv,
+                ParallelCompletionProbe::IncompleteDrop,
+            ] {
+                eprintln!("source={name}, right_first={right_first}, probe={probe:?}");
+
+                {
+                    let mut slab = [0; 64 * 1024];
+                    {
+                        let mut storage = SessionKitStorage::uninit();
+                        let cluster = storage.init();
+                        let transport = TestTransport::new();
+                        let rv = cluster.rendezvous(&mut slab, transport.clone()).unwrap();
+                        let sid = SessionId::new(940);
+                        let mut sender = rv.enter(sid, sender_program).unwrap();
+                        let mut left = rv.enter(sid, left_program).unwrap();
+                        let mut right = rv.enter(sid, right_program).unwrap();
+                        (async {
                 if right_first {
                     sender.send::<Msg<41, u32>>(&41).await.unwrap();
                     assert_eq!(right.recv::<Msg<41, u32>>().await.unwrap(), 41);
@@ -611,141 +690,46 @@ fn check_routefree_parallel_progress(
                         );
                     }
                 }
-            });
-            assert!(transport.queue_is_empty());
-            drop(sender);
-            match probe {
-                ParallelCompletionProbe::Complete => {
-                    // Existing session admission rejects a faulted generation.
-                    // Another role can enter only if Drop left it healthy.
-                    let observer_program = project::<0>(graph);
-                    drop(rv.enter(sid, &observer_program).unwrap());
-                }
-                ParallelCompletionProbe::MisplacedOffer
-                | ParallelCompletionProbe::ReplaySend
-                | ParallelCompletionProbe::ReplayRecv
-                | ParallelCompletionProbe::IncompleteDrop => {
-                    let error = if right_first {
-                        futures::executor::block_on(left.recv::<Msg<40, u32>>()).unwrap_err()
-                    } else {
-                        futures::executor::block_on(right.recv::<Msg<41, u32>>()).unwrap_err()
+            }).await;
+                        assert!(transport.queue_is_empty());
+                        drop(sender);
+                        match probe {
+                            ParallelCompletionProbe::Complete => {
+                                // Existing session admission rejects a faulted generation.
+                                // Another role can enter only if Drop left it healthy.
+                                drop(rv.enter(sid, observer_program).unwrap());
+                            }
+                            ParallelCompletionProbe::MisplacedOffer
+                            | ParallelCompletionProbe::ReplaySend
+                            | ParallelCompletionProbe::ReplayRecv
+                            | ParallelCompletionProbe::IncompleteDrop => {
+                                let error = if right_first {
+                                    (left.recv::<Msg<40, u32>>()).await.unwrap_err()
+                                } else {
+                                    (right.recv::<Msg<41, u32>>()).await.unwrap_err()
+                                };
+                                assert!(format!("{error:?}").contains("SessionFault"));
+                                if matches!(probe, ParallelCompletionProbe::IncompleteDrop) {
+                                    assert!(format!("{error:?}").contains("EndpointDropped"));
+                                }
+                            }
+                        }
                     };
-                    assert!(format!("{error:?}").contains("SessionFault"));
-                    if matches!(probe, ParallelCompletionProbe::IncompleteDrop) {
-                        assert!(format!("{error:?}").contains("EndpointDropped"));
-                    }
-                }
+                };
             }
-        });
-    });
-}
-
-#[test]
-fn routefree_parallel_drop_faults_incomplete_sibling_after_unrelated_route() {
-    for right_first in [false, true] {
-        check_routefree_parallel_progress(
-            &routefree_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::IncompleteDrop,
-        );
-        check_routefree_parallel_progress(
-            &unrelated_route_then_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::IncompleteDrop,
-        );
-    }
-}
-
-#[test]
-fn routefree_parallel_misplaced_offer_returns_phase_invariant_without_panicking() {
-    check_routefree_parallel_progress(
-        &routefree_parallel_sends(),
-        true,
-        ParallelCompletionProbe::MisplacedOffer,
-    );
-    check_routefree_parallel_progress(
-        &unrelated_route_then_parallel_sends(),
-        true,
-        ParallelCompletionProbe::MisplacedOffer,
-    );
-}
-
-#[test]
-fn routefree_parallel_completion_preserves_both_orders_after_unrelated_route() {
-    for right_first in [false, true] {
-        check_routefree_parallel_progress(
-            &routefree_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::Complete,
-        );
-        check_routefree_parallel_progress(
-            &unrelated_route_then_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::Complete,
-        );
-    }
-}
-
-#[test]
-fn routefree_parallel_completed_send_cannot_replay_before_sibling() {
-    for right_first in [false, true] {
-        check_routefree_parallel_progress(
-            &routefree_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::ReplaySend,
-        );
-        check_routefree_parallel_progress(
-            &unrelated_route_then_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::ReplaySend,
-        );
-    }
-}
-
-#[test]
-fn routefree_parallel_rolled_remote_authority_does_not_change_local_progress() {
-    for right_first in [false, true] {
-        for probe in [
-            ParallelCompletionProbe::Complete,
-            ParallelCompletionProbe::ReplaySend,
-            ParallelCompletionProbe::ReplayRecv,
-            ParallelCompletionProbe::IncompleteDrop,
-        ] {
-            check_routefree_parallel_progress(
-                &unrelated_rolled_route_then_parallel_sends(),
-                right_first,
-                probe,
-            );
         }
     }
-    check_routefree_parallel_progress(
-        &unrelated_rolled_route_then_parallel_sends(),
-        true,
-        ParallelCompletionProbe::MisplacedOffer,
-    );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn routefree_parallel_completed_receive_rejects_replay_without_waiting() {
-    for right_first in [false, true] {
-        check_routefree_parallel_progress(
-            &routefree_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::ReplayRecv,
-        );
-        check_routefree_parallel_progress(
-            &unrelated_route_then_parallel_sends(),
-            right_first,
-            ParallelCompletionProbe::ReplayRecv,
-        );
-    }
-}
-
-#[test]
-fn filtered_route_shift_preserves_passive_child_and_full_commit_chain() {
+async fn filtered_route_shift_preserves_passive_child_and_full_commit_chain() {
     for choose_inner_right in [false, true] {
-        with_runtime_workspace(|slab| {
-            with_resident_tls_ref(&TEST_SLOT, |cluster| {
+        {
+            let mut slab = [0; 64 * 1024];
+            {
+                let mut storage = SessionKitStorage::uninit();
+                let cluster = storage.init();
                 // The first route is unrelated to roles 2/3. Their retained
                 // outer/inner scopes move from slots 1/2 to slots 0/1.
                 let graph = g::seq(
@@ -763,11 +747,11 @@ fn filtered_route_shift_preserves_passive_child_and_full_commit_chain() {
                 );
                 let sender_program = project::<2>(&graph);
                 let receiver_program = project::<3>(&graph);
-                let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+                let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
                 let sid = SessionId::new(1941);
                 let mut sender = rv.enter(sid, &sender_program).unwrap();
                 let mut receiver = rv.enter(sid, &receiver_program).unwrap();
-                futures::executor::block_on(async {
+                (async {
                     if choose_inner_right {
                         sender.send::<Msg<53, u32>>(&53).await.unwrap();
                         drop(sender);
@@ -781,23 +765,28 @@ fn filtered_route_shift_preserves_passive_child_and_full_commit_chain() {
                         assert_eq!(branch.label(), 52);
                         assert_eq!(branch.recv::<Msg<52, u32>>().await.unwrap(), 52);
                     }
-                });
+                })
+                .await;
                 drop(receiver);
-            });
-        });
+            };
+        };
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn filtered_entirely_empty_role_drops_without_visit_storage() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+async fn filtered_entirely_empty_role_drops_without_visit_storage() {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let graph = g::route(
                 g::send::<0, 2, Msg<55, ()>>(),
                 g::send::<0, 2, Msg<56, ()>>(),
             );
             let program = project::<1>(&graph);
-            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+            let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
             let sid = SessionId::new(1942);
             let sender_program = project::<0>(&graph);
             let receiver_program = project::<2>(&graph);
@@ -805,10 +794,11 @@ fn filtered_entirely_empty_role_drops_without_visit_storage() {
             let mut receiver = rv.enter(sid, &receiver_program).unwrap();
             let endpoint = rv.enter(sid, &program).unwrap();
             drop(endpoint);
-            futures::executor::block_on(async {
+            (async {
                 sender.send::<Msg<55, ()>>(&()).await.unwrap();
                 receiver.recv::<Msg<55, ()>>().await.unwrap();
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
 }

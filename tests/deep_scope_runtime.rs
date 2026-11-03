@@ -1,8 +1,6 @@
 #![recursion_limit = "512"]
 
 mod common;
-#[path = "support/runtime.rs"]
-mod runtime_support;
 
 use common::TestTransport;
 use hibana::{
@@ -41,12 +39,13 @@ fn deep_active_scope_controller_program() -> RoleProgram<0> {
 
 #[test]
 fn active_scope_depth_above_128_enters_public_sessionkit_path() {
-    runtime_support::with_runtime_workspace(|slab| {
+    {
+        let mut slab = vec![0; 1024 * 1024];
         let transport = TestTransport::new();
         let mut kit_storage = DeepScopeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(slab, transport)
+            .rendezvous(&mut slab, transport)
             .expect("register deep-scope rendezvous");
 
         let controller = rv
@@ -56,5 +55,5 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
             )
             .expect("enter role with >128 active nested scopes");
         core::hint::black_box(&controller);
-    });
+    };
 }

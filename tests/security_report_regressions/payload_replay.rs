@@ -9,7 +9,7 @@ async fn a_replayed_bool_frame_cannot_impersonate_the_following_u8()
         g::send::<0, 1, Msg<1, bool>>(),
         g::send::<0, 1, Msg<2, u8>>(),
     );
-    let captured = Rc::new(RefCell::new(Vec::new()));
+    let captured = core::cell::Cell::new(Vec::new());
     let mut slab = [0; 8192];
     let mut storage = SessionKitStorage::<RecordingCarrier>::uninit();
     let rv = storage
@@ -18,7 +18,7 @@ async fn a_replayed_bool_frame_cannot_impersonate_the_following_u8()
             &mut slab,
             RecordingCarrier {
                 inner: TestTransport::new(),
-                frames: captured.clone(),
+                frames: &captured,
             },
         )
         .unwrap();
@@ -28,7 +28,7 @@ async fn a_replayed_bool_frame_cannot_impersonate_the_following_u8()
         sender.send::<Msg<1, bool>>(&true).await.unwrap();
         sender.send::<Msg<2, u8>>(&99).await.unwrap();
     };
-    let frames = captured.borrow().clone();
+    let frames = captured.take();
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0].lane, frames[1].lane);
     assert_ne!(frames[0].label, frames[1].label);

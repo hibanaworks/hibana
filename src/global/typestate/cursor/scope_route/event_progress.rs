@@ -371,7 +371,7 @@ mod tests {
     fn nested_owned_prefix_classification_matches_the_source_predecessor_set() {
         type Loan<'r> = g::Msg<1, Endpoint<'r, 3>>;
         let global = g::seq(
-            g::send::<0, 1, Loan<'_>>(),
+            g::send::<0, 1, Loan>(),
             g::seq(
                 g::par(
                     g::route(
@@ -389,7 +389,7 @@ mod tests {
                         g::send::<1, 2, g::Msg<7, ()>>(),
                     ),
                 ),
-                g::send::<1, 0, Loan<'_>>(),
+                g::send::<1, 0, Loan>(),
             ),
         )
         .roll();
@@ -488,10 +488,7 @@ mod tests {
         type Loan<'r> = g::Msg<2, Endpoint<'r, 3>>;
         let global = g::par(
             g::send::<0, 0, g::Msg<0, ()>>().roll(),
-            g::seq(
-                g::send::<0, 3, g::Msg<1, ()>>(),
-                g::send::<1, 0, Loan<'_>>(),
-            ),
+            g::seq(g::send::<0, 3, g::Msg<1, ()>>(), g::send::<1, 0, Loan>()),
         );
         let program = project::<1>(&global);
         super::super::super::validated_metadata_tests::with_rows(

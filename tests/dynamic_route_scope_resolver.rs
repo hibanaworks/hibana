@@ -1,19 +1,18 @@
 mod common;
 #[path = "support/dynamic_route_scope.rs"]
 mod dynamic_route_scope;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use common::TestTransport;
 use dynamic_route_scope::*;
 use hibana::{
     g::{self, Msg},
     runtime::{
+        SessionKitStorage,
         ids::SessionId,
         program::{RoleProgram, project},
-        resolver::{DecisionArm, ResolverRef},
+        resolver::ResolverRef,
         tap,
     },
 };
@@ -52,88 +51,18 @@ fn narrow_roll_topology_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
-fn assert_same_label_route_send_uses_selected_arm<const RESOLVER: u16>(
-    resolver_arm: &'static DecisionArm,
-    expected_arm: u32,
-    value: u32,
-) {
-    with_runtime_workspace(|slab| {
-        let transport = TestTransport::new();
-        let sid = SessionId::new(0x0009_1500 + expected_arm);
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            let role0 = same_label_outbound_program_for::<0, RESOLVER>();
-            let role1 = same_label_outbound_program_for::<1, RESOLVER>();
-            rv.set_resolver(
-                &role0,
-                ResolverRef::<RESOLVER>::decision_state(resolver_arm, choose_arm),
-            )
-            .expect("install sender resolver");
-            let mut origin = rv.enter(sid, &role0).expect("attach origin");
-            let mut peer = rv.enter(sid, &role1).expect("attach peer");
-
-            futures::executor::block_on(async {
-                if expected_arm == 0 {
-                    origin
-                        .send::<Msg<SAME_LABEL, u32>>(&value)
-                        .await
-                        .expect("same-label left-schema route send");
-                    assert_eq!(
-                        peer.recv::<Msg<SAME_LABEL, u32>>()
-                            .await
-                            .expect("peer receives selected left schema"),
-                        value
-                    );
-                } else {
-                    let value = u64::from(value);
-                    origin
-                        .send::<Msg<SAME_LABEL, u64>>(&value)
-                        .await
-                        .expect("same-label right-schema route send");
-                    assert_eq!(
-                        peer.recv::<Msg<SAME_LABEL, u64>>()
-                            .await
-                            .expect("peer receives selected right schema"),
-                        value
-                    );
-                }
-            });
-
-            rv.tap().collect::<Vec<_>>()
-        });
-
-        let audits = resolver_audits(&events);
-        assert_eq!(
-            audits.len(),
-            1,
-            "same-label send must audit one resolver decision: {events:?}"
-        );
-        assert_eq!(resolver_id(audits[0]), RESOLVER as u32);
-
-        let selections = route_arm_selections(&events);
-        assert!(
-            !selections.is_empty(),
-            "same-label send must emit selected route arm evidence: {events:?}"
-        );
-        assert!(
-            selections
-                .iter()
-                .all(|event| selected_arm(*event) == expected_arm),
-            "route selection evidence must name only selected arm {expected_arm}: {selections:?}"
-        );
-    });
-}
-
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn left_decision_materializes_nested_parallel_arm_once() {
-    with_runtime_workspace(|slab| {
+async fn left_decision_materializes_nested_parallel_arm_once() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1001);
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = program::<0>();
             let role1 = program::<1>();
@@ -147,7 +76,7 @@ fn left_decision_materializes_nested_parallel_arm_once() {
             let mut peer_a = rv.enter(sid, &role1).expect("attach peer a");
             let mut peer_b = rv.enter(sid, &role2).expect("attach peer b");
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<LEFT_A, u8>>(&11)
                     .await
@@ -174,44 +103,278 @@ fn left_decision_materializes_nested_parallel_arm_once() {
                     .send::<Msg<RIGHT, u8>>(&13)
                     .await
                     .expect_err("right arm must stay unmaterialized after left decision");
-            });
+            })
+            .await;
 
             rv.tap().collect::<Vec<_>>()
-        });
+        };
 
         let audits = resolver_audits(&events);
         assert_eq!(audits.len(), 1, "left decision must audit once: {events:?}");
         assert_eq!(resolver_id(audits[0]), ROUTE_RESOLVER as u32);
         assert_eq!(route_site(audits[0]), 0);
-    });
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn same_label_resolved_outbound_left_uses_left_schema() {
-    assert_same_label_route_send_uses_selected_arm::<SAME_LABEL_ROUTE_RESOLVER>(&LEFT_ARM, 0, 5501);
+async fn same_label_resolved_outbound_left_uses_left_schema() {
+    {
+        const RESOLVER: u16 = SAME_LABEL_ROUTE_RESOLVER;
+        let resolver_arm = &LEFT_ARM;
+        let expected_arm = 0;
+        let value = 5501;
+        {
+            let mut slab = [0; 64 * 1024];
+            let transport = TestTransport::new();
+            let sid = SessionId::new(0x0009_1500 + expected_arm);
+            let events = {
+                let mut storage = SessionKitStorage::uninit();
+                let cluster = storage.init();
+                let rv = cluster
+                    .rendezvous(&mut slab, transport)
+                    .expect("register rendezvous");
+                let role0 = same_label_outbound_program_for::<0, RESOLVER>();
+                let role1 = same_label_outbound_program_for::<1, RESOLVER>();
+                rv.set_resolver(
+                    &role0,
+                    ResolverRef::<RESOLVER>::decision_state(resolver_arm, choose_arm),
+                )
+                .expect("install sender resolver");
+                let mut origin = rv.enter(sid, &role0).expect("attach origin");
+                let mut peer = rv.enter(sid, &role1).expect("attach peer");
+
+                (async {
+                    if expected_arm == 0 {
+                        origin
+                            .send::<Msg<SAME_LABEL, u32>>(&value)
+                            .await
+                            .expect("same-label left-schema route send");
+                        assert_eq!(
+                            peer.recv::<Msg<SAME_LABEL, u32>>()
+                                .await
+                                .expect("peer receives selected left schema"),
+                            value
+                        );
+                    } else {
+                        let value = u64::from(value);
+                        origin
+                            .send::<Msg<SAME_LABEL, u64>>(&value)
+                            .await
+                            .expect("same-label right-schema route send");
+                        assert_eq!(
+                            peer.recv::<Msg<SAME_LABEL, u64>>()
+                                .await
+                                .expect("peer receives selected right schema"),
+                            value
+                        );
+                    }
+                })
+                .await;
+
+                rv.tap().collect::<Vec<_>>()
+            };
+
+            let audits = resolver_audits(&events);
+            assert_eq!(
+                audits.len(),
+                1,
+                "same-label send must audit one resolver decision: {events:?}"
+            );
+            assert_eq!(resolver_id(audits[0]), RESOLVER as u32);
+
+            let selections = route_arm_selections(&events);
+            assert!(
+                !selections.is_empty(),
+                "same-label send must emit selected route arm evidence: {events:?}"
+            );
+            assert!(
+                selections
+                    .iter()
+                    .all(|event| selected_arm(*event) == expected_arm),
+                "route selection evidence must name only selected arm {expected_arm}: {selections:?}"
+            );
+        };
+    }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn same_label_resolved_outbound_right_uses_right_schema() {
-    assert_same_label_route_send_uses_selected_arm::<SAME_LABEL_ROUTE_RESOLVER>(
-        &RIGHT_ARM, 1, 5502,
-    );
+async fn same_label_resolved_outbound_right_uses_right_schema() {
+    {
+        const RESOLVER: u16 = SAME_LABEL_ROUTE_RESOLVER;
+        let resolver_arm = &RIGHT_ARM;
+        let expected_arm = 1;
+        let value = 5502;
+        {
+            let mut slab = [0; 64 * 1024];
+            let transport = TestTransport::new();
+            let sid = SessionId::new(0x0009_1500 + expected_arm);
+            let events = {
+                let mut storage = SessionKitStorage::uninit();
+                let cluster = storage.init();
+                let rv = cluster
+                    .rendezvous(&mut slab, transport)
+                    .expect("register rendezvous");
+                let role0 = same_label_outbound_program_for::<0, RESOLVER>();
+                let role1 = same_label_outbound_program_for::<1, RESOLVER>();
+                rv.set_resolver(
+                    &role0,
+                    ResolverRef::<RESOLVER>::decision_state(resolver_arm, choose_arm),
+                )
+                .expect("install sender resolver");
+                let mut origin = rv.enter(sid, &role0).expect("attach origin");
+                let mut peer = rv.enter(sid, &role1).expect("attach peer");
+
+                (async {
+                    if expected_arm == 0 {
+                        origin
+                            .send::<Msg<SAME_LABEL, u32>>(&value)
+                            .await
+                            .expect("same-label left-schema route send");
+                        assert_eq!(
+                            peer.recv::<Msg<SAME_LABEL, u32>>()
+                                .await
+                                .expect("peer receives selected left schema"),
+                            value
+                        );
+                    } else {
+                        let value = u64::from(value);
+                        origin
+                            .send::<Msg<SAME_LABEL, u64>>(&value)
+                            .await
+                            .expect("same-label right-schema route send");
+                        assert_eq!(
+                            peer.recv::<Msg<SAME_LABEL, u64>>()
+                                .await
+                                .expect("peer receives selected right schema"),
+                            value
+                        );
+                    }
+                })
+                .await;
+
+                rv.tap().collect::<Vec<_>>()
+            };
+
+            let audits = resolver_audits(&events);
+            assert_eq!(
+                audits.len(),
+                1,
+                "same-label send must audit one resolver decision: {events:?}"
+            );
+            assert_eq!(resolver_id(audits[0]), RESOLVER as u32);
+
+            let selections = route_arm_selections(&events);
+            assert!(
+                !selections.is_empty(),
+                "same-label send must emit selected route arm evidence: {events:?}"
+            );
+            assert!(
+                selections
+                    .iter()
+                    .all(|event| selected_arm(*event) == expected_arm),
+                "route selection evidence must name only selected arm {expected_arm}: {selections:?}"
+            );
+        };
+    }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn maximum_resolver_id_runs_end_to_end() {
-    assert_same_label_route_send_uses_selected_arm::<{ u16::MAX }>(&LEFT_ARM, 0, 5503);
+async fn maximum_resolver_id_runs_end_to_end() {
+    {
+        const RESOLVER: u16 = u16::MAX;
+        let resolver_arm = &LEFT_ARM;
+        let expected_arm = 0;
+        let value = 5503;
+        {
+            let mut slab = [0; 64 * 1024];
+            let transport = TestTransport::new();
+            let sid = SessionId::new(0x0009_1500 + expected_arm);
+            let events = {
+                let mut storage = SessionKitStorage::uninit();
+                let cluster = storage.init();
+                let rv = cluster
+                    .rendezvous(&mut slab, transport)
+                    .expect("register rendezvous");
+                let role0 = same_label_outbound_program_for::<0, RESOLVER>();
+                let role1 = same_label_outbound_program_for::<1, RESOLVER>();
+                rv.set_resolver(
+                    &role0,
+                    ResolverRef::<RESOLVER>::decision_state(resolver_arm, choose_arm),
+                )
+                .expect("install sender resolver");
+                let mut origin = rv.enter(sid, &role0).expect("attach origin");
+                let mut peer = rv.enter(sid, &role1).expect("attach peer");
+
+                (async {
+                    if expected_arm == 0 {
+                        origin
+                            .send::<Msg<SAME_LABEL, u32>>(&value)
+                            .await
+                            .expect("same-label left-schema route send");
+                        assert_eq!(
+                            peer.recv::<Msg<SAME_LABEL, u32>>()
+                                .await
+                                .expect("peer receives selected left schema"),
+                            value
+                        );
+                    } else {
+                        let value = u64::from(value);
+                        origin
+                            .send::<Msg<SAME_LABEL, u64>>(&value)
+                            .await
+                            .expect("same-label right-schema route send");
+                        assert_eq!(
+                            peer.recv::<Msg<SAME_LABEL, u64>>()
+                                .await
+                                .expect("peer receives selected right schema"),
+                            value
+                        );
+                    }
+                })
+                .await;
+
+                rv.tap().collect::<Vec<_>>()
+            };
+
+            let audits = resolver_audits(&events);
+            assert_eq!(
+                audits.len(),
+                1,
+                "same-label send must audit one resolver decision: {events:?}"
+            );
+            assert_eq!(resolver_id(audits[0]), RESOLVER as u32);
+
+            let selections = route_arm_selections(&events);
+            assert!(
+                !selections.is_empty(),
+                "same-label send must emit selected route arm evidence: {events:?}"
+            );
+            assert!(
+                selections
+                    .iter()
+                    .all(|event| selected_arm(*event) == expected_arm),
+                "route selection evidence must name only selected arm {expected_arm}: {selections:?}"
+            );
+        };
+    }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolved_route_send_calls_resolver_once_per_progress() {
+async fn resolved_route_send_calls_resolver_once_per_progress() {
     reset_counters();
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1601);
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program_for::<0, COUNTING_ROUTE_RESOLVER>();
             let role1 = same_label_outbound_program_for::<1, COUNTING_ROUTE_RESOLVER>();
@@ -223,7 +386,7 @@ fn resolved_route_send_calls_resolver_once_per_progress() {
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<SAME_LABEL, u32>>(&1601)
                     .await
@@ -234,9 +397,10 @@ fn resolved_route_send_calls_resolver_once_per_progress() {
                         .expect("selected peer recv"),
                     1601
                 );
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
     assert_eq!(
         read_counters().counting_calls,
         1,
@@ -244,15 +408,19 @@ fn resolved_route_send_calls_resolver_once_per_progress() {
     );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
-    with_runtime_workspace(|slab| {
+async fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let left_sid = SessionId::new(0x0009_1606);
         let right_sid = SessionId::new(0x0009_1607);
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let left_role0 = same_label_outbound_program_for::<0, SAME_LABEL_ROUTE_RESOLVER>();
             let left_role1 = same_label_outbound_program_for::<1, SAME_LABEL_ROUTE_RESOLVER>();
@@ -279,7 +447,7 @@ fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
                 .enter(right_sid, &right_role1)
                 .expect("attach right peer");
 
-            futures::executor::block_on(async {
+            (async {
                 left_origin
                     .send::<Msg<SAME_LABEL, u32>>(&1606)
                     .await
@@ -303,20 +471,25 @@ fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
                         .expect("right resolver peer receives"),
                     1607
                 );
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
-    with_runtime_workspace(|slab| {
+async fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let nested_sid = SessionId::new(0x0009_1608);
         let direct_sid = SessionId::new(0x0009_1609);
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let nested_role0 = program::<0>();
             let nested_role1 = program::<1>();
@@ -351,7 +524,7 @@ fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
                 .enter(direct_sid, &direct_role1)
                 .expect("attach direct peer");
 
-            futures::executor::block_on(async {
+            (async {
                 nested_origin
                     .send::<Msg<LEFT_A, u8>>(&18)
                     .await
@@ -375,22 +548,27 @@ fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
                         .expect("direct right peer receives"),
                     1609
                 );
-            });
+            })
+            .await;
 
             core::hint::black_box(&nested_other);
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority() {
-    with_runtime_workspace(|slab| {
+async fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let wide_sid = SessionId::new(0x0009_1610);
         let narrow_sid = SessionId::new(0x0009_1611);
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let wide_role0 = wide_roll_topology_program::<0>();
             let wide_role1 = wide_roll_topology_program::<1>();
@@ -417,7 +595,7 @@ fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority()
                 .enter(narrow_sid, &narrow_role1)
                 .expect("attach narrow peer");
 
-            futures::executor::block_on(async {
+            (async {
                 wide_origin
                     .send::<Msg<TOPOLOGY_LEFT, u32>>(&1610)
                     .await
@@ -441,20 +619,25 @@ fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority()
                         .expect("narrow-roll right peer receives"),
                     1611
                 );
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn stateful_send_resolver_is_not_evaluated_twice() {
+async fn stateful_send_resolver_is_not_evaluated_twice() {
     reset_counters();
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1602);
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program_for::<0, FLIP_ROUTE_RESOLVER>();
             let role1 = same_label_outbound_program_for::<1, FLIP_ROUTE_RESOLVER>();
@@ -466,7 +649,7 @@ fn stateful_send_resolver_is_not_evaluated_twice() {
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            (async {
                 origin.send::<Msg<SAME_LABEL, u32>>(&1602).await.expect(
                     "first resolver decision selects left and must not be rechecked as right",
                 );
@@ -476,9 +659,10 @@ fn stateful_send_resolver_is_not_evaluated_twice() {
                         .expect("left recv"),
                     1602
                 );
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
     assert_eq!(
         read_counters().flip_calls,
         1,
@@ -486,15 +670,19 @@ fn stateful_send_resolver_is_not_evaluated_twice() {
     );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn dynamic_resolution_seals_runtime_local_membership_before_evaluation() {
+async fn dynamic_resolution_seals_runtime_local_membership_before_evaluation() {
     reset_counters();
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1603);
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program_for::<0, FLIP_ROUTE_RESOLVER>();
             let role1 = same_label_outbound_program_for::<1, FLIP_ROUTE_RESOLVER>();
@@ -505,7 +693,8 @@ fn dynamic_resolution_seals_runtime_local_membership_before_evaluation() {
             .expect("install flipping resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
 
-            futures::executor::block_on(origin.send::<Msg<SAME_LABEL, u32>>(&1603))
+            (origin.send::<Msg<SAME_LABEL, u32>>(&1603))
+                .await
                 .expect("first resolver decision selects left");
 
             let error = match rv.enter(sid, &role1) {
@@ -516,8 +705,8 @@ fn dynamic_resolution_seals_runtime_local_membership_before_evaluation() {
                 format!("{error:?}").contains("session-membership-sealed"),
                 "late attach must fail at the sealed membership boundary: {error:?}"
             );
-        });
-    });
+        };
+    };
     assert_eq!(
         read_counters().flip_calls,
         1,
@@ -525,14 +714,18 @@ fn dynamic_resolution_seals_runtime_local_membership_before_evaluation() {
     );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_send_after_selected_prefix_audits_only_new_inner_decision() {
-    with_runtime_workspace(|slab| {
+async fn nested_send_after_selected_prefix_audits_only_new_inner_decision() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1605);
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = prefix_then_nested_resolver_program::<0>();
             let role1 = prefix_then_nested_resolver_program::<1>();
@@ -549,7 +742,7 @@ fn nested_send_after_selected_prefix_audits_only_new_inner_decision() {
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<PREFIX_LEFT, u8>>(&1)
                     .await
@@ -570,10 +763,11 @@ fn nested_send_after_selected_prefix_audits_only_new_inner_decision() {
                         .expect("inner selected recv"),
                     2
                 );
-            });
+            })
+            .await;
 
             rv.tap().collect::<Vec<_>>()
-        });
+        };
 
         let mut ids = resolver_ids(&events);
         ids.sort_unstable();
@@ -585,18 +779,22 @@ fn nested_send_after_selected_prefix_audits_only_new_inner_decision() {
             ],
             "send inside an already selected route must not re-audit the prefix resolver: {events:?}"
         );
-    });
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn resolver_reject_does_not_encode_or_stage_send_payload() {
+async fn resolver_reject_does_not_encode_or_stage_send_payload() {
     reset_counters();
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1603);
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = same_label_reject_payload_program::<0>();
             rv.set_resolver(
@@ -606,25 +804,25 @@ fn resolver_reject_does_not_encode_or_stage_send_payload() {
             .expect("install rejecting resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
 
-            let error = futures::executor::block_on(
-                origin.send::<Msg<SAME_LABEL, RejectCountedPayload>>(&RejectCountedPayload(1603)),
-            )
+            let error = (origin
+                .send::<Msg<SAME_LABEL, RejectCountedPayload>>(&RejectCountedPayload(1603)))
+            .await
             .expect_err("resolver reject must fail the send before staging payload");
             let rendered = format!("{error:?}");
             assert!(
                 rendered.contains("ResolverReject"),
                 "resolver reject must remain visible in Debug: {rendered}"
             );
-            let followup = futures::executor::block_on(
-                origin.send::<Msg<SAME_LABEL, RejectCountedPayload>>(&RejectCountedPayload(1604)),
-            )
+            let followup = (origin
+                .send::<Msg<SAME_LABEL, RejectCountedPayload>>(&RejectCountedPayload(1604)))
+            .await
             .expect_err("resolver rejection must poison the same endpoint generation");
             assert!(
                 format!("{followup:?}").contains("SessionFault"),
                 "a poisoned endpoint must reject before resolver or payload re-entry: {followup:?}"
             );
             rv.tap().collect::<Vec<_>>()
-        });
+        };
 
         assert_eq!(
             read_counters().reject_calls,
@@ -647,18 +845,22 @@ fn resolver_reject_does_not_encode_or_stage_send_payload() {
             route_arm_selections(&events).is_empty(),
             "rejected send must not publish route selection: {events:?}"
         );
-    });
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
+async fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
     reset_counters();
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1604);
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program_for::<0, DROP_ROUTE_RESOLVER>();
             let role1 = same_label_outbound_program_for::<1, DROP_ROUTE_RESOLVER>();
@@ -688,7 +890,7 @@ fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
                 "dropping before poll must not publish send progress evidence: {after_drop:?}"
             );
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<SAME_LABEL, u32>>(&value)
                     .await
@@ -699,9 +901,10 @@ fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
                         .expect("left recv after reset"),
                     value
                 );
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
     assert_eq!(
         read_counters().drop_calls,
         1,
@@ -709,14 +912,18 @@ fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
     );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_left_route_evaluates_outer_and_inner_resolvers_by_scope() {
-    with_runtime_workspace(|slab| {
+async fn nested_left_route_evaluates_outer_and_inner_resolvers_by_scope() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1003);
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = nested_resolver_program::<0>();
             let role1 = nested_resolver_program::<1>();
@@ -733,7 +940,7 @@ fn nested_left_route_evaluates_outer_and_inner_resolvers_by_scope() {
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<NESTED_LEFT, u8>>(&41)
                     .await
@@ -746,10 +953,11 @@ fn nested_left_route_evaluates_outer_and_inner_resolvers_by_scope() {
                         .expect("nested left recv"),
                     41
                 );
-            });
+            })
+            .await;
 
             rv.tap().collect::<Vec<_>>()
-        });
+        };
 
         let mut ids = resolver_ids(&events);
         ids.sort_unstable();
@@ -767,17 +975,21 @@ fn nested_left_route_evaluates_outer_and_inner_resolvers_by_scope() {
             2,
             "outer and inner route scopes must audit distinct route sites: {events:?}"
         );
-    });
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_outer_right_does_not_evaluate_inner_resolver() {
-    with_runtime_workspace(|slab| {
+async fn nested_outer_right_does_not_evaluate_inner_resolver() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1004);
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = nested_resolver_program::<0>();
             let role1 = nested_resolver_program::<1>();
@@ -794,7 +1006,7 @@ fn nested_outer_right_does_not_evaluate_inner_resolver() {
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<NESTED_OUTER_RIGHT, u8>>(&43)
                     .await
@@ -807,10 +1019,11 @@ fn nested_outer_right_does_not_evaluate_inner_resolver() {
                         .expect("outer right recv"),
                     43
                 );
-            });
+            })
+            .await;
 
             rv.tap().collect::<Vec<_>>()
-        });
+        };
 
         let ids = resolver_ids(&events);
         assert_eq!(
@@ -818,17 +1031,21 @@ fn nested_outer_right_does_not_evaluate_inner_resolver() {
             [OUTER_ROUTE_RESOLVER as u32],
             "outer right must not evaluate the inner route resolver: {events:?}"
         );
-    });
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn right_decision_rejects_nested_parallel_left_arm() {
-    with_runtime_workspace(|slab| {
+async fn right_decision_rejects_nested_parallel_left_arm() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
         let sid = SessionId::new(0x0009_1002);
-        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        let events = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = program::<0>();
             let role1 = program::<1>();
@@ -840,7 +1057,7 @@ fn right_decision_rejects_nested_parallel_left_arm() {
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<RIGHT, u8>>(&21)
                     .await
@@ -853,10 +1070,11 @@ fn right_decision_rejects_nested_parallel_left_arm() {
                     .send::<Msg<LEFT_A, u8>>(&22)
                     .await
                     .expect_err("left arm must stay unmaterialized after right decision");
-            });
+            })
+            .await;
 
             rv.tap().collect::<Vec<_>>()
-        });
+        };
 
         let audits = resolver_audits(&events);
         assert_eq!(
@@ -865,5 +1083,5 @@ fn right_decision_rejects_nested_parallel_left_arm() {
             "right decision must audit once: {events:?}"
         );
         assert_eq!(resolver_id(audits[0]), ROUTE_RESOLVER as u32);
-    });
+    };
 }

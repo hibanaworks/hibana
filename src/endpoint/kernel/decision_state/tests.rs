@@ -151,7 +151,7 @@ fn rooted_route_chain_prefixes_match_independent_membership_and_merging() {
 
     type Loan<'r> = Msg<6, Endpoint<'r, 2>>;
     let delegated = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::route(
                 g::seq(g::send::<2, 3, Msg<7, ()>>(), g::send::<3, 2, Msg<8, ()>>()),
@@ -160,7 +160,7 @@ fn rooted_route_chain_prefixes_match_independent_membership_and_merging() {
                     g::send::<3, 2, Msg<10, ()>>(),
                 ),
             ),
-            g::send::<1, 0, Loan<'_>>(),
+            g::send::<1, 0, Loan>(),
         ),
     )
     .roll();

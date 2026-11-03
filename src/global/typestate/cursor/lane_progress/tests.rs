@@ -747,7 +747,7 @@ fn excluded_arm_jumps_match_raw_rows_across_nested_sparse_lanes_and_views() {
 
     type Loan<'r> = Msg<88, Endpoint<'r, 2>>;
     let delegated = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::route(
             g::seq(
                 g::send::<2, 1, Msg<89, ()>>(),
@@ -778,7 +778,7 @@ fn alternative_co_resident_views_each_have_their_own_potential_lane_head() {
             g::send::<0, 1, Msg<110, ()>>(),
             g::send::<0, 3, Msg<111, ()>>(),
         ),
-        g::seq(g::send::<1, 2, Loan<'_>>(), g::send::<0, 3, Msg<113, ()>>()),
+        g::seq(g::send::<1, 2, Loan>(), g::send::<0, 3, Msg<113, ()>>()),
     );
     let rows = project::<1>(&global).role_image_ref();
     super::super::validated_metadata_tests::with_rows(rows, |cursor| {
@@ -863,7 +863,7 @@ fn compare_view_lane_lower_bounds(rows: &RoleImageRef) {
 fn retained_view_lane_lower_bounds_match_raw_source_facets_and_omitted_indices() {
     type Loan<'r> = Msg<93, Endpoint<'r, 2>>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::par(
             g::route(
                 g::seq(

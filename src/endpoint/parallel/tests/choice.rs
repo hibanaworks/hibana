@@ -449,7 +449,7 @@ async fn a_resource_view_can_preview_a_message_from_its_current_owner()
     type Notice = g::Msg<202, ()>;
     type Ping = g::Msg<203, ()>;
     let global = g::route(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::par(g::send::<0, 3, Notice>(), g::send::<0, 1, Ping>()),
     )
     .resolve::<201>();

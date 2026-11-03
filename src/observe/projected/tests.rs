@@ -4,7 +4,6 @@ use crate::{
     runtime::{SessionKitStorage, ids::SessionId, program::project},
     test_support::transport::TestTransport,
 };
-use futures::executor::block_on;
 use std::vec::Vec;
 
 #[test]
@@ -229,8 +228,9 @@ fn local_and_alternative_rows_keep_their_distinct_wire_positions() {
     }
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
+async fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
     type Message = g::Msg<231, u32>;
     let p = g::send::<0, 1, Message>();
     let p = g::seq(p, p);
@@ -280,17 +280,14 @@ fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
         assert_eq!((send.arg0(), send.arg1()), (recv.arg0(), recv.arg1()));
         assert_eq!(send.arg0() >> 16, ordinal as u32);
         assert_eq!(send.arg0() as u8, 231);
-        block_on(sender.send::<Message>(&(ordinal as u32))).unwrap();
+        sender.send::<Message>(&(ordinal as u32)).await.unwrap();
         let (header, _) = transport.queued_frame(1);
         let bytes = header.bytes();
         assert_eq!(u16::from_be_bytes([bytes[7], bytes[8]]), ordinal as u16);
         assert_eq!(bytes[4], (send.arg0() >> 8) as u8);
         assert_eq!(bytes[5], (send.arg1() >> 24) as u8);
         assert_eq!(bytes[6], (send.arg1() >> 16) as u8);
-        assert_eq!(
-            block_on(receiver.recv::<Message>()).unwrap(),
-            ordinal as u32
-        );
+        assert_eq!(receiver.recv::<Message>().await.unwrap(), ordinal as u32);
         let commits: Vec<_> = tap
             .by_ref()
             .filter(|event| matches!(event.id(), ids::ENDPOINT_SEND | ids::ENDPOINT_RECV))
@@ -310,8 +307,9 @@ fn all_257_wire_labels_match_actual_endpoint_frames_without_truncation() {
     assert!(transport.queue_is_empty());
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn a_staged_frame_rejected_by_payload_validation_has_no_receive_commit() {
+async fn a_staged_frame_rejected_by_payload_validation_has_no_receive_commit() {
     type Message = g::Msg<231, u32>;
     let global = g::send::<0, 1, Message>();
     let sender_program = project::<0>(&global);
@@ -326,11 +324,11 @@ fn a_staged_frame_rejected_by_payload_validation_has_no_receive_commit() {
     let sid = SessionId::new(302);
     let mut sender = rv.enter(sid, &sender_program).unwrap();
     let mut receiver = rv.enter(sid, &receiver_program).unwrap();
-    block_on(sender.send::<Message>(&42)).unwrap();
+    sender.send::<Message>(&42).await.unwrap();
     let mut tap = rv.tap();
     tap.by_ref().for_each(drop);
     transport.truncate_next_payload(1, 1);
-    assert!(block_on(receiver.recv::<Message>()).is_err());
+    assert!(receiver.recv::<Message>().await.is_err());
     let events: Vec<_> = tap.collect();
     assert!(
         events
@@ -344,8 +342,9 @@ fn a_staged_frame_rejected_by_payload_validation_has_no_receive_commit() {
     );
 }
 
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
-fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
+async fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
     type Loan<'r> = g::Msg<1, Endpoint<'r, 2>>;
     type Read = g::Msg<7, u32>;
     type Value = g::Msg<8, u32>;
@@ -441,7 +440,7 @@ fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
     let mut worker = worker_rv.enter(sid, &worker_program).unwrap();
     let mut service = service_rv.enter(sid, &service_program).unwrap();
     let mut audit = audit_rv.enter(sid, &audit_program).unwrap();
-    block_on(async {
+    {
         owner.send::<Loan>(db).await.unwrap();
         let (_, bytes) = transport.queued_frame(1);
         assert_eq!(bytes[0], (owner_rows[0].arg1() & 0xff) as u8);
@@ -468,7 +467,7 @@ fn delegated_views_and_parallel_lanes_describe_the_frames_they_actually_send() {
         assert_eq!(db.recv::<Value>().await.unwrap(), 42);
         worker.send::<Loan>(db).await.unwrap();
         drop(owner.recv::<Loan>().await.unwrap());
-    });
+    }
     assert!(transport.queue_is_empty());
     for (actor, tap, expected) in [
         (0, &mut owner_tap, std::vec![(1, 0, 0), (2, 0, 4)]),

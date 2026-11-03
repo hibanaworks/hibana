@@ -309,7 +309,7 @@ fn compiled_receive_dispatch_matches_raw_nested_parallel_rolled_and_delegated_im
     type Loan<'r> = Msg<2, crate::Endpoint<'r, 3>>;
     let delegated = g::seq(
         g::route(g::send::<0, 1, Msg<0, ()>>(), g::send::<0, 3, Msg<1, ()>>()),
-        g::send::<1, 2, Loan<'_>>(),
+        g::send::<1, 2, Loan>(),
     );
     for rows in [
         fixture(),

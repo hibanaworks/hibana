@@ -1,12 +1,14 @@
 mod common;
-#[path = "support/cursor_send_recv.rs"]
-mod cursor_harness;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
-
-use cursor_harness::*;
-
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
+use common::TestTransport;
+use hibana::{
+    g::{self, Msg},
+    runtime::{
+        SessionKitStorage,
+        ids::SessionId,
+        program::{RoleProgram, project},
+    },
+};
 #[path = "cursor_send_recv/session_forget_recv.rs"]
 mod session_forget_recv;

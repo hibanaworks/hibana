@@ -22,7 +22,7 @@ async fn incoming_choice_can_arrive_at_either_of_the_actors_views()
                 type Tail = g::Msg<3, ()>;
                 let global = g::seq(
                     g::route(g::send::<0, 1, Left>(), g::send::<0, 3, Right>()),
-                    g::seq(g::send::<1, 2, Loan<'_>>(), g::send::<0, 3, Tail>()),
+                    g::seq(g::send::<1, 2, Loan>(), g::send::<0, 3, Tail>()),
                 );
                 let p0 = project::<0>(&global);
                 let p1 = project::<1>(&global);
@@ -111,11 +111,11 @@ async fn incoming_choice_can_arrive_at_either_of_the_actors_views()
                                 }
                                 _ => panic!("unexpected choice"),
                             }
-                            worker.send::<Loan<'_>>(db).await
+                            worker.send::<Loan>(db).await
                         };
 
                         async {
-                            let mut db = next.recv::<Loan<'_>>().await?;
+                            let mut db = next.recv::<Loan>().await?;
                             db.recv::<Tail>().await
                         };
                     }
@@ -147,7 +147,7 @@ async fn an_alternate_receive_is_polled_when_the_views_first_arm_starts_with_sen
                         g::seq(g::send::<0, 3, LeftKnow>(), g::send::<1, 0, LeftReply>()),
                         g::send::<0, 1, Right>(),
                     ),
-                    g::send::<1, 2, Loan<'_>>(),
+                    g::send::<1, 2, Loan>(),
                 );
                 let p0 = project::<0>(&global);
                 let p1 = project::<1>(&global);
@@ -236,11 +236,11 @@ async fn an_alternate_receive_is_polled_when_the_views_first_arm_starts_with_sen
                                     }
                                     _ => panic!("unexpected choice"),
                                 }
-                                worker.send::<Loan<'_>>(db).await
+                                worker.send::<Loan>(db).await
                             };
 
                             async {
-                                let _db = next.recv::<Loan<'_>>().await?;
+                                let _db = next.recv::<Loan>().await?;
                                 Ok(())
                             };
                         }
@@ -285,7 +285,7 @@ async fn a_nested_alternate_receive_is_found_past_other_views_and_send_entries()
                             g::send::<0, 1, InnerRight>(),
                         ),
                     ),
-                    g::seq(g::send::<1, 2, Loan3<'_>>(), g::send::<1, 2, Loan4<'_>>()),
+                    g::seq(g::send::<1, 2, Loan3>(), g::send::<1, 2, Loan4>()),
                 );
                 let p0 = project::<0>(&global);
                 let p1 = project::<1>(&global);
@@ -360,13 +360,13 @@ async {
                                     }
                                     _ => panic!("unexpected choice"),
                                 }
-                                worker.send::<Loan3<'_>>(db3).await?;
-                                worker.send::<Loan4<'_>>(db4).await
+                                worker.send::<Loan3>(db3).await?;
+                                worker.send::<Loan4>(db4).await
                             };
 
                             async {
-                                let _db3 = next.recv::<Loan3<'_>>().await?;
-                                let _db4 = next.recv::<Loan4<'_>>().await?;
+                                let _db3 = next.recv::<Loan3>().await?;
+                                let _db4 = next.recv::<Loan4>().await?;
                                 Ok(())
                             };
 }.await

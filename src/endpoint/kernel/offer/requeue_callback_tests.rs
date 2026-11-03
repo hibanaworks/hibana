@@ -197,7 +197,7 @@ fn assert_requeue_callback_revalidates_generation(accept_before_requeue: bool) {
                 .primary_lane;
             let lane_wire = kernel.port_for_lane(lane_idx).lane().as_wire();
             let mut pending_recv = lane_port::PendingRecv::new();
-            let waker = futures::task::noop_waker_ref();
+            let waker = core::task::Waker::noop();
             let mut context = Context::from_waker(waker);
             let frame = match kernel.poll_received_framed_transport_frame_for_lane(
                 &mut pending_recv,

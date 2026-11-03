@@ -111,7 +111,7 @@ async fn pending_receive_keeps_its_io_but_releases_the_actor_borrow()
         let mut server = rendezvous.enter(sid, &role1).expect("server");
         let server_header = server.owner.ptr;
         let mut receive = pin!(server.recv::<Msg<1, u32>>());
-        let mut cx = Context::from_waker(futures::task::noop_waker_ref());
+        let mut cx = Context::from_waker(core::task::Waker::noop());
         assert!(receive.as_mut().poll(&mut cx).is_pending());
         let lease = unsafe {
             // SAFETY: the public receive future retains its unique server

@@ -1,14 +1,11 @@
 use core::{
-    cell::{Cell, UnsafeCell},
+    cell::Cell,
     task::{Context, Poll},
 };
 use std::rc::Rc;
 
 use crate::common::{TestTransport, TestTx};
-use hibana::runtime::{
-    SessionKitStorage,
-    transport::{Outgoing, ReceivedFrame, Transport, TransportError},
-};
+use hibana::runtime::transport::{Outgoing, ReceivedFrame, Transport, TransportError};
 
 #[derive(Clone)]
 pub(crate) struct PendingCancelTransport {
@@ -82,12 +79,4 @@ impl Transport for PendingCancelTransport {
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         self.inner.requeue(rx)
     }
-}
-
-type PendingCancelKitStorage = SessionKitStorage<'static, PendingCancelTransport>;
-
-std::thread_local! {
-    pub(crate) static PENDING_CANCEL_SESSION_SLOT: UnsafeCell<PendingCancelKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
 }

@@ -1,12 +1,8 @@
 mod common;
-#[path = "support/cursor_send_recv.rs"]
-mod cursor_harness;
 #[path = "support/frame_payload.rs"]
 mod frame_payload;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use core::{
     future::Future,
@@ -14,9 +10,17 @@ use core::{
 };
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use cursor_harness::*;
+use common::TestTransport;
 use frame_payload::FramePayload;
 use hibana::runtime::transport::{ReceivedFrame, Transport, TransportError};
+use hibana::{
+    g::{self, Msg},
+    runtime::{
+        SessionKitStorage,
+        ids::SessionId,
+        program::{RoleProgram, project},
+    },
+};
 
 #[path = "cursor_send_recv/send_recv.rs"]
 mod send_recv;

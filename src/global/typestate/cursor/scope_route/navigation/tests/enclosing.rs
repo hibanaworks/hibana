@@ -133,7 +133,7 @@ fn enclosing_route_chains_match_full_scans_for_all_completion_and_choice_pattern
 fn enclosing_route_chains_match_full_scans_in_delegated_parallel_views() {
     type Loan<'r> = Msg<9, Endpoint<'r, 3>>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::par(
                 g::route(
@@ -143,7 +143,7 @@ fn enclosing_route_chains_match_full_scans_in_delegated_parallel_views() {
                 .roll(),
                 g::route(g::send::<1, 2, Msg<4, ()>>(), g::send::<1, 2, Msg<5, ()>>()),
             ),
-            g::send::<1, 0, Loan<'_>>(),
+            g::send::<1, 0, Loan>(),
         ),
     );
     compare_enclosing_queries(project::<0>(&global).role_image_ref());

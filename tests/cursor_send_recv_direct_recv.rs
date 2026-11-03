@@ -1,21 +1,25 @@
 mod common;
-#[path = "support/cursor_send_recv.rs"]
-mod cursor_harness;
 #[path = "support/frame_payload.rs"]
 mod frame_payload;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use core::task::{Context, Poll};
 
+use common::TestTransport;
 use common::TestTx;
-use cursor_harness::*;
 use frame_payload::FramePayload;
 use hibana::runtime::{
     transport::{ReceivedFrame, Transport, TransportError},
     wire::Payload,
+};
+use hibana::{
+    g::{self, Msg},
+    runtime::{
+        SessionKitStorage,
+        ids::SessionId,
+        program::{RoleProgram, project},
+    },
 };
 
 #[path = "cursor_send_recv/direct_recv.rs"]

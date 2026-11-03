@@ -31,9 +31,9 @@ impl WirePayload for FramePayload {
     }
 }
 
-fn borrowed_route_recv_keeps_endpoint_borrow<'r>(endpoint: &mut Endpoint<'r, 0>) {
-    let branch = futures::executor::block_on(endpoint.offer()).expect("test setup");
-    let payload = futures::executor::block_on(branch.recv::<g::Msg<7, FramePayload>>())
+async fn borrowed_route_recv_keeps_endpoint_borrow<'r>(endpoint: &mut Endpoint<'r, 0>) {
+    let branch = endpoint.offer().await.expect("test setup");
+    let payload = branch.recv::<g::Msg<7, FramePayload>>().await
         .expect("test setup");
     let next_offer = endpoint.offer();
     core::hint::black_box(&next_offer);

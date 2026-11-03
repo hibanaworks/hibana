@@ -39,7 +39,7 @@ fn constructed_route_commit_chains_match_checked_reads_in_parallel_rolled_and_ow
 
     type Loan<'a> = Msg<6, crate::Endpoint<'a, 2>>;
     let owned = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::route(
                 g::seq(g::send::<2, 3, Msg<7, ()>>(), g::send::<3, 2, Msg<8, ()>>()),
@@ -48,7 +48,7 @@ fn constructed_route_commit_chains_match_checked_reads_in_parallel_rolled_and_ow
                     g::send::<3, 2, Msg<10, ()>>(),
                 ),
             ),
-            g::send::<1, 0, Loan<'_>>(),
+            g::send::<1, 0, Loan>(),
         ),
     )
     .roll();

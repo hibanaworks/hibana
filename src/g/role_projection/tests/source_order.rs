@@ -486,7 +486,7 @@ async fn a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is
                     async {
                         async {
                             if right {
-                                owner.send::<Loan<'_>>(resource).await?;
+                                owner.send::<Loan>(resource).await?;
                                 if early_data {
                                     return owner.recv::<Data>().await;
                                 }
@@ -515,7 +515,7 @@ async fn a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is
                                     worker.send::<Ack>(&()).await
                                 }
                                 1 => {
-                                    let mut resource = branch.recv::<Loan<'_>>().await?;
+                                    let mut resource = branch.recv::<Loan>().await?;
                                     worker.send::<Ack>(&()).await?;
                                     resource.send::<Data>(&()).await
                                 }

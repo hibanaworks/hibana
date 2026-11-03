@@ -117,10 +117,10 @@ fn sealed_step_fields_preserve_owned_payloads_and_distinct_co_resident_facets() 
     type Read = g::Msg<2, u32>;
     type Value = g::Msg<3, u32>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::send::<2, 1, Read>(),
-            g::seq(g::send::<1, 2, Value>(), g::send::<1, 0, Loan<'_>>()),
+            g::seq(g::send::<1, 2, Value>(), g::send::<1, 0, Loan>()),
         ),
     );
     compare(project::<0>(&global).role_image_ref());

@@ -37,17 +37,17 @@ async fn an_independent_receive_can_offer_before_a_repeated_child_choice()
             g::par(
                 g::route(
                     g::seq(
-                        g::send::<0, 1, LoanA<'_>>(),
+                        g::send::<0, 1, LoanA>(),
                         g::seq(
                             g::send::<3, 2, ReadA>(),
-                            g::seq(g::send::<2, 3, ValueA>(), g::send::<1, 0, ReturnA<'_>>()),
+                            g::seq(g::send::<2, 3, ValueA>(), g::send::<1, 0, ReturnA>()),
                         ),
                     ),
                     g::seq(
-                        g::send::<0, 1, LoanB<'_>>(),
+                        g::send::<0, 1, LoanB>(),
                         g::seq(
                             g::send::<3, 2, ReadB>(),
-                            g::seq(g::send::<2, 3, ValueB>(), g::send::<1, 0, ReturnB<'_>>()),
+                            g::seq(g::send::<2, 3, ValueB>(), g::send::<1, 0, ReturnB>()),
                         ),
                     ),
                 )
@@ -55,10 +55,10 @@ async fn an_independent_receive_can_offer_before_a_repeated_child_choice()
                 g::send::<0, 2, Tick>(),
             ),
             g::seq(
-                g::send::<0, 1, LoanC<'_>>(),
+                g::send::<0, 1, LoanC>(),
                 g::seq(
                     g::send::<3, 2, ReadC>(),
-                    g::seq(g::send::<2, 3, ValueC>(), g::send::<1, 0, ReturnC<'_>>()),
+                    g::seq(g::send::<2, 3, ValueC>(), g::send::<1, 0, ReturnC>()),
                 ),
             ),
         )
@@ -100,14 +100,14 @@ async fn an_independent_receive_can_offer_before_a_repeated_child_choice()
         let mut service = rv2.enter(sid, &p2).unwrap();
         let mut db = rv0.enter(sid, &p3).unwrap();
         for _ in 0..3 {
-            owner.send::<LoanA<'_>>(db).await.unwrap();
-            let mut loan = worker.recv::<LoanA<'_>>().await.unwrap();
+            owner.send::<LoanA>(db).await.unwrap();
+            let mut loan = worker.recv::<LoanA>().await.unwrap();
             loan.send::<ReadA>(&()).await.unwrap();
             service.recv::<ReadA>().await.unwrap();
             service.send::<ValueA>(&()).await.unwrap();
             loan.recv::<ValueA>().await.unwrap();
-            worker.send::<ReturnA<'_>>(loan).await.unwrap();
-            db = owner.recv::<ReturnA<'_>>().await.unwrap();
+            worker.send::<ReturnA>(loan).await.unwrap();
+            db = owner.recv::<ReturnA>().await.unwrap();
             owner.send::<Tick>(&()).await.unwrap();
             service.recv::<Tick>().await.unwrap();
         }
@@ -118,14 +118,14 @@ async fn an_independent_receive_can_offer_before_a_repeated_child_choice()
         let branch = service.offer().await.unwrap();
         assert_eq!(branch.label(), 8);
         branch.recv::<Tick>().await.unwrap();
-        owner.send::<LoanA<'_>>(db).await.unwrap();
-        let mut loan = worker.recv::<LoanA<'_>>().await.unwrap();
+        owner.send::<LoanA>(db).await.unwrap();
+        let mut loan = worker.recv::<LoanA>().await.unwrap();
         loan.send::<ReadA>(&()).await.unwrap();
         service.recv::<ReadA>().await.unwrap();
         service.send::<ValueA>(&()).await.unwrap();
         loan.recv::<ValueA>().await.unwrap();
-        worker.send::<ReturnA<'_>>(loan).await.unwrap();
-        let _db = owner.recv::<ReturnA<'_>>().await.unwrap();
+        worker.send::<ReturnA>(loan).await.unwrap();
+        let _db = owner.recv::<ReturnA>().await.unwrap();
     };
 
     Ok(())

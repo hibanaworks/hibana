@@ -209,7 +209,7 @@ fn different_route_controllers_are_not_reported_as_missing_observer_knowledge() 
 fn delegated_route_controller_mismatch_identifies_the_source_events() {
     type Loan<'r> = Msg<10, hibana::Endpoint<'r, 3>>;
     let program = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::route(
             g::send::<1, 2, Msg<11, ()>>(),
             g::send::<2, 1, Msg<12, ()>>(),
@@ -241,7 +241,7 @@ fn delegated_route_controller_mismatch_identifies_the_source_events() {
 fn a_delegated_controller_error_skips_an_earlier_actor_mergeable_choice() {
     type Loan<'r> = Msg<10, hibana::Endpoint<'r, 3>>;
     let prefix = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::route(
             g::send::<0, 1, Msg<11, ()>>(),
             g::send::<0, 3, Msg<12, ()>>(),

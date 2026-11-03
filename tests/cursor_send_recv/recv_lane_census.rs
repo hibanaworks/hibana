@@ -63,8 +63,9 @@ fn pending_receive_with_sixteen_independent_lanes() {
     }
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn pending_schema_choice_does_not_consume_another_parallel_lane() {
+async fn pending_schema_choice_does_not_consume_another_parallel_lane() {
     let global = g::par(
         g::send::<0, 1, Msg<51, u8>>(),
         g::send::<0, 1, Msg<51, u32>>(),
@@ -80,19 +81,16 @@ fn pending_schema_choice_does_not_consume_another_parallel_lane() {
     let session = SessionId::new(712);
     let mut sender = rendezvous.enter(session, &sender_program).unwrap();
     let mut receiver = rendezvous.enter(session, &receiver_program).unwrap();
-    futures::executor::block_on(sender.send::<Msg<51, u8>>(&7)).unwrap();
+    (sender.send::<Msg<51, u8>>(&7)).await.unwrap();
     {
         let mut pending = pin!(receiver.recv::<Msg<51, u32>>());
         let mut cx = Context::from_waker(Waker::noop());
         assert!(pending.as_mut().poll(&mut cx).is_pending());
-        futures::executor::block_on(sender.send::<Msg<51, u32>>(&0x1234_5678)).unwrap();
+        (sender.send::<Msg<51, u32>>(&0x1234_5678)).await.unwrap();
         assert!(matches!(
             pending.as_mut().poll(&mut cx),
             Poll::Ready(Ok(0x1234_5678))
         ));
     }
-    assert_eq!(
-        futures::executor::block_on(receiver.recv::<Msg<51, u8>>()).unwrap(),
-        7
-    );
+    assert_eq!((receiver.recv::<Msg<51, u8>>()).await.unwrap(), 7);
 }

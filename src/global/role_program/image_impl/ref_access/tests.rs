@@ -18,10 +18,10 @@ mod route_topology;
 fn source_boundaries_preserve_missing_events_and_both_actor_facets() {
     type Loan<'r> = Msg<1, crate::Endpoint<'r, 2>>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::par(g::send::<2, 3, Msg<2, ()>>(), g::send::<4, 5, Msg<3, ()>>()),
-            g::seq(g::send::<1, 0, Loan<'_>>(), g::send::<2, 0, Msg<4, ()>>()),
+            g::seq(g::send::<1, 0, Loan>(), g::send::<2, 0, Msg<4, ()>>()),
         ),
     );
     let program = project::<0>(&global);

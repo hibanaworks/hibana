@@ -2,15 +2,18 @@ use super::*;
 
 #[test]
 fn send_session_fault_cancels_pending_transport_state_once() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = PendingCancelTransport::new();
         let cancel_count = transport.cancel_count();
-        with_resident_tls_ref(&PENDING_CANCEL_SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<2, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(203);
@@ -21,7 +24,7 @@ fn send_session_fault_cancels_pending_transport_state_once() {
             {
                 let mut send_future =
                     std::pin::pin!(origin_endpoint.send::<Msg<2, FramePayload>>(&payload));
-                let waker = futures::task::noop_waker_ref();
+                let waker = core::task::Waker::noop();
                 let mut context = Context::from_waker(waker);
                 if let Poll::Ready(result) = send_future.as_mut().poll(&mut context) {
                     match result {
@@ -65,6 +68,6 @@ fn send_session_fault_cancels_pending_transport_state_once() {
                 transport.queue_is_empty(),
                 "cancelled pending send must not leave a frame available for later flush"
             );
-        });
-    });
+        };
+    };
 }

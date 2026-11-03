@@ -1,40 +1,28 @@
 use super::*;
 
-unsafe fn clone_count_waker(data: *const ()) -> RawWaker {
-    RawWaker::new(data, &COUNT_WAKER_VTABLE)
-}
-
-unsafe fn wake_count_waker(data: *const ()) {
-    let count = unsafe { &*data.cast::<Cell<usize>>() };
-    count.set(count.get() + 1);
-}
-
-unsafe fn drop_count_waker(data: *const ()) {
-    core::hint::black_box(data);
-}
-
-static COUNT_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
-    clone_count_waker,
-    wake_count_waker,
-    wake_count_waker,
-    drop_count_waker,
-);
-
-fn counting_waker(count: &Cell<usize>) -> Waker {
-    let data = core::ptr::from_ref(count).cast::<()>();
-    unsafe { Waker::from_raw(RawWaker::new(data, &COUNT_WAKER_VTABLE)) }
+struct WakeCount(std::sync::atomic::AtomicUsize);
+impl std::task::Wake for WakeCount {
+    fn wake(self: std::sync::Arc<Self>) {
+        self.wake_by_ref();
+    }
+    fn wake_by_ref(self: &std::sync::Arc<Self>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[test]
 fn dropping_live_endpoint_poison_wakes_waiting_peer() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<2, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
 
             let sid = SessionId::new(202);
@@ -42,8 +30,8 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let mut recv_future = std::pin::pin!(target_endpoint.recv::<Msg<2, FramePayload>>());
-            let wake_count = Cell::new(0);
-            let waker = counting_waker(&wake_count);
+            let wake_count = std::sync::Arc::new(WakeCount(std::sync::atomic::AtomicUsize::new(0)));
+            let waker = Waker::from(wake_count.clone());
             let mut context = Context::from_waker(&waker);
             if let Poll::Ready(result) = recv_future.as_mut().poll(&mut context) {
                 match result {
@@ -57,7 +45,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 }
             }
             assert_eq!(
-                wake_count.get(),
+                wake_count.0.load(std::sync::atomic::Ordering::Relaxed),
                 0,
                 "initial pending recv must only register its waiter"
             );
@@ -65,7 +53,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
             drop(origin_endpoint);
 
             assert!(
-                wake_count.get() > 0,
+                wake_count.0.load(std::sync::atomic::Ordering::Relaxed) > 0,
                 "live endpoint drop must wake peers waiting in the same session"
             );
             match recv_future.as_mut().poll(&mut context) {
@@ -82,20 +70,23 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 }
                 Poll::Pending => panic!("poisoned waiting peer remained pending"),
             }
-        });
-    });
+        };
+    };
 }
 
 #[test]
 fn endpoint_waiter_isolated_from_unrelated_session_compaction() {
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<2, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
 
             let sid_a = SessionId::new(301);
@@ -106,26 +97,26 @@ fn endpoint_waiter_isolated_from_unrelated_session_compaction() {
             let mut target_b = rv.enter(sid_b, &target_program).expect("target B");
 
             let mut recv_future = std::pin::pin!(target_b.recv::<Msg<2, FramePayload>>());
-            let wake_count = Cell::new(0);
-            let waker = counting_waker(&wake_count);
+            let wake_count = std::sync::Arc::new(WakeCount(std::sync::atomic::AtomicUsize::new(0)));
+            let waker = Waker::from(wake_count.clone());
             let mut context = Context::from_waker(&waker);
             assert!(
                 recv_future.as_mut().poll(&mut context).is_pending(),
                 "session B recv must park before peer drop"
             );
-            assert_eq!(wake_count.get(), 0);
+            assert_eq!(wake_count.0.load(std::sync::atomic::Ordering::Relaxed), 0);
 
             drop(origin_a);
             drop(target_a);
             assert_eq!(
-                wake_count.get(),
+                wake_count.0.load(std::sync::atomic::Ordering::Relaxed),
                 0,
                 "unrelated session retirement must not wake session B"
             );
 
             drop(origin_b);
             assert!(
-                wake_count.get() > 0,
+                wake_count.0.load(std::sync::atomic::Ordering::Relaxed) > 0,
                 "session B endpoint waiter must observe its peer drop"
             );
             match recv_future.as_mut().poll(&mut context) {
@@ -141,6 +132,6 @@ fn endpoint_waiter_isolated_from_unrelated_session_compaction() {
                 }
                 Poll::Pending => panic!("session B endpoint waiter remained pending"),
             }
-        });
-    });
+        };
+    };
 }

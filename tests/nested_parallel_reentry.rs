@@ -28,14 +28,14 @@ async fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views()
     type Returned<'r> = g::Msg<5, Endpoint<'r, 3>>;
 
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::route(
                 g::par(g::send::<0, 3, LeftData>(), g::send::<0, 1, LeftNotice>()),
                 g::par(g::send::<0, 3, RightData>(), g::send::<0, 1, RightNotice>()),
             )
             .resolve::<0>(),
-            g::send::<1, 0, Returned<'_>>(),
+            g::send::<1, 0, Returned>(),
         ),
     );
     assert_eq!(g::diagnose(&global), None);
@@ -58,7 +58,7 @@ async fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views()
         let mut worker = rv1.enter(sid, &p1).unwrap();
 
         let owner_run = async {
-            owner.send::<Loan<'_>>(db).await?;
+            owner.send::<Loan>(db).await?;
             let label = owner.offer().await?.label();
             {
                 let [mut data, mut notice] = owner.par()?;
@@ -82,11 +82,11 @@ async fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views()
                     _ => panic!("unexpected controller label"),
                 }
             }
-            let _returned = owner.recv::<Returned<'_>>().await?;
+            let _returned = owner.recv::<Returned>().await?;
             Ok::<_, EndpointError>(())
         };
         let worker_run = async {
-            let mut db = worker.recv::<Loan<'_>>().await?;
+            let mut db = worker.recv::<Loan>().await?;
             let label = match hibana_runtime::race(
                 async {
                     core::ops::ControlFlow::Break(
@@ -137,7 +137,7 @@ async fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views()
                     _ => panic!("unexpected received label"),
                 }
             }
-            worker.send::<Returned<'_>>(db).await?;
+            worker.send::<Returned>(db).await?;
             Ok::<_, EndpointError>(())
         };
         {
@@ -175,14 +175,14 @@ async fn a_borrow_containing_a_choice_uses_its_other_views_preview()
 
     let global = g::par(
         g::seq(
-            g::send::<0, 1, Loan<'_>>(),
+            g::send::<0, 1, Loan>(),
             g::seq(
                 g::route(
                     g::par(g::send::<0, 3, LeftData>(), g::send::<0, 1, LeftNotice>()),
                     g::par(g::send::<0, 3, RightData>(), g::send::<0, 1, RightNotice>()),
                 )
                 .resolve::<0>(),
-                g::send::<1, 0, Returned<'_>>(),
+                g::send::<1, 0, Returned>(),
             ),
         ),
         g::seq(g::send::<2, 0, Tick>(), g::send::<0, 2, Ack>()),
@@ -213,7 +213,7 @@ async fn a_borrow_containing_a_choice_uses_its_other_views_preview()
             let [mut work, mut ticks] = owner.par().expect("owner's outer parallel parts");
             async {
                 async {
-                    work.send::<Loan<'_>>(db).await?;
+                    work.send::<Loan>(db).await?;
                     let label = work.offer().await?.label();
                     {
                         let [mut data, mut notice] =
@@ -238,7 +238,7 @@ async fn a_borrow_containing_a_choice_uses_its_other_views_preview()
                             _ => panic!("unexpected controller label"),
                         }
                     }
-                    let _returned = work.recv::<Returned<'_>>().await?;
+                    let _returned = work.recv::<Returned>().await?;
                     Ok::<_, EndpointError>(())
                 };
 
@@ -253,7 +253,7 @@ async fn a_borrow_containing_a_choice_uses_its_other_views_preview()
         };
         let worker_run = async {
             let [mut work] = worker.par().expect("worker's outer parallel part");
-            let mut db = work.recv::<Loan<'_>>().await?;
+            let mut db = work.recv::<Loan>().await?;
             {
                 let [mut db_work] = db.par().expect("resource's outer parallel part");
                 let label = match hibana_runtime::race(
@@ -308,7 +308,7 @@ async fn a_borrow_containing_a_choice_uses_its_other_views_preview()
                     }
                 }
             }
-            work.send::<Returned<'_>>(db).await?;
+            work.send::<Returned>(db).await?;
             Ok::<_, EndpointError>(())
         };
         let peer_run = async {
@@ -351,7 +351,7 @@ async fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail()
     type TailValue = g::Msg<8, ()>;
     type Return<'r> = g::Msg<9, Endpoint<'r, 3>>;
     let global = g::seq(
-        g::send::<1, 0, Loan<'_>>(),
+        g::send::<1, 0, Loan>(),
         g::seq(
             g::seq(
                 g::par(
@@ -367,7 +367,7 @@ async fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail()
                 ),
             )
             .roll(),
-            g::send::<0, 1, Return<'_>>(),
+            g::send::<0, 1, Return>(),
         ),
     );
     assert_eq!(g::diagnose(&global), None);
@@ -401,7 +401,7 @@ async fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail()
         (async {
             async {
                 async {
-                    let mut db = holder.recv::<Loan<'_>>().await?;
+                    let mut db = holder.recv::<Loan>().await?;
                     for visit in 0..2 {
                         {
                             let [mut notice] = holder.par().unwrap_or_else(|error| {
@@ -430,13 +430,13 @@ async fn a_delegated_parallel_prefix_repeats_with_its_sequential_tail()
                         holder.send::<TailNotice>(&()).await?;
                         db.recv::<TailValue>().await?;
                     }
-                    holder.send::<Return<'_>>(db).await?;
+                    holder.send::<Return>(db).await?;
                     Ok::<_, hibana::EndpointError>(())
                 };
 
                 async {
-                    owner.send::<Loan<'_>>(db).await?;
-                    let db = owner.recv::<Return<'_>>().await?;
+                    owner.send::<Loan>(db).await?;
+                    let db = owner.recv::<Return>().await?;
                     drop(db);
                     Ok::<_, hibana::EndpointError>(())
                 };
@@ -493,10 +493,10 @@ fn returned_resource_parallel_global() -> impl hibana::runtime::program::Project
     type VisitReturn<'r> = g::Msg<8, Endpoint<'r, 3>>;
     type FinalReturn<'r> = g::Msg<9, Endpoint<'r, 3>>;
     g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::seq(
-                g::send::<1, 0, VisitLoan<'_>>(),
+                g::send::<1, 0, VisitLoan>(),
                 g::seq(
                     g::par(
                         g::seq(
@@ -511,11 +511,11 @@ fn returned_resource_parallel_global() -> impl hibana::runtime::program::Project
                             ),
                         ),
                     ),
-                    g::send::<0, 1, VisitReturn<'_>>(),
+                    g::send::<0, 1, VisitReturn>(),
                 ),
             )
             .roll(),
-            g::send::<1, 0, FinalReturn<'_>>(),
+            g::send::<1, 0, FinalReturn>(),
         ),
     )
 }
@@ -568,9 +568,9 @@ async fn a_returned_resource_and_its_holder_borrow_both_parallel_arms_on_each_vi
             async {
                 async {
                     assert!(owner.par::<2>().is_err(), "the initial loan is required");
-                    owner.send::<Loan<'_>>(db).await?;
+                    owner.send::<Loan>(db).await?;
                     for visit in 0..2 {
-                        let mut db = owner.recv::<VisitLoan<'_>>().await?;
+                        let mut db = owner.recv::<VisitLoan>().await?;
                         {
                             let [mut left_notice, mut right_notice] =
                                 owner.par().unwrap_or_else(|error| {
@@ -595,19 +595,19 @@ async fn a_returned_resource_and_its_holder_borrow_both_parallel_arms_on_each_vi
                             .await?;
                             assert_eq!((left, right), (visit + 10, visit + 20));
                         }
-                        owner.send::<VisitReturn<'_>>(db).await?;
+                        owner.send::<VisitReturn>(db).await?;
                     }
-                    drop(owner.recv::<FinalReturn<'_>>().await?);
+                    drop(owner.recv::<FinalReturn>().await?);
                     Ok::<_, hibana::EndpointError>(())
                 };
 
                 async {
-                    let mut db = worker.recv::<Loan<'_>>().await?;
+                    let mut db = worker.recv::<Loan>().await?;
                     for _ in 0..2 {
-                        worker.send::<VisitLoan<'_>>(db).await?;
-                        db = worker.recv::<VisitReturn<'_>>().await?;
+                        worker.send::<VisitLoan>(db).await?;
+                        db = worker.recv::<VisitReturn>().await?;
                     }
-                    worker.send::<FinalReturn<'_>>(db).await
+                    worker.send::<FinalReturn>(db).await
                 };
 
                 async {
@@ -687,11 +687,11 @@ async fn a_retained_completion_cannot_send_before_the_next_visits_own_loan()
     let db = rv0.enter(sid, &p3).unwrap();
     {
         (async {
-            owner.send::<Loan<'_>>(db).await.unwrap();
-            let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+            owner.send::<Loan>(db).await.unwrap();
+            let mut db = worker.recv::<Loan>().await.unwrap();
             for visit in 0..2 {
-                worker.send::<VisitLoan<'_>>(db).await.unwrap();
-                db = owner.recv::<VisitLoan<'_>>().await.unwrap();
+                worker.send::<VisitLoan>(db).await.unwrap();
+                db = owner.recv::<VisitLoan>().await.unwrap();
                 {
                     let [mut left_notice, mut right_notice] = owner.par().unwrap();
                     let [mut left_db, mut right_db] = db.par().unwrap();
@@ -722,8 +722,8 @@ async fn a_retained_completion_cannot_send_before_the_next_visits_own_loan()
                     .await
                     .unwrap();
                 }
-                owner.send::<VisitReturn<'_>>(db).await.unwrap();
-                db = worker.recv::<VisitReturn<'_>>().await.unwrap();
+                owner.send::<VisitReturn>(db).await.unwrap();
+                db = worker.recv::<VisitReturn>().await.unwrap();
             }
             assert!(network.queue_is_empty());
             let future = owner.send::<LeftNotice>(&99);
@@ -1206,10 +1206,10 @@ async fn a_delegated_child_after_a_same_lane_tail_keeps_its_outer_prefix()
             g::send::<0, 1, Prefix>(),
             g::seq(
                 g::seq(
-                    g::send::<0, 1, Loan<'_>>(),
+                    g::send::<0, 1, Loan>(),
                     g::seq(
                         g::send::<3, 2, Read>(),
-                        g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Loan<'_>>()),
+                        g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Loan>()),
                     ),
                 )
                 .roll(),
@@ -1250,16 +1250,16 @@ async fn a_delegated_child_after_a_same_lane_tail_keeps_its_outer_prefix()
                 worker.recv::<Prefix>().await?;
                 for child in 0..2 {
                     owner
-                        .send::<Loan<'_>>(db)
+                        .send::<Loan>(db)
                         .await
                         .expect("loan within the current outer visit");
-                    db = worker.recv::<Loan<'_>>().await?;
+                    db = worker.recv::<Loan>().await?;
                     db.send::<Read>(&(10 * visit + child)).await?;
                     let number = service.recv::<Read>().await?;
                     service.send::<Value>(&(number + 1)).await?;
                     assert_eq!(db.recv::<Value>().await?, number + 1);
-                    worker.send::<Loan<'_>>(db).await?;
-                    db = owner.recv::<Loan<'_>>().await?;
+                    worker.send::<Loan>(db).await?;
+                    db = owner.recv::<Loan>().await?;
                     if child == 0 {
                         owner.send::<Tick>(&()).await?;
                         worker.recv::<Tick>().await?;

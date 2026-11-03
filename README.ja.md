@@ -126,16 +126,16 @@ type Value = g::Msg<3, u32>;
 
 let query = g::seq(g::send::<DB, SERVICE, Read>(), g::send::<SERVICE, DB, Value>());
 let global = g::seq(
-    g::send::<OWNER, WORKER, Loan<'_>>(),
-    g::seq(query, g::seq(g::send::<WORKER, OWNER, Loan<'_>>(), query)),
+    g::send::<OWNER, WORKER, Loan>(),
+    g::seq(query, g::seq(g::send::<WORKER, OWNER, Loan>(), query)),
 );
 ```
 
 OWNERは値をsendへmoveし、返ってきたEndpointで続きを実行します。
 
 ```rust
-owner.send::<Loan<'_>>(db).await?;
-let mut db = owner.recv::<Loan<'_>>().await?;
+owner.send::<Loan>(db).await?;
+let mut db = owner.recv::<Loan>().await?;
 db.send::<Read>(&41).await?;
 let answer = db.recv::<Value>().await?;
 ```
@@ -143,10 +143,10 @@ let answer = db.recv::<Value>().await?;
 WORKERも通常のsendとrecvを使います。
 
 ```rust
-let mut db = worker.recv::<Loan<'_>>().await?;
+let mut db = worker.recv::<Loan>().await?;
 db.send::<Read>(&7).await?;
 let answer = db.recv::<Value>().await?;
-worker.send::<Loan<'_>>(db).await?;
+worker.send::<Loan>(db).await?;
 ```
 
 move済みの値を使えないことはRustが守ります。Hibanaは、委譲・保持者・継続位置をglobalから検査します。

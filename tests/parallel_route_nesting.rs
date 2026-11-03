@@ -3,19 +3,11 @@ mod common;
 mod in_memory;
 #[path = "../examples/support/in_process.rs"]
 pub mod in_process;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
-
-use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{SessionKitStorage, ids::SessionId};
-use runtime_support::with_runtime_workspace;
-use tls_ref_support::with_resident_tls_ref;
 
 #[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
@@ -94,7 +86,7 @@ async fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge()
                         }).await;
                         Ok::<_, hibana::EndpointError>(()) };
 
-                        async { let _: () = (async {
+                        async { {
                             for right in choices {
                                 for _ in 0..2 {
                                     let branch = relay.offer().await.expect("relay preview");
@@ -111,10 +103,10 @@ async fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge()
                                     relay.send::<Msg<2, ()>>(&()).await.unwrap();
                                 }
                             }
-                        }).await;
+                        }
                         Ok::<_, hibana::EndpointError>(()) };
 
-                        async { let _: () = (async {
+                        async { {
                             for right in choices {
                                 for _ in 0..2 {
                                     let branch = receiver.offer().await.expect("receiver preview");
@@ -131,7 +123,7 @@ async fn an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge()
                                     receiver.recv::<Msg<2, ()>>().await.unwrap();
                                 }
                             }
-                        }).await;
+                        }
                         Ok::<_, hibana::EndpointError>(()) };
 }.await.expect("all child results are data");
                 }).await;
@@ -181,7 +173,7 @@ async fn a_nested_resolver_can_select_another_arm_on_the_next_visit()
         (async {
             async {
                 async {
-                    let _: () = (async {
+                    {
                         for choice in [DecisionArm::Left, DecisionArm::Right] {
                             input.set(choice);
                             let branch = controller.offer().await.unwrap();
@@ -200,13 +192,12 @@ async fn a_nested_resolver_can_select_another_arm_on_the_next_visit()
                                 }
                             }
                         }
-                    })
-                    .await;
+                    }
                     Ok::<_, hibana::EndpointError>(())
                 };
 
                 async {
-                    let _: () = (async {
+                    {
                         for label in [2, 4] {
                             let branch = observer.offer().await.unwrap();
                             assert_eq!(branch.label(), label);
@@ -224,8 +215,7 @@ async fn a_nested_resolver_can_select_another_arm_on_the_next_visit()
                                 _ => unreachable!(),
                             }
                         }
-                    })
-                    .await;
+                    }
                     Ok::<_, hibana::EndpointError>(())
                 };
             }
@@ -253,10 +243,10 @@ async fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts
     let global = g::par(
         g::seq(g::send::<0, 1, Start>(), g::send::<1, 0, Ack>()),
         g::seq(
-            g::send::<0, 1, Loan<'_>>(),
+            g::send::<0, 1, Loan>(),
             g::seq(
                 g::send::<3, 0, Read>(),
-                g::seq(g::send::<0, 3, Value>(), g::send::<1, 0, Return<'_>>()),
+                g::seq(g::send::<0, 3, Value>(), g::send::<1, 0, Return>()),
             ),
         )
         .roll(),
@@ -292,10 +282,10 @@ async fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts
                                     Ok::<_, hibana::EndpointError>(
                                         (async {
                                             for _ in 0..2 {
-                                                loan.send::<Loan<'_>>(db).await.unwrap();
+                                                loan.send::<Loan>(db).await.unwrap();
                                                 loan.recv::<Read>().await.unwrap();
                                                 loan.send::<Value>(&()).await.unwrap();
-                                                db = loan.recv::<Return<'_>>().await.unwrap();
+                                                db = loan.recv::<Return>().await.unwrap();
                                             }
                                             db
                                         })
@@ -304,12 +294,11 @@ async fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts
                                 };
 
                                 async {
-                                    let _: () = (async {
+                                    {
                                         hibana_runtime::yield_now().await;
                                         ordinary.send::<Start>(&()).await.unwrap();
                                         ordinary.recv::<Ack>().await.unwrap();
-                                    })
-                                    .await;
+                                    }
                                     Ok::<_, hibana::EndpointError>(())
                                 };
                             }
@@ -328,24 +317,22 @@ async fn a_nested_loan_keeps_its_owner_while_an_independent_parent_part_restarts
                         for _ in 0..2 {
                             async {
                                 async {
-                                    let _: () = (async {
+                                    {
                                         for _ in 0..2 {
-                                            let mut db = loan.recv::<Loan<'_>>().await.unwrap();
+                                            let mut db = loan.recv::<Loan>().await.unwrap();
                                             db.send::<Read>(&()).await.unwrap();
                                             db.recv::<Value>().await.unwrap();
-                                            loan.send::<Return<'_>>(db).await.unwrap();
+                                            loan.send::<Return>(db).await.unwrap();
                                         }
-                                    })
-                                    .await;
+                                    }
                                     Ok::<_, hibana::EndpointError>(())
                                 };
 
                                 async {
-                                    let _: () = (async {
+                                    {
                                         ordinary.recv::<Start>().await.unwrap();
                                         ordinary.send::<Ack>(&()).await.unwrap();
-                                    })
-                                    .await;
+                                    }
                                     Ok::<_, hibana::EndpointError>(())
                                 };
                             }
@@ -382,10 +369,10 @@ async fn retained_parallel_borrows_allow_a_nested_repeat()
 
     let global = g::par(
         g::seq(
-            g::send::<0, 1, Loan<'_>>(),
+            g::send::<0, 1, Loan>(),
             g::seq(
                 g::send::<3, 2, Read>(),
-                g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Return<'_>>()),
+                g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Return>()),
             ),
         ),
         g::seq(
@@ -431,21 +418,22 @@ async fn retained_parallel_borrows_allow_a_nested_repeat()
                         let mut db = initial_db;
                         let [mut loan, mut work] = owner.par().unwrap();
                         for visit in 0..2 {
-                            let (returned, ()) = async {
+                            let (returned, ()) =
                                 async {
-                                    Ok::<_, hibana::EndpointError>(
-                                        (async {
-                                            loan.send::<Loan<'_>>(db).await.unwrap_or_else(|error| {
+                                    async {
+                                        Ok::<_, hibana::EndpointError>(
+                                            (async {
+                                                loan.send::<Loan>(db).await.unwrap_or_else(|error| {
                                         panic!("owner loan in outer visit {visit}: {error:?}")
                                     });
-                                            loan.recv::<Return<'_>>().await.expect("owner return")
-                                        })
-                                        .await,
-                                    )
-                                };
+                                                loan.recv::<Return>().await.expect("owner return")
+                                            })
+                                            .await,
+                                        )
+                                    };
 
-                                async {
-                                    let _: () = (async {
+                                    async {
+                                        let _: () = (async {
                                         for inner in 0..2 {
                                             work.send::<Start>(&()).await.unwrap_or_else(|error| {
                                         panic!("owner start in visit {visit}/{inner}: {error:?}")
@@ -454,11 +442,11 @@ async fn retained_parallel_borrows_allow_a_nested_repeat()
                                         }
                                     })
                                     .await;
-                                    Ok::<_, hibana::EndpointError>(())
-                                };
-                            }
-                            .await
-                            .expect("all child results are data");
+                                        Ok::<_, hibana::EndpointError>(())
+                                    };
+                                }
+                                .await
+                                .expect("all child results are data");
                             db = returned;
                         }
                         drop(db);
@@ -475,14 +463,14 @@ async fn retained_parallel_borrows_allow_a_nested_repeat()
                                 async {
                                     let _: () = (async {
                                         let mut db =
-                                            loan.recv::<Loan<'_>>().await.unwrap_or_else(|error| {
+                                            loan.recv::<Loan>().await.unwrap_or_else(|error| {
                                                 panic!(
                                                     "worker loan in outer visit {visit}: {error:?}"
                                                 )
                                             });
                                         db.send::<Read>(&()).await.expect("worker read");
                                         db.recv::<Value>().await.expect("worker value");
-                                        loan.send::<Return<'_>>(db).await.unwrap_or_else(|error| {
+                                        loan.send::<Return>(db).await.unwrap_or_else(|error| {
                                             panic!(
                                                 "worker return in outer visit {visit}: {error:?}"
                                             )
@@ -493,15 +481,14 @@ async fn retained_parallel_borrows_allow_a_nested_repeat()
                                 };
 
                                 async {
-                                    let _: () = (async {
+                                    {
                                         for _ in 0..2 {
                                             work.recv::<Start>().await.expect("worker start");
                                             work.send::<Work>(&()).await.expect("worker work");
                                             work.recv::<Done>().await.expect("worker done");
                                             work.send::<Ack>(&()).await.expect("worker ack");
                                         }
-                                    })
-                                    .await;
+                                    }
                                     Ok::<_, hibana::EndpointError>(())
                                 };
                             }
@@ -519,22 +506,20 @@ async fn retained_parallel_borrows_allow_a_nested_repeat()
                         for _ in 0..2 {
                             async {
                                 async {
-                                    let _: () = (async {
+                                    {
                                         db.recv::<Read>().await.expect("service read");
                                         db.send::<Value>(&()).await.expect("service value");
-                                    })
-                                    .await;
+                                    }
                                     Ok::<_, hibana::EndpointError>(())
                                 };
 
                                 async {
-                                    let _: () = (async {
+                                    {
                                         for _ in 0..2 {
                                             work.recv::<Work>().await.expect("service work");
                                             work.send::<Done>(&()).await.expect("service done");
                                         }
-                                    })
-                                    .await;
+                                    }
                                     Ok::<_, hibana::EndpointError>(())
                                 };
                             }
@@ -595,15 +580,12 @@ async fn a_parent_preview_can_use_a_parallel_head_before_a_child_choice()
                         let [mut choice, mut ordinary] = controller.par().unwrap();
                         async {
                             async {
-                                let _: () =
-                                    (async { choice.send::<Msg<8, ()>>(&()).await.unwrap() }).await;
+                                choice.send::<Msg<8, ()>>(&()).await.unwrap();
                                 Ok::<_, hibana::EndpointError>(())
                             };
 
                             async {
-                                let _: () =
-                                    (async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() })
-                                        .await;
+                                ordinary.send::<Msg<12, ()>>(&()).await.unwrap();
                                 Ok::<_, hibana::EndpointError>(())
                             };
                         }
@@ -622,18 +604,16 @@ async fn a_parent_preview_can_use_a_parallel_head_before_a_child_choice()
                         let [mut choice, mut ordinary] = receiver.par().unwrap();
                         async {
                             async {
-                                let _: () = (async {
+                                {
                                     let branch = choice.offer().await.unwrap();
                                     assert_eq!(branch.label(), 8);
                                     branch.recv::<Msg<8, ()>>().await.unwrap();
-                                })
-                                .await;
+                                }
                                 Ok::<_, hibana::EndpointError>(())
                             };
 
                             async {
-                                let _: () =
-                                    (async { ordinary.recv::<Msg<12, ()>>().await.unwrap() }).await;
+                                ordinary.recv::<Msg<12, ()>>().await.unwrap();
                                 Ok::<_, hibana::EndpointError>(())
                             };
                         }
@@ -702,20 +682,17 @@ async fn a_parent_preview_does_not_call_a_parallel_child_resolver()
                         let [mut choice, mut ordinary] = controller.par().unwrap();
                         async {
                             async {
-                                let _: () = (async {
+                                {
                                     child_decision.set(Some(DecisionArm::Right));
                                     let branch = choice.offer().await.unwrap();
                                     assert_eq!(branch.label(), 8);
                                     branch.send::<Msg<8, ()>>(&()).await.unwrap();
-                                })
-                                .await;
+                                }
                                 Ok::<_, hibana::EndpointError>(())
                             };
 
                             async {
-                                let _: () =
-                                    (async { ordinary.send::<Msg<12, ()>>(&()).await.unwrap() })
-                                        .await;
+                                ordinary.send::<Msg<12, ()>>(&()).await.unwrap();
                                 Ok::<_, hibana::EndpointError>(())
                             };
                         }
@@ -734,18 +711,16 @@ async fn a_parent_preview_does_not_call_a_parallel_child_resolver()
                         let [mut choice, mut ordinary] = receiver.par().unwrap();
                         async {
                             async {
-                                let _: () = (async {
+                                {
                                     let branch = choice.offer().await.unwrap();
                                     assert_eq!(branch.label(), 8);
                                     branch.recv::<Msg<8, ()>>().await.unwrap();
-                                })
-                                .await;
+                                }
                                 Ok::<_, hibana::EndpointError>(())
                             };
 
                             async {
-                                let _: () =
-                                    (async { ordinary.recv::<Msg<12, ()>>().await.unwrap() }).await;
+                                ordinary.recv::<Msg<12, ()>>().await.unwrap();
                                 Ok::<_, hibana::EndpointError>(())
                             };
                         }
@@ -785,22 +760,22 @@ async fn parallel_borrows_repeat_before_the_next_parallel_group()
                 ),
             ),
             g::seq(
-                g::send::<0, 1, Loan<'_>>(),
+                g::send::<0, 1, Loan>(),
                 g::seq(
                     g::send::<3, 0, Msg<5, ()>>(),
-                    g::seq(g::send::<0, 3, Msg<6, ()>>(), g::send::<1, 0, Return<'_>>()),
+                    g::seq(g::send::<0, 3, Msg<6, ()>>(), g::send::<1, 0, Return>()),
                 ),
             ),
         )
         .roll(),
         g::par(
             g::seq(
-                g::send::<0, 1, TailLoan<'_>>(),
+                g::send::<0, 1, TailLoan>(),
                 g::seq(
                     g::send::<3, 0, Msg<9, ()>>(),
                     g::seq(
                         g::send::<0, 3, Msg<10, ()>>(),
-                        g::send::<1, 0, TailReturn<'_>>(),
+                        g::send::<1, 0, TailReturn>(),
                     ),
                 ),
             ),
@@ -855,10 +830,10 @@ async fn parallel_borrows_repeat_before_the_next_parallel_group()
                                 };
 
                                 async {
-                                    loan.send::<Loan<'_>>(db).await?;
+                                    loan.send::<Loan>(db).await?;
                                     loan.recv::<Msg<5, ()>>().await?;
                                     loan.send::<Msg<6, ()>>(&()).await?;
-                                    loan.recv::<Return<'_>>().await
+                                    loan.recv::<Return>().await
                                 };
                             }
                             .await?;
@@ -868,10 +843,10 @@ async fn parallel_borrows_repeat_before_the_next_parallel_group()
                     let [mut loan, mut notice] = owner.par()?;
                     let (db, ()) = async {
                         async {
-                            loan.send::<TailLoan<'_>>(db).await?;
+                            loan.send::<TailLoan>(db).await?;
                             loan.recv::<Msg<9, ()>>().await?;
                             loan.send::<Msg<10, ()>>(&()).await?;
-                            loan.recv::<TailReturn<'_>>().await
+                            loan.recv::<TailReturn>().await
                         };
 
                         async {
@@ -897,10 +872,10 @@ async fn parallel_borrows_repeat_before_the_next_parallel_group()
                                 };
 
                                 async {
-                                    let mut db = loan.recv::<Loan<'_>>().await?;
+                                    let mut db = loan.recv::<Loan>().await?;
                                     db.send::<Msg<5, ()>>(&()).await?;
                                     db.recv::<Msg<6, ()>>().await?;
-                                    loan.send::<Return<'_>>(db).await
+                                    loan.send::<Return>(db).await
                                 };
                             }
                             .await?;
@@ -909,10 +884,10 @@ async fn parallel_borrows_repeat_before_the_next_parallel_group()
                     let [mut loan, mut notice] = worker.par()?;
                     async {
                         async {
-                            let mut db = loan.recv::<TailLoan<'_>>().await?;
+                            let mut db = loan.recv::<TailLoan>().await?;
                             db.send::<Msg<9, ()>>(&()).await?;
                             db.recv::<Msg<10, ()>>().await?;
-                            loan.send::<TailReturn<'_>>(db).await
+                            loan.send::<TailReturn>(db).await
                         };
 
                         async {
@@ -982,11 +957,10 @@ async fn resolved_parent_waits_for_its_message_selected_child_without_blocking_a
             };
 
             async {
-                let _: () = (async {
+                {
                     sibling0.send::<Msg<3, ()>>(&()).await.unwrap();
                     sibling1.recv::<Msg<3, ()>>().await.unwrap();
-                })
-                .await;
+                }
                 Ok::<_, hibana::EndpointError>(())
             };
         }
@@ -1198,10 +1172,10 @@ async fn nested_choice_remains_available_after_its_outer_parallel_sibling_finish
         type Loan<'r> = Msg<0, Endpoint<'r, 3>>;
         type Return<'r> = Msg<3, Endpoint<'r, 3>>;
         let loan = g::seq(
-            g::send::<0, 1, Loan<'_>>(),
+            g::send::<0, 1, Loan>(),
             g::seq(
                 g::send::<3, 2, Msg<1, ()>>(),
-                g::seq(g::send::<2, 3, Msg<2, ()>>(), g::send::<1, 0, Return<'_>>()),
+                g::seq(g::send::<2, 3, Msg<2, ()>>(), g::send::<1, 0, Return>()),
             ),
         );
         let choice = g::route(
@@ -1305,14 +1279,14 @@ async fn nested_choice_remains_available_after_its_outer_parallel_sibling_finish
         worker.send::<Msg<6, ()>>(&()).await.unwrap();
         service.recv::<Msg<6, ()>>().await.unwrap();
 
-        owner.send::<Loan<'_>>(db).await.unwrap();
-        let mut db = worker.recv::<Loan<'_>>().await.unwrap();
+        owner.send::<Loan>(db).await.unwrap();
+        let mut db = worker.recv::<Loan>().await.unwrap();
         db.send::<Msg<1, ()>>(&()).await.unwrap();
         service.recv::<Msg<1, ()>>().await.unwrap();
         service.send::<Msg<2, ()>>(&()).await.unwrap();
         db.recv::<Msg<2, ()>>().await.unwrap();
-        worker.send::<Return<'_>>(db).await.unwrap();
-        let _db = owner.recv::<Return<'_>>().await.unwrap();
+        worker.send::<Return>(db).await.unwrap();
+        let _db = owner.recv::<Return>().await.unwrap();
     };
 
     Ok(())
@@ -1448,8 +1422,6 @@ async fn parallel_choice_is_observable_before_a_sequential_resolver()
     Ok(())
 }
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport>;
-
 const LOCAL_ROLE: u8 = 1;
 const WORKER_ROLE: u8 = 2;
 const SIDE_ROLE: u8 = 3;
@@ -1479,12 +1451,6 @@ const DEAD_RIGHT_C: u8 = 229;
 const DEAD_RIGHT_E: u8 = 230;
 const DEAD_RIGHT_D: u8 = 231;
 const DEAD_RIGHT_POST: u8 = 232;
-
-std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-}
 
 fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let routed = g::route(
@@ -1586,588 +1552,792 @@ fn assert_join_blocked(rendered: &str) {
     );
 }
 
-async fn assert_send_rejected<F>(future: F, context: &str)
-where
-    F: core::future::Future<Output = core::result::Result<(), hibana::EndpointError>>,
-{
-    let err = future.await.expect_err(context);
-    assert_join_blocked(&format!("{err:?}"));
-}
-
-macro_rules! attach_three_roles {
-    ($rv:expr, $sid:expr, $program:ident) => {{
-        let sid = SessionId::new($sid);
-        (
-            $rv.enter(sid, &$program::<LOCAL_ROLE>())
-                .expect("attach local role"),
-            $rv.enter(sid, &$program::<WORKER_ROLE>())
-                .expect("attach worker role"),
-            $rv.enter(sid, &$program::<OBSERVER_ROLE>())
-                .expect("attach observer role"),
-        )
-    }};
-}
-
-macro_rules! attach_four_roles {
-    ($rv:expr, $sid:expr, $program:ident) => {{
-        let sid = SessionId::new($sid);
-        (
-            $rv.enter(sid, &$program::<LOCAL_ROLE>())
-                .expect("attach local role"),
-            $rv.enter(sid, &$program::<WORKER_ROLE>())
-                .expect("attach worker role"),
-            $rv.enter(sid, &$program::<SIDE_ROLE>())
-                .expect("attach side role"),
-            $rv.enter(sid, &$program::<OBSERVER_ROLE>())
-                .expect("attach observer role"),
-        )
-    }};
-}
-
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            futures::executor::block_on(async {
-                {
-                    let (mut local, mut worker, observer) =
-                        attach_three_roles!(rv, 98, route_right_parallel_dead_program);
-                    local
-                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch
-                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
-                            .await
-                            .expect("recv A"),
-                        1
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
-                        "unselected right nested-par B must be dead",
+async fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
+    let mut slab = [0; 64 * 1024];
+    {
+        let mut storage = SessionKitStorage::uninit();
+        let cluster = storage.init();
+        let transport = TestTransport::new();
+        let rv = cluster
+            .rendezvous(&mut slab, transport)
+            .expect("register rendezvous");
+        (async {
+            {
+                let (mut local, mut worker, observer) = {
+                    let sid = SessionId::new(98);
+                    (
+                        rv.enter(sid, &route_right_parallel_dead_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &route_right_parallel_dead_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &route_right_parallel_dead_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
                     )
-                    .await;
-                    core::hint::black_box(observer);
-                }
-                {
-                    let (mut local, mut worker, observer) =
-                        attach_three_roles!(rv, 99, route_right_parallel_dead_program);
-                    local
-                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch
-                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
-                            .await
-                            .expect("recv A"),
-                        1
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
-                        "unselected right nested-par C must be dead",
-                    )
-                    .await;
-                    core::hint::black_box(observer);
-                }
-                {
-                    let (mut local, mut worker, mut observer) =
-                        attach_three_roles!(rv, 100, route_right_parallel_dead_program);
-                    local
-                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    local
-                        .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
-                        .await
-                        .expect("send post route");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch
-                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
-                            .await
-                            .expect("recv A"),
-                        1
-                    );
-                    assert_eq!(
-                        observer
-                            .recv::<Msg<DEAD_RIGHT_POST, u8>>()
-                            .await
-                            .expect("recv post"),
-                        2
-                    );
-                }
-            });
-        });
-    });
-}
-
-#[test]
-fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            futures::executor::block_on(async {
-                {
-                    let (mut local, mut worker, observer) =
-                        attach_three_roles!(rv, 101, parallel_route_right_parallel_dead_program);
-                    local
-                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch
-                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
-                            .await
-                            .expect("recv A"),
-                        1
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<DEAD_RIGHT_POST, u8>>(&0),
-                        "outer par join must still wait for sibling E",
-                    )
-                    .await;
-                    core::hint::black_box(observer);
-                }
-                {
-                    let (mut local, mut worker, mut observer) =
-                        attach_three_roles!(rv, 102, parallel_route_right_parallel_dead_program);
-                    local
-                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    local
-                        .send::<Msg<DEAD_RIGHT_E, u8>>(&2)
-                        .await
-                        .expect("send E");
-                    local
-                        .send::<Msg<DEAD_RIGHT_POST, u8>>(&3)
-                        .await
-                        .expect("send post");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch
-                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
-                            .await
-                            .expect("recv A"),
-                        1
-                    );
-                    assert_eq!(
-                        observer
-                            .recv::<Msg<DEAD_RIGHT_E, u8>>()
-                            .await
-                            .expect("recv E"),
-                        2
-                    );
-                    assert_eq!(
-                        observer
-                            .recv::<Msg<DEAD_RIGHT_POST, u8>>()
-                            .await
-                            .expect("recv post"),
-                        3
-                    );
-                }
-            });
-        });
-    });
-}
-
-#[test]
-fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            futures::executor::block_on(async {
-                for (sid, label) in [
-                    (103, DEAD_RIGHT_B),
-                    (104, DEAD_RIGHT_C),
-                    (105, DEAD_RIGHT_D),
-                ] {
-                    let (mut local, mut worker, observer) =
-                        attach_three_roles!(rv, sid, outer_left_kills_nested_right_route_program);
-                    local
-                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch
-                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
-                            .await
-                            .expect("recv A"),
-                        1
-                    );
-                    let rejected = match label {
-                        DEAD_RIGHT_B => local.send::<Msg<DEAD_RIGHT_B, u8>>(&0).await,
-                        DEAD_RIGHT_C => local.send::<Msg<DEAD_RIGHT_C, u8>>(&0).await,
-                        DEAD_RIGHT_D => local.send::<Msg<DEAD_RIGHT_D, u8>>(&0).await,
-                        _ => unreachable!(),
-                    }
-                    .expect_err("nested right event must be dead after outer left selection");
-                    assert_join_blocked(&format!("{rejected:?}"));
-                    core::hint::black_box(observer);
-                }
-                {
-                    let (mut local, mut worker, mut observer) =
-                        attach_three_roles!(rv, 106, outer_left_kills_nested_right_route_program);
-                    local
-                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    local
-                        .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
-                        .await
-                        .expect("send post route");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch
-                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
-                            .await
-                            .expect("recv A"),
-                        1
-                    );
-                    assert_eq!(
-                        observer
-                            .recv::<Msg<DEAD_RIGHT_POST, u8>>()
-                            .await
-                            .expect("recv post"),
-                        2
-                    );
-                }
-            });
-        });
-    });
-}
-
-#[test]
-fn route_selected_left_keeps_entire_nested_parallel_path_live() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            futures::executor::block_on(async {
-                {
-                    let (mut local, mut worker, side, observer) =
-                        attach_four_roles!(rv, 107, route_left_nested_parallel_program);
-                    local
-                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
-                        1
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<ROUTE_PAR_R, u8>>(&0),
-                        "right arm must be unselected after A commits",
-                    )
-                    .await;
-                    core::hint::black_box((side, observer));
-                }
-                {
-                    let (mut local, mut worker, side, observer) =
-                        attach_four_roles!(rv, 108, route_left_nested_parallel_program);
-                    local
-                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
-                        1
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<ROUTE_PAR_D, u8>>(&0),
-                        "D must wait for B and C",
-                    )
-                    .await;
-                    core::hint::black_box((side, observer));
-                }
-                {
-                    let (mut local, mut worker, mut side, observer) =
-                        attach_four_roles!(rv, 109, route_left_nested_parallel_program);
-                    local
-                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    local
-                        .send::<Msg<ROUTE_PAR_B, u8>>(&2)
-                        .await
-                        .expect("send B");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
-                        1
-                    );
-                    assert_eq!(
-                        side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
-                        2
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<ROUTE_PAR_D, u8>>(&0),
-                        "D must still wait for C",
-                    )
-                    .await;
-                    core::hint::black_box(observer);
-                }
-                {
-                    let (mut local, mut worker, mut side, mut observer) =
-                        attach_four_roles!(rv, 110, route_left_nested_parallel_program);
-                    local
-                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
-                        .await
-                        .expect("send A");
-                    local
-                        .send::<Msg<ROUTE_PAR_B, u8>>(&2)
-                        .await
-                        .expect("send B");
-                    local
-                        .send::<Msg<ROUTE_PAR_C, u8>>(&3)
-                        .await
-                        .expect("send C");
-                    local
-                        .send::<Msg<ROUTE_PAR_D, u8>>(&4)
-                        .await
-                        .expect("send D");
-                    local
-                        .send::<Msg<ROUTE_PAR_POST, u8>>(&5)
-                        .await
-                        .expect("send Post");
-                    let branch = worker.offer().await.expect("offer A");
-                    assert_eq!(
-                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
-                        1
-                    );
-                    assert_eq!(
-                        side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
-                        2
-                    );
-                    assert_eq!(
-                        observer
-                            .recv::<Msg<ROUTE_PAR_C, u8>>()
-                            .await
-                            .expect("recv C"),
-                        3
-                    );
-                    assert_eq!(
-                        worker.recv::<Msg<ROUTE_PAR_D, u8>>().await.expect("recv D"),
-                        4
-                    );
-                    assert_eq!(
-                        observer
-                            .recv::<Msg<ROUTE_PAR_POST, u8>>()
-                            .await
-                            .expect("recv Post"),
-                        5
-                    );
-                }
-            });
-        });
-    });
-}
-
-#[test]
-fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            futures::executor::block_on(async {
-                {
-                    let (mut local, mut worker, side, observer) =
-                        attach_four_roles!(rv, 111, program);
-                    local
-                        .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
-                        .await
-                        .expect("send route payload");
-                    let branch = worker.offer().await.expect("offer route payload");
-                    assert_eq!(
-                        branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
-                        10
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<JOIN, u8>>(&0),
-                        "join must wait for the sibling parallel lane",
-                    )
-                    .await;
-                    core::hint::black_box((side, observer));
-                }
-                {
-                    let (mut local, mut worker, mut side, observer) =
-                        attach_four_roles!(rv, 112, program);
-                    local
-                        .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
-                        .await
-                        .expect("send route payload");
-                    local
-                        .send::<Msg<SIDE_REQ, u8>>(&20)
-                        .await
-                        .expect("send side");
-                    let branch = worker.offer().await.expect("offer route payload");
-                    assert_eq!(
-                        branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
-                        10
-                    );
-                    assert_eq!(
-                        side.recv::<Msg<SIDE_REQ, u8>>().await.expect("recv side"),
-                        20
-                    );
-                    assert_send_rejected(
-                        local.send::<Msg<JOIN, u8>>(&0),
-                        "join must wait for the sibling lane response",
-                    )
-                    .await;
-                    core::hint::black_box(observer);
-                }
-                {
-                    let (mut local, mut worker, mut side, mut observer) =
-                        attach_four_roles!(rv, 113, program);
-                    local
-                        .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
-                        .await
-                        .expect("send route payload");
-                    local
-                        .send::<Msg<SIDE_REQ, u8>>(&20)
-                        .await
-                        .expect("send side");
-                    let branch = worker.offer().await.expect("offer route payload");
-                    assert_eq!(
-                        branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
-                        10
-                    );
-                    assert_eq!(
-                        side.recv::<Msg<SIDE_REQ, u8>>().await.expect("recv side"),
-                        20
-                    );
-                    side.send::<Msg<SIDE_RET, u8>>(&30)
-                        .await
-                        .expect("send response");
-                    assert_eq!(
-                        local
-                            .recv::<Msg<SIDE_RET, u8>>()
-                            .await
-                            .expect("recv response"),
-                        30
-                    );
-                    local.send::<Msg<JOIN, u8>>(&40).await.expect("send join");
-                    assert_eq!(
-                        observer.recv::<Msg<JOIN, u8>>().await.expect("recv join"),
-                        40
-                    );
-                }
-            });
-        });
-    });
-}
-
-#[test]
-fn nested_parallel_join_requires_every_dependency_before_post() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            futures::executor::block_on(async {
-                {
-                    let (mut local, worker, side, mut observer) =
-                        attach_four_roles!(rv, 114, nested_parallel_join_program);
-                    local.send::<Msg<PAR_E, u8>>(&4).await.expect("send E");
-                    assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
-                    assert_send_rejected(
-                        local.send::<Msg<PAR_POST, u8>>(&0),
-                        "Post must still wait for the left parallel branch",
-                    )
-                    .await;
-                    core::hint::black_box((worker, side));
-                }
-                {
-                    let (mut local, mut worker, side, observer) =
-                        attach_four_roles!(rv, 115, nested_parallel_join_program);
-                    local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
-                    assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
-                    assert_send_rejected(local.send::<Msg<PAR_D, u8>>(&0), "D must wait for B")
-                        .await;
-                    core::hint::black_box((side, observer));
-                }
-            });
-        });
-    });
-}
-
-#[test]
-fn nested_parallel_join_commits_post_after_sibling_first_completion() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let transport = TestTransport::new();
-            let rv = cluster
-                .rendezvous(slab, transport)
-                .expect("register rendezvous");
-            let sid = SessionId::new(94);
-
-            let mut local = rv
-                .enter(sid, &nested_parallel_join_program::<LOCAL_ROLE>())
-                .expect("attach local role");
-            let mut worker = rv
-                .enter(sid, &nested_parallel_join_program::<WORKER_ROLE>())
-                .expect("attach worker role");
-            let mut side = rv
-                .enter(sid, &nested_parallel_join_program::<SIDE_ROLE>())
-                .expect("attach side role");
-            let mut observer = rv
-                .enter(sid, &nested_parallel_join_program::<OBSERVER_ROLE>())
-                .expect("attach observer role");
-
-            futures::executor::block_on(async {
+                };
                 local
-                    .send::<Msg<PAR_E, u8>>(&4)
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                     .await
-                    .expect("send E before nested left branch completes");
-                local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
-                local.send::<Msg<PAR_B, u8>>(&2).await.expect("send B");
-                local.send::<Msg<PAR_D, u8>>(&3).await.expect("send D");
+                    .expect("send A");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("recv A"),
+                    1
+                );
+                {
+                    let err = local
+                        .send::<Msg<DEAD_RIGHT_B, u8>>(&0)
+                        .await
+                        .expect_err("unselected right nested-par B must be dead");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box(observer);
+            }
+            {
+                let (mut local, mut worker, observer) = {
+                    let sid = SessionId::new(99);
+                    (
+                        rv.enter(sid, &route_right_parallel_dead_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &route_right_parallel_dead_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &route_right_parallel_dead_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
                 local
-                    .send::<Msg<PAR_POST, u8>>(&5)
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                     .await
-                    .expect("send Post");
-
-                assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
-                assert_eq!(side.recv::<Msg<PAR_B, u8>>().await.expect("recv B"), 2);
-                assert_eq!(worker.recv::<Msg<PAR_D, u8>>().await.expect("recv D"), 3);
-                assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
+                    .expect("send A");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("recv A"),
+                    1
+                );
+                {
+                    let err = local
+                        .send::<Msg<DEAD_RIGHT_C, u8>>(&0)
+                        .await
+                        .expect_err("unselected right nested-par C must be dead");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box(observer);
+            }
+            {
+                let (mut local, mut worker, mut observer) = {
+                    let sid = SessionId::new(100);
+                    (
+                        rv.enter(sid, &route_right_parallel_dead_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &route_right_parallel_dead_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &route_right_parallel_dead_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                local
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
+                    .await
+                    .expect("send post route");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("recv A"),
+                    1
+                );
                 assert_eq!(
                     observer
-                        .recv::<Msg<PAR_POST, u8>>()
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv post"),
+                    2
+                );
+            }
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
+    let mut slab = [0; 64 * 1024];
+    {
+        let mut storage = SessionKitStorage::uninit();
+        let cluster = storage.init();
+        let transport = TestTransport::new();
+        let rv = cluster
+            .rendezvous(&mut slab, transport)
+            .expect("register rendezvous");
+        (async {
+            {
+                let (mut local, mut worker, observer) = {
+                    let sid = SessionId::new(101);
+                    (
+                        rv.enter(
+                            sid,
+                            &parallel_route_right_parallel_dead_program::<LOCAL_ROLE>(),
+                        )
+                        .expect("attach LOCAL_ROLE"),
+                        rv.enter(
+                            sid,
+                            &parallel_route_right_parallel_dead_program::<WORKER_ROLE>(),
+                        )
+                        .expect("attach WORKER_ROLE"),
+                        rv.enter(
+                            sid,
+                            &parallel_route_right_parallel_dead_program::<OBSERVER_ROLE>(),
+                        )
+                        .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("recv A"),
+                    1
+                );
+                {
+                    let err = local
+                        .send::<Msg<DEAD_RIGHT_POST, u8>>(&0)
+                        .await
+                        .expect_err("outer par join must still wait for sibling E");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box(observer);
+            }
+            {
+                let (mut local, mut worker, mut observer) = {
+                    let sid = SessionId::new(102);
+                    (
+                        rv.enter(
+                            sid,
+                            &parallel_route_right_parallel_dead_program::<LOCAL_ROLE>(),
+                        )
+                        .expect("attach LOCAL_ROLE"),
+                        rv.enter(
+                            sid,
+                            &parallel_route_right_parallel_dead_program::<WORKER_ROLE>(),
+                        )
+                        .expect("attach WORKER_ROLE"),
+                        rv.enter(
+                            sid,
+                            &parallel_route_right_parallel_dead_program::<OBSERVER_ROLE>(),
+                        )
+                        .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                local
+                    .send::<Msg<DEAD_RIGHT_E, u8>>(&2)
+                    .await
+                    .expect("send E");
+                local
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&3)
+                    .await
+                    .expect("send post");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("recv A"),
+                    1
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_E, u8>>()
+                        .await
+                        .expect("recv E"),
+                    2
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv post"),
+                    3
+                );
+            }
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
+    let mut slab = [0; 64 * 1024];
+    {
+        let mut storage = SessionKitStorage::uninit();
+        let cluster = storage.init();
+        let transport = TestTransport::new();
+        let rv = cluster
+            .rendezvous(&mut slab, transport)
+            .expect("register rendezvous");
+        (async {
+            for (sid, label) in [
+                (103, DEAD_RIGHT_B),
+                (104, DEAD_RIGHT_C),
+                (105, DEAD_RIGHT_D),
+            ] {
+                let (mut local, mut worker, observer) = {
+                    let sid = SessionId::new(sid);
+                    (
+                        rv.enter(
+                            sid,
+                            &outer_left_kills_nested_right_route_program::<LOCAL_ROLE>(),
+                        )
+                        .expect("attach LOCAL_ROLE"),
+                        rv.enter(
+                            sid,
+                            &outer_left_kills_nested_right_route_program::<WORKER_ROLE>(),
+                        )
+                        .expect("attach WORKER_ROLE"),
+                        rv.enter(
+                            sid,
+                            &outer_left_kills_nested_right_route_program::<OBSERVER_ROLE>(),
+                        )
+                        .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("recv A"),
+                    1
+                );
+                let rejected = match label {
+                    DEAD_RIGHT_B => local.send::<Msg<DEAD_RIGHT_B, u8>>(&0).await,
+                    DEAD_RIGHT_C => local.send::<Msg<DEAD_RIGHT_C, u8>>(&0).await,
+                    DEAD_RIGHT_D => local.send::<Msg<DEAD_RIGHT_D, u8>>(&0).await,
+                    _ => unreachable!(),
+                }
+                .expect_err("nested right event must be dead after outer left selection");
+                assert_join_blocked(&format!("{rejected:?}"));
+                core::hint::black_box(observer);
+            }
+            {
+                let (mut local, mut worker, mut observer) = {
+                    let sid = SessionId::new(106);
+                    (
+                        rv.enter(
+                            sid,
+                            &outer_left_kills_nested_right_route_program::<LOCAL_ROLE>(),
+                        )
+                        .expect("attach LOCAL_ROLE"),
+                        rv.enter(
+                            sid,
+                            &outer_left_kills_nested_right_route_program::<WORKER_ROLE>(),
+                        )
+                        .expect("attach WORKER_ROLE"),
+                        rv.enter(
+                            sid,
+                            &outer_left_kills_nested_right_route_program::<OBSERVER_ROLE>(),
+                        )
+                        .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                local
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
+                    .await
+                    .expect("send post route");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                        .await
+                        .expect("recv A"),
+                    1
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv post"),
+                    2
+                );
+            }
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn route_selected_left_keeps_entire_nested_parallel_path_live() {
+    let mut slab = [0; 64 * 1024];
+    {
+        let mut storage = SessionKitStorage::uninit();
+        let cluster = storage.init();
+        let transport = TestTransport::new();
+        let rv = cluster
+            .rendezvous(&mut slab, transport)
+            .expect("register rendezvous");
+        (async {
+            {
+                let (mut local, mut worker, side, observer) = {
+                    let sid = SessionId::new(107);
+                    (
+                        rv.enter(sid, &route_left_nested_parallel_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<ROUTE_PAR_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                    1
+                );
+                {
+                    let err = local
+                        .send::<Msg<ROUTE_PAR_R, u8>>(&0)
+                        .await
+                        .expect_err("right arm must be unselected after A commits");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box((side, observer));
+            }
+            {
+                let (mut local, mut worker, side, observer) = {
+                    let sid = SessionId::new(108);
+                    (
+                        rv.enter(sid, &route_left_nested_parallel_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<ROUTE_PAR_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                    1
+                );
+                {
+                    let err = local
+                        .send::<Msg<ROUTE_PAR_D, u8>>(&0)
+                        .await
+                        .expect_err("D must wait for B and C");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box((side, observer));
+            }
+            {
+                let (mut local, mut worker, mut side, observer) = {
+                    let sid = SessionId::new(109);
+                    (
+                        rv.enter(sid, &route_left_nested_parallel_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<ROUTE_PAR_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                local
+                    .send::<Msg<ROUTE_PAR_B, u8>>(&2)
+                    .await
+                    .expect("send B");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                    1
+                );
+                assert_eq!(
+                    side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
+                    2
+                );
+                {
+                    let err = local
+                        .send::<Msg<ROUTE_PAR_D, u8>>(&0)
+                        .await
+                        .expect_err("D must still wait for C");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box(observer);
+            }
+            {
+                let (mut local, mut worker, mut side, mut observer) = {
+                    let sid = SessionId::new(110);
+                    (
+                        rv.enter(sid, &route_left_nested_parallel_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &route_left_nested_parallel_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<ROUTE_PAR_A, u8>>(&1)
+                    .await
+                    .expect("send A");
+                local
+                    .send::<Msg<ROUTE_PAR_B, u8>>(&2)
+                    .await
+                    .expect("send B");
+                local
+                    .send::<Msg<ROUTE_PAR_C, u8>>(&3)
+                    .await
+                    .expect("send C");
+                local
+                    .send::<Msg<ROUTE_PAR_D, u8>>(&4)
+                    .await
+                    .expect("send D");
+                local
+                    .send::<Msg<ROUTE_PAR_POST, u8>>(&5)
+                    .await
+                    .expect("send Post");
+                let branch = worker.offer().await.expect("offer A");
+                assert_eq!(
+                    branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                    1
+                );
+                assert_eq!(
+                    side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
+                    2
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<ROUTE_PAR_C, u8>>()
+                        .await
+                        .expect("recv C"),
+                    3
+                );
+                assert_eq!(
+                    worker.recv::<Msg<ROUTE_PAR_D, u8>>().await.expect("recv D"),
+                    4
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<ROUTE_PAR_POST, u8>>()
                         .await
                         .expect("recv Post"),
                     5
                 );
-            });
-        });
-    });
+            }
+        })
+        .await;
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn independent_rolled_admission_send_is_enabled_while_abi_input_is_quiet() {
+async fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
+    let mut slab = [0; 64 * 1024];
+    {
+        let mut storage = SessionKitStorage::uninit();
+        let cluster = storage.init();
+        let transport = TestTransport::new();
+        let rv = cluster
+            .rendezvous(&mut slab, transport)
+            .expect("register rendezvous");
+        (async {
+            {
+                let (mut local, mut worker, side, observer) = {
+                    let sid = SessionId::new(111);
+                    (
+                        rv.enter(sid, &program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
+                    .await
+                    .expect("send route payload");
+                let branch = worker.offer().await.expect("offer route payload");
+                assert_eq!(
+                    branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
+                    10
+                );
+                {
+                    let err = local
+                        .send::<Msg<JOIN, u8>>(&0)
+                        .await
+                        .expect_err("join must wait for the sibling parallel lane");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box((side, observer));
+            }
+            {
+                let (mut local, mut worker, mut side, observer) = {
+                    let sid = SessionId::new(112);
+                    (
+                        rv.enter(sid, &program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
+                    .await
+                    .expect("send route payload");
+                local
+                    .send::<Msg<SIDE_REQ, u8>>(&20)
+                    .await
+                    .expect("send side");
+                let branch = worker.offer().await.expect("offer route payload");
+                assert_eq!(
+                    branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
+                    10
+                );
+                assert_eq!(
+                    side.recv::<Msg<SIDE_REQ, u8>>().await.expect("recv side"),
+                    20
+                );
+                {
+                    let err = local
+                        .send::<Msg<JOIN, u8>>(&0)
+                        .await
+                        .expect_err("join must wait for the sibling lane response");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box(observer);
+            }
+            {
+                let (mut local, mut worker, mut side, mut observer) = {
+                    let sid = SessionId::new(113);
+                    (
+                        rv.enter(sid, &program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local
+                    .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
+                    .await
+                    .expect("send route payload");
+                local
+                    .send::<Msg<SIDE_REQ, u8>>(&20)
+                    .await
+                    .expect("send side");
+                let branch = worker.offer().await.expect("offer route payload");
+                assert_eq!(
+                    branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
+                    10
+                );
+                assert_eq!(
+                    side.recv::<Msg<SIDE_REQ, u8>>().await.expect("recv side"),
+                    20
+                );
+                side.send::<Msg<SIDE_RET, u8>>(&30)
+                    .await
+                    .expect("send response");
+                assert_eq!(
+                    local
+                        .recv::<Msg<SIDE_RET, u8>>()
+                        .await
+                        .expect("recv response"),
+                    30
+                );
+                local.send::<Msg<JOIN, u8>>(&40).await.expect("send join");
+                assert_eq!(
+                    observer.recv::<Msg<JOIN, u8>>().await.expect("recv join"),
+                    40
+                );
+            }
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn nested_parallel_join_requires_every_dependency_before_post() {
+    let mut slab = [0; 64 * 1024];
+    {
+        let mut storage = SessionKitStorage::uninit();
+        let cluster = storage.init();
+        let transport = TestTransport::new();
+        let rv = cluster
+            .rendezvous(&mut slab, transport)
+            .expect("register rendezvous");
+        (async {
+            {
+                let (mut local, worker, side, mut observer) = {
+                    let sid = SessionId::new(114);
+                    (
+                        rv.enter(sid, &nested_parallel_join_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &nested_parallel_join_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &nested_parallel_join_program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &nested_parallel_join_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local.send::<Msg<PAR_E, u8>>(&4).await.expect("send E");
+                assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
+                {
+                    let err = local
+                        .send::<Msg<PAR_POST, u8>>(&0)
+                        .await
+                        .expect_err("Post must still wait for the left parallel branch");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box((worker, side));
+            }
+            {
+                let (mut local, mut worker, side, observer) = {
+                    let sid = SessionId::new(115);
+                    (
+                        rv.enter(sid, &nested_parallel_join_program::<LOCAL_ROLE>())
+                            .expect("attach LOCAL_ROLE"),
+                        rv.enter(sid, &nested_parallel_join_program::<WORKER_ROLE>())
+                            .expect("attach WORKER_ROLE"),
+                        rv.enter(sid, &nested_parallel_join_program::<SIDE_ROLE>())
+                            .expect("attach SIDE_ROLE"),
+                        rv.enter(sid, &nested_parallel_join_program::<OBSERVER_ROLE>())
+                            .expect("attach OBSERVER_ROLE"),
+                    )
+                };
+                local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
+                assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
+                {
+                    let err = local
+                        .send::<Msg<PAR_D, u8>>(&0)
+                        .await
+                        .expect_err("D must wait for B");
+                    assert_join_blocked(&format!("{err:?}"));
+                }
+                core::hint::black_box((side, observer));
+            }
+        })
+        .await;
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn nested_parallel_join_commits_post_after_sibling_first_completion() {
+    let mut slab = [0; 64 * 1024];
+    {
+        let mut storage = SessionKitStorage::uninit();
+        let cluster = storage.init();
+        let transport = TestTransport::new();
+        let rv = cluster
+            .rendezvous(&mut slab, transport)
+            .expect("register rendezvous");
+        let sid = SessionId::new(94);
+
+        let mut local = rv
+            .enter(sid, &nested_parallel_join_program::<LOCAL_ROLE>())
+            .expect("attach local role");
+        let mut worker = rv
+            .enter(sid, &nested_parallel_join_program::<WORKER_ROLE>())
+            .expect("attach worker role");
+        let mut side = rv
+            .enter(sid, &nested_parallel_join_program::<SIDE_ROLE>())
+            .expect("attach side role");
+        let mut observer = rv
+            .enter(sid, &nested_parallel_join_program::<OBSERVER_ROLE>())
+            .expect("attach observer role");
+
+        {
+            local
+                .send::<Msg<PAR_E, u8>>(&4)
+                .await
+                .expect("send E before nested left branch completes");
+            local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
+            local.send::<Msg<PAR_B, u8>>(&2).await.expect("send B");
+            local.send::<Msg<PAR_D, u8>>(&3).await.expect("send D");
+            local
+                .send::<Msg<PAR_POST, u8>>(&5)
+                .await
+                .expect("send Post");
+
+            assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
+            assert_eq!(side.recv::<Msg<PAR_B, u8>>().await.expect("recv B"), 2);
+            assert_eq!(worker.recv::<Msg<PAR_D, u8>>().await.expect("recv D"), 3);
+            assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
+            assert_eq!(
+                observer
+                    .recv::<Msg<PAR_POST, u8>>()
+                    .await
+                    .expect("recv Post"),
+                5
+            );
+        }
+    };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn independent_rolled_admission_send_is_enabled_while_abi_input_is_quiet() {
     let bootstrap = g::seq(
         g::seq(g::send::<2, 0, Msg<1, ()>>(), g::send::<0, 2, Msg<2, ()>>()),
         g::seq(g::send::<2, 1, Msg<3, ()>>(), g::send::<1, 2, Msg<4, ()>>()),
@@ -2210,7 +2380,7 @@ fn independent_rolled_admission_send_is_enabled_while_abi_input_is_quiet() {
     let mut app = rendezvous.enter(sid, &app_program).unwrap();
     let mut abi = rendezvous.enter(sid, &abi_program).unwrap();
     let mut owner = rendezvous.enter(sid, &owner_program).unwrap();
-    futures::executor::block_on(async {
+    {
         owner.send::<Msg<1, ()>>(&()).await.unwrap();
         app.recv::<Msg<1, ()>>().await.unwrap();
         app.send::<Msg<2, ()>>(&()).await.unwrap();
@@ -2239,6 +2409,6 @@ fn independent_rolled_admission_send_is_enabled_while_abi_input_is_quiet() {
             .unwrap();
         app.send::<Msg<8, ()>>(&()).await.unwrap();
         abi.recv::<Msg<8, ()>>().await.unwrap();
-    });
+    }
     assert!(transport.queue_is_empty());
 }

@@ -16,7 +16,7 @@ async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish()
     type OtherNext = g::Msg<8, ()>;
     type Returned<'r> = g::Msg<9, Endpoint<'r, 3>>;
     let global = g::seq(
-        g::send::<0, 1, Loan<'_>>(),
+        g::send::<0, 1, Loan>(),
         g::seq(
             g::seq(
                 g::par(
@@ -33,7 +33,7 @@ async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish()
                 ),
                 g::route(g::send::<3, 1, Next>(), g::send::<3, 1, OtherNext>()).resolve::<1>(),
             ),
-            g::send::<1, 0, Returned<'_>>(),
+            g::send::<1, 0, Returned>(),
         ),
     );
     let p0 = project::<0>(&global);
@@ -68,7 +68,7 @@ async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish()
     (async {
         async {
             async {
-                owner.send::<Loan<'_>>(db).await?;
+                owner.send::<Loan>(db).await?;
                 {
                     let [mut left] = owner.par()?;
                     for _ in 0..2 {
@@ -76,12 +76,12 @@ async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish()
                     }
                     left.send::<LeftDone>(&()).await?;
                 }
-                let _db = owner.recv::<Returned<'_>>().await?;
+                let _db = owner.recv::<Returned>().await?;
                 Ok::<_, crate::EndpointError>(())
             };
 
             async {
-                let mut db = worker.recv::<Loan<'_>>().await?;
+                let mut db = worker.recv::<Loan>().await?;
                 {
                     let [mut left, mut right] = db.par()?;
                     async {
@@ -105,7 +105,7 @@ async fn a_delegated_view_offers_its_continuation_after_parallel_rolls_finish()
                 assert_eq!(next.label(), 7);
                 next.send::<Next>(&()).await?;
                 worker.recv::<Next>().await?;
-                worker.send::<Returned<'_>>(db).await
+                worker.send::<Returned>(db).await
             };
 
             async {

@@ -750,12 +750,30 @@ async fn received_resource_endpoint_selects_its_own_resolved_route()
         let mut service = rv.enter(sid, &service_program).unwrap();
         owner.send::<Loan>(db).await.unwrap();
         let mut db = worker.recv::<Loan>().await.unwrap();
-        assert!(futures::poll!(worker.offer()).is_pending());
+        assert!(
+            {
+                let mut offer = core::pin::pin!(worker.offer());
+                core::future::poll_fn(|cx| {
+                    core::task::Poll::Ready(core::future::Future::poll(offer.as_mut(), cx))
+                })
+                .await
+            }
+            .is_pending()
+        );
         assert_eq!(resolver_calls.get(), 0);
-        let branch = match futures::poll!(db.offer()) {
-            core::task::Poll::Ready(result) => result.unwrap(),
-            core::task::Poll::Pending => {
-                panic!("a resource's enabled resolver must not wait for ingress")
+        let branch = {
+            let offered = {
+                let mut offer = core::pin::pin!(db.offer());
+                core::future::poll_fn(|cx| {
+                    core::task::Poll::Ready(core::future::Future::poll(offer.as_mut(), cx))
+                })
+                .await
+            };
+            match offered {
+                core::task::Poll::Ready(result) => result.unwrap(),
+                core::task::Poll::Pending => {
+                    panic!("a resource's enabled resolver must not wait for ingress")
+                }
             }
         };
         assert_eq!(branch.label(), 3);
@@ -941,10 +959,22 @@ async fn two_received_resources_select_parallel_routes_without_serializing_their
                 let _: () = (async {
                     for (number, arm) in [(11, DecisionArm::Left), (13, DecisionArm::Right)] {
                         auth_choice.set(arm);
-                        let branch = match futures::poll!(auth.offer()) {
-                            core::task::Poll::Ready(result) => result.unwrap(),
-                            core::task::Poll::Pending => {
-                                panic!("the second resource route is independently enabled")
+                        let branch = {
+                            let offered = {
+                                let mut offer = core::pin::pin!(auth.offer());
+                                core::future::poll_fn(|cx| {
+                                    core::task::Poll::Ready(core::future::Future::poll(
+                                        offer.as_mut(),
+                                        cx,
+                                    ))
+                                })
+                                .await
+                            };
+                            match offered {
+                                core::task::Poll::Ready(result) => result.unwrap(),
+                                core::task::Poll::Pending => {
+                                    panic!("the second resource route is independently enabled")
+                                }
                             }
                         };
                         match branch.label() {
@@ -963,10 +993,22 @@ async fn two_received_resources_select_parallel_routes_without_serializing_their
                 let _: () = (async {
                     for (number, arm) in [(7, DecisionArm::Left), (9, DecisionArm::Right)] {
                         db_choice.set(arm);
-                        let branch = match futures::poll!(db.offer()) {
-                            core::task::Poll::Ready(result) => result.unwrap(),
-                            core::task::Poll::Pending => {
-                                panic!("the first resource route is independently enabled")
+                        let branch = {
+                            let offered = {
+                                let mut offer = core::pin::pin!(db.offer());
+                                core::future::poll_fn(|cx| {
+                                    core::task::Poll::Ready(core::future::Future::poll(
+                                        offer.as_mut(),
+                                        cx,
+                                    ))
+                                })
+                                .await
+                            };
+                            match offered {
+                                core::task::Poll::Ready(result) => result.unwrap(),
+                                core::task::Poll::Pending => {
+                                    panic!("the first resource route is independently enabled")
+                                }
                             }
                         };
                         match branch.label() {

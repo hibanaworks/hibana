@@ -183,7 +183,7 @@ async fn a_later_owned_receive_preserves_the_transferred_endpoints_continuation(
     type Value = g::Msg<4, u64>;
     let global = g::seq(
         g::route(
-            g::seq(g::send::<0, 1, Notice>(), g::send::<0, 1, Loan<'_>>()),
+            g::seq(g::send::<0, 1, Notice>(), g::send::<0, 1, Loan>()),
             g::send::<0, 1, Other>(),
         ),
         g::seq(g::send::<2, 3, Read>(), g::send::<3, 2, Value>()),
@@ -211,7 +211,7 @@ async fn a_later_owned_receive_preserves_the_transferred_endpoints_continuation(
         async {
             async {
                 owner.send::<Notice>(&()).await?;
-                owner.send::<Loan<'_>>(db).await
+                owner.send::<Loan>(db).await
             };
 
             async {
@@ -219,7 +219,7 @@ async fn a_later_owned_receive_preserves_the_transferred_endpoints_continuation(
                 let loan = worker.offer().await?;
                 assert_eq!(loan.label(), 1);
                 drop(loan);
-                let mut db = worker.offer().await?.recv::<Loan<'_>>().await?;
+                let mut db = worker.offer().await?.recv::<Loan>().await?;
                 db.send::<Read>(&41).await?;
                 assert_eq!(db.recv::<Value>().await?, 42);
                 Ok::<_, EndpointError>(())

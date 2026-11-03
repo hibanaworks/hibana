@@ -82,7 +82,11 @@ async fn independent_roll_and_route_progress_while_another_roll_waits_for_input(
         let [mut x_peer, mut y_peer, mut reply] = c.par().unwrap();
         {
             let mut receive = pin!(waiting.recv::<A>());
-            assert!(futures::poll!(receive.as_mut()).is_pending());
+            assert!(
+                core::future::poll_fn(|cx| { Poll::Ready(receive.as_mut().poll(cx)) })
+                    .await
+                    .is_pending()
+            );
             (async {
                 async {
                     async {

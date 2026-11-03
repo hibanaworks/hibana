@@ -1,15 +1,9 @@
 mod common;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
-
-use core::cell::UnsafeCell;
-use std::cell::RefCell;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use common::TestTransport;
 use hibana::{
-    Endpoint,
     g::{self, Message, Msg},
     runtime::{
         SessionKitStorage,
@@ -19,10 +13,6 @@ use hibana::{
         tap,
     },
 };
-use runtime_support::with_runtime_workspace;
-use tls_ref_support::with_resident_tls_ref;
-
-type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const ROW_RESOLVER: u16 = 0x0310;
 const SAME_LABEL_RESOLVER: u16 = 0x0311;
@@ -90,114 +80,6 @@ const MIXED_PAR_SIBLING_ACK: u8 = 83;
 const MIXED_OUTER_LEFT_REQ: u8 = 84;
 const MIXED_OUTER_LEFT_ACK: u8 = 85;
 
-static UNIT: () = ();
-
-std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static SCRIPTS: RefCell<ResolverScripts> = RefCell::new(ResolverScripts::new());
-}
-
-#[derive(Clone, Copy)]
-enum ScriptSlot {
-    Row,
-    SameLabel,
-    Outer,
-    Inner,
-    ParLeft,
-    ParRight,
-    PassiveOffer,
-    DeepOuter,
-    DeepMiddle,
-    DeepInner,
-}
-
-#[derive(Default)]
-struct DecisionScript {
-    decisions: Vec<DecisionArm>,
-    cursor: usize,
-    calls: usize,
-}
-
-impl DecisionScript {
-    fn set(&mut self, decisions: &[DecisionArm]) {
-        self.decisions.clear();
-        self.decisions.extend_from_slice(decisions);
-        self.cursor = 0;
-        self.calls = 0;
-    }
-
-    fn pop(&mut self) -> Result<DecisionArm, ResolverError> {
-        let decision = self
-            .decisions
-            .get(self.cursor)
-            .copied()
-            .expect("resolver script exhausted");
-        self.cursor += 1;
-        self.calls += 1;
-        Ok(decision)
-    }
-}
-
-#[derive(Default)]
-struct ResolverScripts {
-    row: DecisionScript,
-    same_label: DecisionScript,
-    outer: DecisionScript,
-    inner: DecisionScript,
-    par_left: DecisionScript,
-    par_right: DecisionScript,
-    passive_offer: DecisionScript,
-    deep_outer: DecisionScript,
-    deep_middle: DecisionScript,
-    deep_inner: DecisionScript,
-}
-
-impl ResolverScripts {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn script_mut(&mut self, slot: ScriptSlot) -> &mut DecisionScript {
-        match slot {
-            ScriptSlot::Row => &mut self.row,
-            ScriptSlot::SameLabel => &mut self.same_label,
-            ScriptSlot::Outer => &mut self.outer,
-            ScriptSlot::Inner => &mut self.inner,
-            ScriptSlot::ParLeft => &mut self.par_left,
-            ScriptSlot::ParRight => &mut self.par_right,
-            ScriptSlot::PassiveOffer => &mut self.passive_offer,
-            ScriptSlot::DeepOuter => &mut self.deep_outer,
-            ScriptSlot::DeepMiddle => &mut self.deep_middle,
-            ScriptSlot::DeepInner => &mut self.deep_inner,
-        }
-    }
-
-    fn script(&self, slot: ScriptSlot) -> &DecisionScript {
-        match slot {
-            ScriptSlot::Row => &self.row,
-            ScriptSlot::SameLabel => &self.same_label,
-            ScriptSlot::Outer => &self.outer,
-            ScriptSlot::Inner => &self.inner,
-            ScriptSlot::ParLeft => &self.par_left,
-            ScriptSlot::ParRight => &self.par_right,
-            ScriptSlot::PassiveOffer => &self.passive_offer,
-            ScriptSlot::DeepOuter => &self.deep_outer,
-            ScriptSlot::DeepMiddle => &self.deep_middle,
-            ScriptSlot::DeepInner => &self.deep_inner,
-        }
-    }
-}
-
-fn set_script(slot: ScriptSlot, decisions: &[DecisionArm]) {
-    SCRIPTS.with(|scripts| scripts.borrow_mut().script_mut(slot).set(decisions));
-}
-
-fn calls(slot: ScriptSlot) -> usize {
-    SCRIPTS.with(|scripts| scripts.borrow().script(slot).calls)
-}
-
 fn last_route_selection(events: &[tap::TapEvent]) -> Option<tap::TapEvent> {
     events
         .iter()
@@ -213,48 +95,13 @@ fn route_selection_count(events: &[tap::TapEvent]) -> usize {
         .count()
 }
 
-fn decide(slot: ScriptSlot) -> Result<DecisionArm, ResolverError> {
-    SCRIPTS.with(|scripts| scripts.borrow_mut().script_mut(slot).pop())
-}
-
-fn decide_row(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::Row)
-}
-
-fn decide_same_label(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::SameLabel)
-}
-
-fn decide_outer(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::Outer)
-}
-
-fn decide_inner(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::Inner)
-}
-
-fn decide_par_left(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::ParLeft)
-}
-
-fn decide_par_right(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::ParRight)
-}
-
-fn decide_passive_offer(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::PassiveOffer)
-}
-
-fn decide_deep_outer(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::DeepOuter)
-}
-
-fn decide_deep_middle(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::DeepMiddle)
-}
-
-fn decide_deep_inner(_: &()) -> Result<DecisionArm, ResolverError> {
-    decide(ScriptSlot::DeepInner)
+fn next_decision(
+    (decisions, calls): &(&[DecisionArm], core::cell::Cell<usize>),
+) -> Result<DecisionArm, ResolverError> {
+    let index = calls.get();
+    let decision = *decisions.get(index).expect("resolver script exhausted");
+    calls.set(index + 1);
+    Ok(decision)
 }
 
 macro_rules! row {
@@ -462,96 +309,137 @@ fn rolled_resolved_mixed_right_arm_program<const ROLE: u8>() -> RoleProgram<ROLE
     )
 }
 
-async fn roundtrip_01<const REQ: u8, const ACK: u8>(
-    origin: &mut Endpoint<'static, 0>,
-    peer: &mut Endpoint<'static, 1>,
-    value: u32,
-) {
-    origin
-        .send::<Msg<REQ, u32>>(&value)
-        .await
-        .expect("request send");
-    assert_eq!(
-        peer.recv::<Msg<REQ, u32>>().await.expect("request recv"),
-        value
-    );
-    let ack = value + 10_000;
-    peer.send::<Msg<ACK, u32>>(&ack).await.expect("ack send");
-    assert_eq!(origin.recv::<Msg<ACK, u32>>().await.expect("ack recv"), ack);
-}
-
-async fn passive_offer_recv<const MSG: u8>(receiver: &mut Endpoint<'static, 0>, value: u32) {
-    let branch = receiver
-        .offer()
-        .await
-        .unwrap_or_else(|err| panic!("offer selected route arm for message {MSG}: {err:?}"));
-    assert_eq!(branch.label(), <Msg<MSG, u32> as Message>::LOGICAL_LABEL);
-    assert_eq!(
-        branch
-            .recv::<Msg<MSG, u32>>()
-            .await
-            .expect("passive branch recv"),
-        value
-    );
-}
-
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_resolved_route_reenters_left_right_left_rows() {
-    set_script(
-        ScriptSlot::Row,
+async fn rolled_resolved_route_reenters_left_right_left_rows() {
+    let row: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = rolled_resolved_row_program::<0>();
             let role1 = rolled_resolved_row_program::<1>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<ROW_RESOLVER>::decision_state(&UNIT, decide_row),
+                ResolverRef::<ROW_RESOLVER>::decision_state(&row, next_decision),
             )
             .expect("install row resolver");
             let sid = SessionId::new(0x0009_3001);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
-                roundtrip_01::<ROW_LEFT_REQ, ROW_LEFT_ACK>(&mut origin, &mut peer, 1).await;
-                roundtrip_01::<ROW_RIGHT_REQ, ROW_RIGHT_ACK>(&mut origin, &mut peer, 2).await;
-                roundtrip_01::<ROW_LEFT_REQ, ROW_LEFT_ACK>(&mut origin, &mut peer, 3).await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::Row), 3);
+            {
+                {
+                    origin
+                        .send::<Msg<ROW_LEFT_REQ, u32>>(&1)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<ROW_LEFT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        1
+                    );
+                    let ack = 1 + 10_000;
+                    peer.send::<Msg<ROW_LEFT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<ROW_LEFT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<ROW_RIGHT_REQ, u32>>(&2)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<ROW_RIGHT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        2
+                    );
+                    let ack = 2 + 10_000;
+                    peer.send::<Msg<ROW_RIGHT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<ROW_RIGHT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<ROW_LEFT_REQ, u32>>(&3)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<ROW_LEFT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        3
+                    );
+                    let ack = 3 + 10_000;
+                    peer.send::<Msg<ROW_LEFT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<ROW_LEFT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+            }
+        };
+    };
+    assert_eq!(row.1.get(), 3);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_resolved_same_label_reenters_with_selected_schema() {
-    set_script(
-        ScriptSlot::SameLabel,
+async fn rolled_resolved_same_label_reenters_with_selected_schema() {
+    let same_label: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = rolled_same_label_target_program::<0>();
             let role1 = rolled_same_label_target_program::<1>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<SAME_LABEL_RESOLVER>::decision_state(&UNIT, decide_same_label),
+                ResolverRef::<SAME_LABEL_RESOLVER>::decision_state(&same_label, next_decision),
             )
             .expect("install same-label resolver");
             let sid = SessionId::new(0x0009_3002);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            {
                 origin
                     .send::<Msg<SAME_REQ, u32>>(&11)
                     .await
@@ -584,42 +472,49 @@ fn rolled_resolved_same_label_reenters_with_selected_schema() {
                         .expect("left schema reentry recv"),
                     13
                 );
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::SameLabel), 3);
+            }
+        };
+    };
+    assert_eq!(same_label.1.get(), 3);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_nested_resolved_route_reenters_asymmetric_paths() {
-    set_script(
-        ScriptSlot::Outer,
+async fn rolled_nested_resolved_route_reenters_asymmetric_paths() {
+    let outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    set_script(ScriptSlot::Inner, &[DecisionArm::Right, DecisionArm::Left]);
-    with_runtime_workspace(|slab| {
+    let inner: (&[DecisionArm], core::cell::Cell<usize>) = (
+        &[DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
+    );
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = rolled_nested_resolved_program::<0>();
             let role1 = rolled_nested_resolved_program::<1>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
+                ResolverRef::<OUTER_RESOLVER>::decision_state(&outer, next_decision),
             )
             .expect("install outer resolver");
             rv.set_resolver(
                 &role0,
-                ResolverRef::<INNER_RESOLVER>::decision_state(&UNIT, decide_inner),
+                ResolverRef::<INNER_RESOLVER>::decision_state(&inner, next_decision),
             )
             .expect("install inner resolver");
             let sid = SessionId::new(0x0009_3003);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            {
                 origin
                     .send::<Msg<OUTER_PREFIX_REQ, u32>>(&21)
                     .await
@@ -680,43 +575,50 @@ fn rolled_nested_resolved_route_reenters_asymmetric_paths() {
                         .expect("inner left schema recv"),
                     25
                 );
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::Outer), 3);
-    assert_eq!(calls(ScriptSlot::Inner), 2);
+            }
+        };
+    };
+    assert_eq!(outer.1.get(), 3);
+    assert_eq!(inner.1.get(), 2);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths() {
-    set_script(
-        ScriptSlot::Outer,
+async fn rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths() {
+    let outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left, DecisionArm::Right],
+        core::cell::Cell::new(0),
     );
-    set_script(ScriptSlot::Inner, &[DecisionArm::Right, DecisionArm::Left]);
-    with_runtime_workspace(|slab| {
+    let inner: (&[DecisionArm], core::cell::Cell<usize>) = (
+        &[DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
+    );
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = rolled_mirrored_nested_resolved_program::<0>();
             let role1 = rolled_mirrored_nested_resolved_program::<1>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
+                ResolverRef::<OUTER_RESOLVER>::decision_state(&outer, next_decision),
             )
             .expect("install outer resolver");
             rv.set_resolver(
                 &role0,
-                ResolverRef::<INNER_RESOLVER>::decision_state(&UNIT, decide_inner),
+                ResolverRef::<INNER_RESOLVER>::decision_state(&inner, next_decision),
             )
             .expect("install inner resolver");
             let sid = SessionId::new(0x0009_3007);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
+            {
                 origin
                     .send::<Msg<MIRROR_OUTER_PREFIX_REQ, u32>>(&61)
                     .await
@@ -779,40 +681,44 @@ fn rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths() {
                         .expect("inner left schema recv"),
                     65
                 );
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::Outer), 3);
-    assert_eq!(calls(ScriptSlot::Inner), 2);
+            }
+        };
+    };
+    assert_eq!(outer.1.get(), 3);
+    assert_eq!(inner.1.get(), 2);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_parallel_resolved_routes_reenter_after_both_lanes_settle() {
-    set_script(
-        ScriptSlot::ParLeft,
+async fn rolled_parallel_resolved_routes_reenter_after_both_lanes_settle() {
+    let par_left: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right],
+        core::cell::Cell::new(0),
     );
-    set_script(
-        ScriptSlot::ParRight,
+    let par_right: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = rolled_parallel_resolved_program::<0>();
             let role1 = rolled_parallel_resolved_program::<1>();
             let role2 = rolled_parallel_resolved_program::<2>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<PAR_LEFT_RESOLVER>::decision_state(&UNIT, decide_par_left),
+                ResolverRef::<PAR_LEFT_RESOLVER>::decision_state(&par_left, next_decision),
             )
             .expect("install left parallel resolver");
             rv.set_resolver(
                 &role0,
-                ResolverRef::<PAR_RIGHT_RESOLVER>::decision_state(&UNIT, decide_par_right),
+                ResolverRef::<PAR_RIGHT_RESOLVER>::decision_state(&par_right, next_decision),
             )
             .expect("install right parallel resolver");
             let sid = SessionId::new(0x0009_3004);
@@ -820,7 +726,7 @@ fn rolled_parallel_resolved_routes_reenter_after_both_lanes_settle() {
             let mut left_peer = rv.enter(sid, &role1).expect("attach left peer");
             let mut right_peer = rv.enter(sid, &role2).expect("attach right peer");
 
-            futures::executor::block_on(async {
+            {
                 origin
                     .send::<Msg<PAR_LEFT_A, u32>>(&31)
                     .await
@@ -866,244 +772,609 @@ fn rolled_parallel_resolved_routes_reenter_after_both_lanes_settle() {
                         .expect("right recv"),
                     34
                 );
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::ParLeft), 2);
-    assert_eq!(calls(ScriptSlot::ParRight), 2);
+            }
+        };
+    };
+    assert_eq!(par_left.1.get(), 2);
+    assert_eq!(par_right.1.get(), 2);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_resolved_route_par_seq_route_roll_mixed_corpus_reenters_by_scope() {
-    set_script(
-        ScriptSlot::Outer,
+async fn rolled_resolved_route_par_seq_route_roll_mixed_corpus_reenters_by_scope() {
+    let outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    set_script(
-        ScriptSlot::Inner,
+    let inner: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Right],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = rolled_resolved_mixed_left_arm_program::<0>();
             let role1 = rolled_resolved_mixed_left_arm_program::<1>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
+                ResolverRef::<OUTER_RESOLVER>::decision_state(&outer, next_decision),
             )
             .expect("install mixed outer resolver");
             rv.set_resolver(
                 &role0,
-                ResolverRef::<INNER_RESOLVER>::decision_state(&UNIT, decide_inner),
+                ResolverRef::<INNER_RESOLVER>::decision_state(&inner, next_decision),
             )
             .expect("install mixed inner resolver");
             let sid = SessionId::new(0x0009_3011);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
-                roundtrip_01::<MIXED_INNER_LEFT_REQ, MIXED_INNER_LEFT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    101,
-                )
-                .await;
-                roundtrip_01::<MIXED_INNER_RIGHT_REQ, MIXED_INNER_RIGHT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    102,
-                )
-                .await;
-                roundtrip_01::<MIXED_SEQ_TAIL_REQ, MIXED_SEQ_TAIL_ACK>(&mut origin, &mut peer, 103)
-                    .await;
-                roundtrip_01::<MIXED_PAR_SIBLING_REQ, MIXED_PAR_SIBLING_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    104,
-                )
-                .await;
-                roundtrip_01::<MIXED_OUTER_RIGHT_REQ, MIXED_OUTER_RIGHT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    105,
-                )
-                .await;
-                roundtrip_01::<MIXED_INNER_RIGHT_REQ, MIXED_INNER_RIGHT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    106,
-                )
-                .await;
-                roundtrip_01::<MIXED_SEQ_TAIL_REQ, MIXED_SEQ_TAIL_ACK>(&mut origin, &mut peer, 107)
-                    .await;
-                roundtrip_01::<MIXED_PAR_SIBLING_REQ, MIXED_PAR_SIBLING_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    108,
-                )
-                .await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::Outer), 3);
-    assert_eq!(calls(ScriptSlot::Inner), 3);
+            {
+                {
+                    origin
+                        .send::<Msg<MIXED_INNER_LEFT_REQ, u32>>(&101)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_INNER_LEFT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        101
+                    );
+                    let ack = 101 + 10_000;
+                    peer.send::<Msg<MIXED_INNER_LEFT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_INNER_LEFT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_INNER_RIGHT_REQ, u32>>(&102)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_INNER_RIGHT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        102
+                    );
+                    let ack = 102 + 10_000;
+                    peer.send::<Msg<MIXED_INNER_RIGHT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_INNER_RIGHT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_SEQ_TAIL_REQ, u32>>(&103)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_SEQ_TAIL_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        103
+                    );
+                    let ack = 103 + 10_000;
+                    peer.send::<Msg<MIXED_SEQ_TAIL_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_SEQ_TAIL_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_PAR_SIBLING_REQ, u32>>(&104)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_PAR_SIBLING_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        104
+                    );
+                    let ack = 104 + 10_000;
+                    peer.send::<Msg<MIXED_PAR_SIBLING_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_PAR_SIBLING_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_OUTER_RIGHT_REQ, u32>>(&105)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_OUTER_RIGHT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        105
+                    );
+                    let ack = 105 + 10_000;
+                    peer.send::<Msg<MIXED_OUTER_RIGHT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_OUTER_RIGHT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_INNER_RIGHT_REQ, u32>>(&106)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_INNER_RIGHT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        106
+                    );
+                    let ack = 106 + 10_000;
+                    peer.send::<Msg<MIXED_INNER_RIGHT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_INNER_RIGHT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_SEQ_TAIL_REQ, u32>>(&107)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_SEQ_TAIL_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        107
+                    );
+                    let ack = 107 + 10_000;
+                    peer.send::<Msg<MIXED_SEQ_TAIL_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_SEQ_TAIL_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_PAR_SIBLING_REQ, u32>>(&108)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_PAR_SIBLING_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        108
+                    );
+                    let ack = 108 + 10_000;
+                    peer.send::<Msg<MIXED_PAR_SIBLING_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_PAR_SIBLING_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+            }
+        };
+    };
+    assert_eq!(outer.1.get(), 3);
+    assert_eq!(inner.1.get(), 3);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_resolved_route_par_seq_route_roll_mixed_right_corpus_reenters_by_scope() {
-    set_script(
-        ScriptSlot::Outer,
+async fn rolled_resolved_route_par_seq_route_roll_mixed_right_corpus_reenters_by_scope() {
+    let outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left, DecisionArm::Right],
+        core::cell::Cell::new(0),
     );
-    set_script(
-        ScriptSlot::Inner,
+    let inner: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let role0 = rolled_resolved_mixed_right_arm_program::<0>();
             let role1 = rolled_resolved_mixed_right_arm_program::<1>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
+                ResolverRef::<OUTER_RESOLVER>::decision_state(&outer, next_decision),
             )
             .expect("install mixed right outer resolver");
             rv.set_resolver(
                 &role0,
-                ResolverRef::<INNER_RESOLVER>::decision_state(&UNIT, decide_inner),
+                ResolverRef::<INNER_RESOLVER>::decision_state(&inner, next_decision),
             )
             .expect("install mixed right inner resolver");
             let sid = SessionId::new(0x0009_3012);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
-            futures::executor::block_on(async {
-                roundtrip_01::<MIXED_INNER_RIGHT_REQ, MIXED_INNER_RIGHT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    201,
-                )
-                .await;
-                roundtrip_01::<MIXED_INNER_LEFT_REQ, MIXED_INNER_LEFT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    202,
-                )
-                .await;
-                roundtrip_01::<MIXED_SEQ_TAIL_REQ, MIXED_SEQ_TAIL_ACK>(&mut origin, &mut peer, 203)
-                    .await;
-                roundtrip_01::<MIXED_PAR_SIBLING_REQ, MIXED_PAR_SIBLING_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    204,
-                )
-                .await;
-                roundtrip_01::<MIXED_OUTER_LEFT_REQ, MIXED_OUTER_LEFT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    205,
-                )
-                .await;
-                roundtrip_01::<MIXED_INNER_LEFT_REQ, MIXED_INNER_LEFT_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    206,
-                )
-                .await;
-                roundtrip_01::<MIXED_SEQ_TAIL_REQ, MIXED_SEQ_TAIL_ACK>(&mut origin, &mut peer, 207)
-                    .await;
-                roundtrip_01::<MIXED_PAR_SIBLING_REQ, MIXED_PAR_SIBLING_ACK>(
-                    &mut origin,
-                    &mut peer,
-                    208,
-                )
-                .await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::Outer), 3);
-    assert_eq!(calls(ScriptSlot::Inner), 3);
+            {
+                {
+                    origin
+                        .send::<Msg<MIXED_INNER_RIGHT_REQ, u32>>(&201)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_INNER_RIGHT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        201
+                    );
+                    let ack = 201 + 10_000;
+                    peer.send::<Msg<MIXED_INNER_RIGHT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_INNER_RIGHT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_INNER_LEFT_REQ, u32>>(&202)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_INNER_LEFT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        202
+                    );
+                    let ack = 202 + 10_000;
+                    peer.send::<Msg<MIXED_INNER_LEFT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_INNER_LEFT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_SEQ_TAIL_REQ, u32>>(&203)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_SEQ_TAIL_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        203
+                    );
+                    let ack = 203 + 10_000;
+                    peer.send::<Msg<MIXED_SEQ_TAIL_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_SEQ_TAIL_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_PAR_SIBLING_REQ, u32>>(&204)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_PAR_SIBLING_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        204
+                    );
+                    let ack = 204 + 10_000;
+                    peer.send::<Msg<MIXED_PAR_SIBLING_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_PAR_SIBLING_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_OUTER_LEFT_REQ, u32>>(&205)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_OUTER_LEFT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        205
+                    );
+                    let ack = 205 + 10_000;
+                    peer.send::<Msg<MIXED_OUTER_LEFT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_OUTER_LEFT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_INNER_LEFT_REQ, u32>>(&206)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_INNER_LEFT_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        206
+                    );
+                    let ack = 206 + 10_000;
+                    peer.send::<Msg<MIXED_INNER_LEFT_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_INNER_LEFT_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_SEQ_TAIL_REQ, u32>>(&207)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_SEQ_TAIL_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        207
+                    );
+                    let ack = 207 + 10_000;
+                    peer.send::<Msg<MIXED_SEQ_TAIL_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_SEQ_TAIL_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+                {
+                    origin
+                        .send::<Msg<MIXED_PAR_SIBLING_REQ, u32>>(&208)
+                        .await
+                        .expect("request send");
+                    assert_eq!(
+                        peer.recv::<Msg<MIXED_PAR_SIBLING_REQ, u32>>()
+                            .await
+                            .expect("request recv"),
+                        208
+                    );
+                    let ack = 208 + 10_000;
+                    peer.send::<Msg<MIXED_PAR_SIBLING_ACK, u32>>(&ack)
+                        .await
+                        .expect("ack send");
+                    assert_eq!(
+                        origin
+                            .recv::<Msg<MIXED_PAR_SIBLING_ACK, u32>>()
+                            .await
+                            .expect("ack recv"),
+                        ack
+                    );
+                }
+            }
+        };
+    };
+    assert_eq!(outer.1.get(), 3);
+    assert_eq!(inner.1.get(), 3);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_resolved_route_reenters_passive_offer_left_right_left() {
-    set_script(
-        ScriptSlot::PassiveOffer,
+async fn rolled_resolved_route_reenters_passive_offer_left_right_left() {
+    let passive_offer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let receiver_program = rolled_passive_offer_program::<0>();
             let sender_program = rolled_passive_offer_program::<1>();
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<PASSIVE_OFFER_RESOLVER>::decision_state(&UNIT, decide_passive_offer),
+                ResolverRef::<PASSIVE_OFFER_RESOLVER>::decision_state(
+                    &passive_offer,
+                    next_decision,
+                ),
             )
             .expect("install passive-offer resolver");
             let sid = SessionId::new(0x0009_3005);
             let mut receiver = rv.enter(sid, &receiver_program).expect("attach receiver");
             let mut sender = rv.enter(sid, &sender_program).expect("attach sender");
 
-            futures::executor::block_on(async {
+            (async {
                 sender
                     .send::<Msg<PASSIVE_OFFER_LEFT, u32>>(&41)
                     .await
                     .expect("left selected send");
-                passive_offer_recv::<PASSIVE_OFFER_LEFT>(&mut receiver, 41).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_OFFER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_OFFER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_OFFER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        41
+                    );
+                }
 
                 sender
                     .send::<Msg<PASSIVE_OFFER_RIGHT, u32>>(&42)
                     .await
                     .expect("right selected send");
-                passive_offer_recv::<PASSIVE_OFFER_RIGHT>(&mut receiver, 42).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_OFFER_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_OFFER_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_OFFER_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        42
+                    );
+                }
 
                 sender
                     .send::<Msg<PASSIVE_OFFER_LEFT, u32>>(&43)
                     .await
                     .expect("left selected reentry send");
-                passive_offer_recv::<PASSIVE_OFFER_LEFT>(&mut receiver, 43).await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::PassiveOffer), 3);
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_OFFER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_OFFER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_OFFER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        43
+                    );
+                }
+            })
+            .await;
+        };
+    };
+    assert_eq!(passive_offer.1.get(), 3);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_resolved_route_preserves_buffered_decision_order() {
-    set_script(
-        ScriptSlot::PassiveOffer,
+async fn rolled_resolved_route_preserves_buffered_decision_order() {
+    let passive_offer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let receiver_program = rolled_passive_offer_program::<0>();
             let sender_program = rolled_passive_offer_program::<1>();
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<PASSIVE_OFFER_RESOLVER>::decision_state(&UNIT, decide_passive_offer),
+                ResolverRef::<PASSIVE_OFFER_RESOLVER>::decision_state(
+                    &passive_offer,
+                    next_decision,
+                ),
             )
             .expect("install passive-offer resolver");
             let sid = SessionId::new(0x0009_3013);
             let mut receiver = rv.enter(sid, &receiver_program).expect("attach receiver");
             let mut sender = rv.enter(sid, &sender_program).expect("attach sender");
 
-            futures::executor::block_on(async {
+            (async {
                 sender
                     .send::<Msg<PASSIVE_OFFER_LEFT, u32>>(&51)
                     .await
@@ -1117,119 +1388,279 @@ fn rolled_resolved_route_preserves_buffered_decision_order() {
                     .await
                     .expect("buffer final left decision");
 
-                passive_offer_recv::<PASSIVE_OFFER_LEFT>(&mut receiver, 51).await;
-                passive_offer_recv::<PASSIVE_OFFER_RIGHT>(&mut receiver, 52).await;
-                passive_offer_recv::<PASSIVE_OFFER_LEFT>(&mut receiver, 53).await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::PassiveOffer), 3);
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_OFFER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_OFFER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_OFFER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        51
+                    );
+                }
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_OFFER_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_OFFER_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_OFFER_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        52
+                    );
+                }
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_OFFER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_OFFER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_OFFER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        53
+                    );
+                }
+            })
+            .await;
+        };
+    };
+    assert_eq!(passive_offer.1.get(), 3);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths() {
-    set_script(
-        ScriptSlot::Outer,
+async fn rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths() {
+    let outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    set_script(ScriptSlot::Inner, &[DecisionArm::Right, DecisionArm::Left]);
-    with_runtime_workspace(|slab| {
+    let inner: (&[DecisionArm], core::cell::Cell<usize>) = (
+        &[DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
+    );
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let receiver_program = rolled_nested_passive_offer_program::<0>();
             let sender_program = rolled_nested_passive_offer_program::<1>();
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
+                ResolverRef::<OUTER_RESOLVER>::decision_state(&outer, next_decision),
             )
             .expect("install nested passive outer resolver");
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<INNER_RESOLVER>::decision_state(&UNIT, decide_inner),
+                ResolverRef::<INNER_RESOLVER>::decision_state(&inner, next_decision),
             )
             .expect("install nested passive inner resolver");
             let sid = SessionId::new(0x0009_3006);
             let mut receiver = rv.enter(sid, &receiver_program).expect("attach receiver");
             let mut sender = rv.enter(sid, &sender_program).expect("attach sender");
 
-            futures::executor::block_on(async {
+            (async {
                 sender
                     .send::<Msg<PASSIVE_NESTED_PREFIX, u32>>(&51)
                     .await
                     .expect("outer left prefix send");
-                passive_offer_recv::<PASSIVE_NESTED_PREFIX>(&mut receiver, 51).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_NESTED_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_NESTED_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_NESTED_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        51
+                    );
+                }
                 sender
                     .send::<Msg<PASSIVE_NESTED_INNER_RIGHT, u32>>(&52)
                     .await
                     .expect("inner right selected send");
-                passive_offer_recv::<PASSIVE_NESTED_INNER_RIGHT>(&mut receiver, 52).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_NESTED_INNER_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_NESTED_INNER_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_NESTED_INNER_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        52
+                    );
+                }
 
                 sender
                     .send::<Msg<PASSIVE_NESTED_OUTER_RIGHT, u32>>(&53)
                     .await
                     .expect("outer right selected send");
-                passive_offer_recv::<PASSIVE_NESTED_OUTER_RIGHT>(&mut receiver, 53).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_NESTED_OUTER_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_NESTED_OUTER_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_NESTED_OUTER_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        53
+                    );
+                }
 
                 sender
                     .send::<Msg<PASSIVE_NESTED_PREFIX, u32>>(&54)
                     .await
                     .expect("outer left reentry prefix send");
-                passive_offer_recv::<PASSIVE_NESTED_PREFIX>(&mut receiver, 54).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_NESTED_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_NESTED_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_NESTED_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        54
+                    );
+                }
                 sender
                     .send::<Msg<PASSIVE_NESTED_INNER_LEFT, u32>>(&55)
                     .await
                     .expect("inner left selected send");
-                passive_offer_recv::<PASSIVE_NESTED_INNER_LEFT>(&mut receiver, 55).await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::Outer), 3);
-    assert_eq!(calls(ScriptSlot::Inner), 2);
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            PASSIVE_NESTED_INNER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<PASSIVE_NESTED_INNER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<PASSIVE_NESTED_INNER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        55
+                    );
+                }
+            })
+            .await;
+        };
+    };
+    assert_eq!(outer.1.get(), 3);
+    assert_eq!(inner.1.get(), 2);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_mirrored_nested_resolved_route_reenters_passive_offer_asymmetric_paths() {
-    set_script(
-        ScriptSlot::Outer,
+async fn rolled_mirrored_nested_resolved_route_reenters_passive_offer_asymmetric_paths() {
+    let outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left, DecisionArm::Right],
+        core::cell::Cell::new(0),
     );
-    set_script(ScriptSlot::Inner, &[DecisionArm::Right, DecisionArm::Left]);
-    with_runtime_workspace(|slab| {
+    let inner: (&[DecisionArm], core::cell::Cell<usize>) = (
+        &[DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
+    );
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let receiver_program = rolled_mirrored_nested_passive_offer_program::<0>();
             let sender_program = rolled_mirrored_nested_passive_offer_program::<1>();
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
+                ResolverRef::<OUTER_RESOLVER>::decision_state(&outer, next_decision),
             )
             .expect("install nested passive outer resolver");
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<INNER_RESOLVER>::decision_state(&UNIT, decide_inner),
+                ResolverRef::<INNER_RESOLVER>::decision_state(&inner, next_decision),
             )
             .expect("install nested passive inner resolver");
             let sid = SessionId::new(0x0009_3008);
             let mut receiver = rv.enter(sid, &receiver_program).expect("attach receiver");
             let mut sender = rv.enter(sid, &sender_program).expect("attach sender");
 
-            futures::executor::block_on(async {
+            (async {
                 sender
                     .send::<Msg<PASSIVE_MIRROR_PREFIX, u32>>(&71)
                     .await
                     .expect("outer right prefix send");
-                passive_offer_recv::<PASSIVE_MIRROR_PREFIX>(&mut receiver, 71).await;
+                {let branch=receiver.offer().await.unwrap_or_else(|err| panic!("offer selected route arm for message {}: {err:?}",PASSIVE_MIRROR_PREFIX)); assert_eq!(branch.label(),<Msg<PASSIVE_MIRROR_PREFIX,u32> as Message>::LOGICAL_LABEL); assert_eq!(branch.recv::<Msg<PASSIVE_MIRROR_PREFIX,u32>>().await.expect("passive branch recv"),71);}
                 sender
                     .send::<Msg<PASSIVE_MIRROR_INNER_RIGHT, u32>>(&72)
                     .await
                     .expect("inner right selected send");
-                passive_offer_recv::<PASSIVE_MIRROR_INNER_RIGHT>(&mut receiver, 72).await;
+                {let branch=receiver.offer().await.unwrap_or_else(|err| panic!("offer selected route arm for message {}: {err:?}",PASSIVE_MIRROR_INNER_RIGHT)); assert_eq!(branch.label(),<Msg<PASSIVE_MIRROR_INNER_RIGHT,u32> as Message>::LOGICAL_LABEL); assert_eq!(branch.recv::<Msg<PASSIVE_MIRROR_INNER_RIGHT,u32>>().await.expect("passive branch recv"),72);}
 
                 let before_outer_left = rv.tap().collect::<Vec<_>>();
                 sender
@@ -1281,227 +1712,561 @@ fn rolled_mirrored_nested_resolved_route_reenters_passive_offer_asymmetric_paths
                     Some(2),
                     "outer-left reentry route selection must be resolver authority: {events:?}"
                 );
-                passive_offer_recv::<PASSIVE_MIRROR_OUTER_LEFT>(&mut receiver, 73).await;
+                {let branch=receiver.offer().await.unwrap_or_else(|err| panic!("offer selected route arm for message {}: {err:?}",PASSIVE_MIRROR_OUTER_LEFT)); assert_eq!(branch.label(),<Msg<PASSIVE_MIRROR_OUTER_LEFT,u32> as Message>::LOGICAL_LABEL); assert_eq!(branch.recv::<Msg<PASSIVE_MIRROR_OUTER_LEFT,u32>>().await.expect("passive branch recv"),73);}
 
                 sender
                     .send::<Msg<PASSIVE_MIRROR_PREFIX, u32>>(&74)
                     .await
                     .expect("outer right reentry prefix send");
-                passive_offer_recv::<PASSIVE_MIRROR_PREFIX>(&mut receiver, 74).await;
+                {let branch=receiver.offer().await.unwrap_or_else(|err| panic!("offer selected route arm for message {}: {err:?}",PASSIVE_MIRROR_PREFIX)); assert_eq!(branch.label(),<Msg<PASSIVE_MIRROR_PREFIX,u32> as Message>::LOGICAL_LABEL); assert_eq!(branch.recv::<Msg<PASSIVE_MIRROR_PREFIX,u32>>().await.expect("passive branch recv"),74);}
                 sender
                     .send::<Msg<PASSIVE_MIRROR_INNER_LEFT, u32>>(&75)
                     .await
                     .expect("inner left selected send");
-                passive_offer_recv::<PASSIVE_MIRROR_INNER_LEFT>(&mut receiver, 75).await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::Outer), 3);
-    assert_eq!(calls(ScriptSlot::Inner), 2);
+                {let branch=receiver.offer().await.unwrap_or_else(|err| panic!("offer selected route arm for message {}: {err:?}",PASSIVE_MIRROR_INNER_LEFT)); assert_eq!(branch.label(),<Msg<PASSIVE_MIRROR_INNER_LEFT,u32> as Message>::LOGICAL_LABEL); assert_eq!(branch.recv::<Msg<PASSIVE_MIRROR_INNER_LEFT,u32>>().await.expect("passive branch recv"),75);}
+            }).await;
+        };
+    };
+    assert_eq!(outer.1.get(), 3);
+    assert_eq!(inner.1.get(), 2);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_deep_right_spine_passive_offer_reenters_across_all_depths() {
-    set_script(
-        ScriptSlot::DeepOuter,
+async fn rolled_deep_right_spine_passive_offer_reenters_across_all_depths() {
+    let deep_outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[
             DecisionArm::Right,
             DecisionArm::Left,
             DecisionArm::Right,
             DecisionArm::Right,
         ],
+        core::cell::Cell::new(0),
     );
-    set_script(
-        ScriptSlot::DeepMiddle,
+    let deep_middle: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left, DecisionArm::Right],
+        core::cell::Cell::new(0),
     );
-    set_script(
-        ScriptSlot::DeepInner,
+    let deep_inner: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let receiver_program = rolled_deep_right_spine_passive_offer_program::<0>();
             let sender_program = rolled_deep_right_spine_passive_offer_program::<1>();
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<DEEP_OUTER_RESOLVER>::decision_state(&UNIT, decide_deep_outer),
+                ResolverRef::<DEEP_OUTER_RESOLVER>::decision_state(&deep_outer, next_decision),
             )
             .expect("install deep outer resolver");
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<DEEP_MIDDLE_RESOLVER>::decision_state(&UNIT, decide_deep_middle),
+                ResolverRef::<DEEP_MIDDLE_RESOLVER>::decision_state(&deep_middle, next_decision),
             )
             .expect("install deep middle resolver");
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<DEEP_INNER_RESOLVER>::decision_state(&UNIT, decide_deep_inner),
+                ResolverRef::<DEEP_INNER_RESOLVER>::decision_state(&deep_inner, next_decision),
             )
             .expect("install deep inner resolver");
             let sid = SessionId::new(0x0009_3009);
             let mut receiver = rv.enter(sid, &receiver_program).expect("attach receiver");
             let mut sender = rv.enter(sid, &sender_program).expect("attach sender");
 
-            futures::executor::block_on(async {
+            (async {
                 sender
                     .send::<Msg<DEEP_RIGHT_OUTER_PREFIX, u32>>(&81)
                     .await
                     .expect("deep right outer prefix send");
-                passive_offer_recv::<DEEP_RIGHT_OUTER_PREFIX>(&mut receiver, 81).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_OUTER_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_OUTER_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_OUTER_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        81
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_RIGHT_MIDDLE_PREFIX, u32>>(&82)
                     .await
                     .expect("deep right middle prefix send");
-                passive_offer_recv::<DEEP_RIGHT_MIDDLE_PREFIX>(&mut receiver, 82).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_MIDDLE_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_MIDDLE_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_MIDDLE_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        82
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_RIGHT_INNER_RIGHT, u32>>(&83)
                     .await
                     .expect("deep right inner right send");
-                passive_offer_recv::<DEEP_RIGHT_INNER_RIGHT>(&mut receiver, 83).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_INNER_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_INNER_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_INNER_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        83
+                    );
+                }
 
                 sender
                     .send::<Msg<DEEP_RIGHT_OUTER_LEFT, u32>>(&84)
                     .await
                     .expect("deep outer left reentry send");
-                passive_offer_recv::<DEEP_RIGHT_OUTER_LEFT>(&mut receiver, 84).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_OUTER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_OUTER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_OUTER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        84
+                    );
+                }
 
                 sender
                     .send::<Msg<DEEP_RIGHT_OUTER_PREFIX, u32>>(&85)
                     .await
                     .expect("deep right outer prefix reentry send");
-                passive_offer_recv::<DEEP_RIGHT_OUTER_PREFIX>(&mut receiver, 85).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_OUTER_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_OUTER_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_OUTER_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        85
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_RIGHT_MIDDLE_LEFT, u32>>(&86)
                     .await
                     .expect("deep middle left reentry send");
-                passive_offer_recv::<DEEP_RIGHT_MIDDLE_LEFT>(&mut receiver, 86).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_MIDDLE_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_MIDDLE_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_MIDDLE_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        86
+                    );
+                }
 
                 sender
                     .send::<Msg<DEEP_RIGHT_OUTER_PREFIX, u32>>(&87)
                     .await
                     .expect("deep right outer prefix second reentry send");
-                passive_offer_recv::<DEEP_RIGHT_OUTER_PREFIX>(&mut receiver, 87).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_OUTER_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_OUTER_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_OUTER_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        87
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_RIGHT_MIDDLE_PREFIX, u32>>(&88)
                     .await
                     .expect("deep right middle prefix second reentry send");
-                passive_offer_recv::<DEEP_RIGHT_MIDDLE_PREFIX>(&mut receiver, 88).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_MIDDLE_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_MIDDLE_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_MIDDLE_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        88
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_RIGHT_INNER_LEFT, u32>>(&89)
                     .await
                     .expect("deep inner left reentry send");
-                passive_offer_recv::<DEEP_RIGHT_INNER_LEFT>(&mut receiver, 89).await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::DeepOuter), 4);
-    assert_eq!(calls(ScriptSlot::DeepMiddle), 3);
-    assert_eq!(calls(ScriptSlot::DeepInner), 2);
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_RIGHT_INNER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_RIGHT_INNER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_RIGHT_INNER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        89
+                    );
+                }
+            })
+            .await;
+        };
+    };
+    assert_eq!(deep_outer.1.get(), 4);
+    assert_eq!(deep_middle.1.get(), 3);
+    assert_eq!(deep_inner.1.get(), 2);
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_deep_left_spine_passive_offer_reenters_across_all_depths() {
-    set_script(
-        ScriptSlot::DeepOuter,
+async fn rolled_deep_left_spine_passive_offer_reenters_across_all_depths() {
+    let deep_outer: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[
             DecisionArm::Left,
             DecisionArm::Right,
             DecisionArm::Left,
             DecisionArm::Left,
         ],
+        core::cell::Cell::new(0),
     );
-    set_script(
-        ScriptSlot::DeepMiddle,
+    let deep_middle: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    set_script(
-        ScriptSlot::DeepInner,
+    let deep_inner: (&[DecisionArm], core::cell::Cell<usize>) = (
         &[DecisionArm::Right, DecisionArm::Left],
+        core::cell::Cell::new(0),
     );
-    with_runtime_workspace(|slab| {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let receiver_program = rolled_deep_left_spine_passive_offer_program::<0>();
             let sender_program = rolled_deep_left_spine_passive_offer_program::<1>();
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<DEEP_OUTER_RESOLVER>::decision_state(&UNIT, decide_deep_outer),
+                ResolverRef::<DEEP_OUTER_RESOLVER>::decision_state(&deep_outer, next_decision),
             )
             .expect("install deep outer resolver");
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<DEEP_MIDDLE_RESOLVER>::decision_state(&UNIT, decide_deep_middle),
+                ResolverRef::<DEEP_MIDDLE_RESOLVER>::decision_state(&deep_middle, next_decision),
             )
             .expect("install deep middle resolver");
             rv.set_resolver(
                 &sender_program,
-                ResolverRef::<DEEP_INNER_RESOLVER>::decision_state(&UNIT, decide_deep_inner),
+                ResolverRef::<DEEP_INNER_RESOLVER>::decision_state(&deep_inner, next_decision),
             )
             .expect("install deep inner resolver");
             let sid = SessionId::new(0x0009_3010);
             let mut receiver = rv.enter(sid, &receiver_program).expect("attach receiver");
             let mut sender = rv.enter(sid, &sender_program).expect("attach sender");
 
-            futures::executor::block_on(async {
+            (async {
                 sender
                     .send::<Msg<DEEP_LEFT_OUTER_PREFIX, u32>>(&91)
                     .await
                     .expect("deep left outer prefix send");
-                passive_offer_recv::<DEEP_LEFT_OUTER_PREFIX>(&mut receiver, 91).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_OUTER_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_OUTER_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_OUTER_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        91
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_LEFT_MIDDLE_PREFIX, u32>>(&92)
                     .await
                     .expect("deep left middle prefix send");
-                passive_offer_recv::<DEEP_LEFT_MIDDLE_PREFIX>(&mut receiver, 92).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_MIDDLE_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_MIDDLE_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_MIDDLE_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        92
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_LEFT_INNER_RIGHT, u32>>(&93)
                     .await
                     .expect("deep left inner right send");
-                passive_offer_recv::<DEEP_LEFT_INNER_RIGHT>(&mut receiver, 93).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_INNER_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_INNER_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_INNER_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        93
+                    );
+                }
 
                 sender
                     .send::<Msg<DEEP_LEFT_OUTER_RIGHT, u32>>(&94)
                     .await
                     .expect("deep outer right reentry send");
-                passive_offer_recv::<DEEP_LEFT_OUTER_RIGHT>(&mut receiver, 94).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_OUTER_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_OUTER_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_OUTER_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        94
+                    );
+                }
 
                 sender
                     .send::<Msg<DEEP_LEFT_OUTER_PREFIX, u32>>(&95)
                     .await
                     .expect("deep left outer prefix reentry send");
-                passive_offer_recv::<DEEP_LEFT_OUTER_PREFIX>(&mut receiver, 95).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_OUTER_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_OUTER_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_OUTER_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        95
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_LEFT_MIDDLE_RIGHT, u32>>(&96)
                     .await
                     .expect("deep middle right reentry send");
-                passive_offer_recv::<DEEP_LEFT_MIDDLE_RIGHT>(&mut receiver, 96).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_MIDDLE_RIGHT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_MIDDLE_RIGHT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_MIDDLE_RIGHT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        96
+                    );
+                }
 
                 sender
                     .send::<Msg<DEEP_LEFT_OUTER_PREFIX, u32>>(&97)
                     .await
                     .expect("deep left outer prefix second reentry send");
-                passive_offer_recv::<DEEP_LEFT_OUTER_PREFIX>(&mut receiver, 97).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_OUTER_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_OUTER_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_OUTER_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        97
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_LEFT_MIDDLE_PREFIX, u32>>(&98)
                     .await
                     .expect("deep left middle prefix second reentry send");
-                passive_offer_recv::<DEEP_LEFT_MIDDLE_PREFIX>(&mut receiver, 98).await;
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_MIDDLE_PREFIX
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_MIDDLE_PREFIX, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_MIDDLE_PREFIX, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        98
+                    );
+                }
                 sender
                     .send::<Msg<DEEP_LEFT_INNER_LEFT, u32>>(&99)
                     .await
                     .expect("deep inner left reentry send");
-                passive_offer_recv::<DEEP_LEFT_INNER_LEFT>(&mut receiver, 99).await;
-            });
-        });
-    });
-    assert_eq!(calls(ScriptSlot::DeepOuter), 4);
-    assert_eq!(calls(ScriptSlot::DeepMiddle), 3);
-    assert_eq!(calls(ScriptSlot::DeepInner), 2);
+                {
+                    let branch = receiver.offer().await.unwrap_or_else(|err| {
+                        panic!(
+                            "offer selected route arm for message {}: {err:?}",
+                            DEEP_LEFT_INNER_LEFT
+                        )
+                    });
+                    assert_eq!(
+                        branch.label(),
+                        <Msg<DEEP_LEFT_INNER_LEFT, u32> as Message>::LOGICAL_LABEL
+                    );
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEEP_LEFT_INNER_LEFT, u32>>()
+                            .await
+                            .expect("passive branch recv"),
+                        99
+                    );
+                }
+            })
+            .await;
+        };
+    };
+    assert_eq!(deep_outer.1.get(), 4);
+    assert_eq!(deep_middle.1.get(), 3);
+    assert_eq!(deep_inner.1.get(), 2);
 }

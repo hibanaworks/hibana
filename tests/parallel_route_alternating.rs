@@ -1,20 +1,11 @@
 mod common;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
-
-use core::cell::UnsafeCell;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{SessionKitStorage, ids::SessionId};
-use runtime_support::with_runtime_workspace;
-use tls_ref_support::with_resident_tls_ref;
-
-type TestKitStorage = SessionKitStorage<'static, TestTransport>;
-
 const LOCAL_ROLE: u8 = 1;
 const WORKER_ROLE: u8 = 2;
 
@@ -25,12 +16,6 @@ const ALT_C: u8 = 217;
 const ALT_R: u8 = 218;
 const ALT_E: u8 = 219;
 const ALT_POST: u8 = 220;
-
-std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-}
 
 fn alternating_route_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let inner = g::route(
@@ -69,18 +54,22 @@ fn assert_session_poisoned(rendered: &str, expected: &str) {
     );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn alternating_route_parallel_join_uses_only_selected_arms() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+async fn alternating_route_parallel_join_uses_only_selected_arms() {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(slab, transport)
+                .rendezvous(&mut slab, transport)
                 .expect("register rendezvous");
             let local_program = alternating_route_parallel_program::<LOCAL_ROLE>();
             let worker_program = alternating_route_parallel_program::<WORKER_ROLE>();
 
-            futures::executor::block_on(async {
+            (async {
                 {
                     let sid = SessionId::new(96);
                     let mut local = rv.enter(sid, &local_program).expect("attach local role");
@@ -166,9 +155,10 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
                         4
                     );
                 }
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
 }
 
 fn prefixed_independent_rolled_routes<const ROLE: u8>() -> RoleProgram<ROLE> {
@@ -197,14 +187,18 @@ fn prefixed_independent_rolled_routes<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::par(first, sibling))
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn completed_same_lane_prefix_does_not_hide_fresh_sibling_offer() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+async fn completed_same_lane_prefix_does_not_hide_fresh_sibling_offer() {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
+            let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
             let controller_program = prefixed_independent_rolled_routes::<0>();
             let receiver_program = prefixed_independent_rolled_routes::<1>();
-            futures::executor::block_on(async {
+            (async {
                 for (case, (use_before_retiring, retire_fresh_sibling)) in
                     [(false, false), (false, true), (true, false), (true, true)]
                         .into_iter()
@@ -256,19 +250,24 @@ fn completed_same_lane_prefix_does_not_hide_fresh_sibling_offer() {
                         assert_eq!(controller.recv::<Msg<92, u32>>().await.unwrap(), 5);
                     }
                 }
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn fresh_sibling_still_requires_its_installation_prefix() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+async fn fresh_sibling_still_requires_its_installation_prefix() {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
+            let rv = cluster.rendezvous(&mut slab, TestTransport::new()).unwrap();
             let controller_program = prefixed_independent_rolled_routes::<0>();
             let receiver_program = prefixed_independent_rolled_routes::<1>();
-            futures::executor::block_on(async {
+            (async {
                 let sid = SessionId::new(1904);
                 let mut controller = rv.enter(sid, &controller_program).unwrap();
                 let mut receiver = rv.enter(sid, &receiver_program).unwrap();
@@ -281,7 +280,8 @@ fn fresh_sibling_still_requires_its_installation_prefix() {
                     .send::<Msg<91, u32>>(&2)
                     .await
                     .expect_err("missing sibling installation cannot be skipped");
-            });
-        });
-    });
+            })
+            .await;
+        };
+    };
 }

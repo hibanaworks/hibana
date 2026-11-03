@@ -64,8 +64,6 @@ impl Transport for DeadlineRecvTransport {
     }
 }
 
-type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport>;
-
 #[derive(Clone, Copy)]
 struct MalformedRecvTransport {
     header: hibana::runtime::transport::FrameHeader,
@@ -127,9 +125,6 @@ impl Transport for MalformedRecvTransport {
         Ok(())
     }
 }
-
-type MalformedKitStorage = SessionKitStorage<'static, MalformedRecvTransport>;
-type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport>;
 
 #[derive(Clone)]
 struct DeterministicRecvTransport {
@@ -197,18 +192,6 @@ impl Transport for DeterministicRecvTransport {
     }
 }
 
-std::thread_local! {
-    static DEADLINE_SESSION_SLOT: UnsafeCell<DeadlineKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static MALFORMED_SESSION_SLOT: UnsafeCell<MalformedKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static DETERMINISTIC_SESSION_SLOT: UnsafeCell<DeterministicKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-}
-
 fn malformed_header(
     session_id: SessionId,
     lane: u8,
@@ -230,84 +213,27 @@ fn malformed_header(
     ])
 }
 
-fn assert_malformed_direct_recv_fails_closed(
-    sid: SessionId,
-    header: hibana::runtime::transport::FrameHeader,
-    expected_reason: u8,
-) {
-    with_runtime_workspace(|slab| {
-        let mismatch = with_resident_tls_ref(&MALFORMED_SESSION_SLOT, |cluster| {
-            let program = g::send::<0, 1, Msg<1, FramePayload>>();
-            let target_program: RoleProgram<1> = project(&program);
-            let rv = cluster
-                .rendezvous(slab, MalformedRecvTransport { header })
-                .expect("register rendezvous");
-            let mut tap = rv.tap();
-
-            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
-
-            let error = futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
-                .expect_err("descriptor mismatch must fail closed");
-            let rendered = format!("{error:?}");
-            assert!(
-                rendered.contains("PhaseInvariant"),
-                "descriptor mismatch must report terminal invariant evidence: {rendered}"
-            );
-
-            let mismatch = tap
-                .find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
-                .expect("descriptor mismatch must emit transport mismatch evidence");
-            assert_eq!(mismatch.evidence().reason(), expected_reason);
-            assert_eq!(mismatch.arg0(), sid.raw());
-            assert!(
-                !tap.any(|event| event.id() == hibana::runtime::tap::TRANSPORT_FRAME),
-                "rejected mismatch must not also emit accepted frame evidence"
-            );
-
-            let poisoned =
-                futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
-                    .expect_err("same generation must be poisoned after mismatch");
-            let rendered = format!("{poisoned:?}");
-            assert!(
-                rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
-                "mismatch must poison same generation: {rendered}"
-            );
-
-            let poisoned_offer = match futures::executor::block_on(target_endpoint.offer()) {
-                Ok(branch) => {
-                    drop(branch);
-                    panic!("faulted endpoint must not publish a route branch");
-                }
-                Err(error) => error,
-            };
-            let rendered = format!("{poisoned_offer:?}");
-            assert!(
-                rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
-                "faulted offer initialization must preserve the session fault: {rendered}"
-            );
-            mismatch
-        });
-        assert_eq!(mismatch.evidence().reason(), expected_reason);
-    });
-}
-
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn direct_recv_accepts_single_deterministic_transport_frame() {
-    with_runtime_workspace(|slab| {
+async fn direct_recv_accepts_single_deterministic_transport_frame() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = DeterministicRecvTransport::new();
-        with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<90, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let mut tap = rv.tap();
             let sid = SessionId::new(90);
             let mut origin = rv.enter(sid, &origin_program).expect("origin endpoint");
             let mut target = rv.enter(sid, &target_program).expect("target endpoint");
 
-            futures::executor::block_on(async {
+            (async {
                 origin
                     .send::<Msg<90, u32>>(&1234)
                     .await
@@ -317,7 +243,8 @@ fn direct_recv_accepts_single_deterministic_transport_frame() {
                     .await
                     .expect("direct recv accepts deterministic transport frame");
                 assert_eq!(value, 1234);
-            });
+            })
+            .await;
 
             let events: Vec<_> = tap.by_ref().collect();
             assert_eq!(
@@ -335,15 +262,19 @@ fn direct_recv_accepts_single_deterministic_transport_frame() {
                 "headerless deterministic recv must not emit framed transport observation: {events:?}"
             );
             assert!(transport.queue_is_empty());
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn direct_recv_same_label_deterministic_frames_commit_by_lane_evidence() {
-    with_runtime_workspace(|slab| {
+async fn direct_recv_same_label_deterministic_frames_commit_by_lane_evidence() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = DeterministicRecvTransport::new();
-        with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::par(
                 g::send::<1, 0, Msg<91, u32>>(),
                 g::send::<2, 0, Msg<91, u32>>(),
@@ -352,7 +283,7 @@ fn direct_recv_same_label_deterministic_frames_commit_by_lane_evidence() {
             let left_source_program: RoleProgram<1> = project(&program);
             let right_source_program: RoleProgram<2> = project(&program);
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(91);
@@ -364,7 +295,7 @@ fn direct_recv_same_label_deterministic_frames_commit_by_lane_evidence() {
                 .enter(sid, &right_source_program)
                 .expect("right source endpoint");
 
-            futures::executor::block_on(async {
+            (async {
                 right_source
                     .send::<Msg<91, u32>>(&202)
                     .await
@@ -384,22 +315,27 @@ fn direct_recv_same_label_deterministic_frames_commit_by_lane_evidence() {
                     .await
                     .expect("headerless recv commits remaining left lane");
                 assert_eq!(second, 101);
-            });
+            })
+            .await;
             assert!(transport.queue_is_empty());
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn cursor_recv_can_return_borrowed_frame_views() {
-    with_runtime_workspace(|slab| {
+async fn cursor_recv_can_return_borrowed_frame_views() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>>();
             let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
             let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(2);
@@ -410,24 +346,27 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 .enter(sid, &borrowed_target_program)
                 .expect("target endpoint");
 
-            let () = futures::executor::block_on(
-                origin_endpoint.send::<Msg<2, FramePayload>>(&FramePayload(*b"hiba")),
-            )
-            .expect("send succeeds");
-            let payload =
-                futures::executor::block_on(target_endpoint.recv::<Msg<2, FramePayload>>())
-                    .expect("recv succeeds");
+            let () = (origin_endpoint.send::<Msg<2, FramePayload>>(&FramePayload(*b"hiba")))
+                .await
+                .expect("send succeeds");
+            let payload = (target_endpoint.recv::<Msg<2, FramePayload>>())
+                .await
+                .expect("recv succeeds");
             assert_eq!(payload.as_bytes(), b"hiba");
             assert!(transport.queue_is_empty());
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn zero_length_transport_frame_recv_unit_commits() {
-    with_runtime_workspace(|slab| {
+async fn zero_length_transport_frame_recv_unit_commits() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<30, ()>>();
             let target_program: RoleProgram<1> = project(&program);
             let sid = SessionId::new(30);
@@ -443,22 +382,27 @@ fn zero_length_transport_frame_recv_unit_commits() {
                 Poll::Ready(Ok(()))
             ));
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
-            let () = futures::executor::block_on(target_endpoint.recv::<Msg<30, ()>>())
+            let () = (target_endpoint.recv::<Msg<30, ()>>())
+                .await
                 .expect("unit payload accepts canonical empty frame");
             assert!(transport.queue_is_empty());
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn rolled_raw_observations_commit_only_enabled_occurrences() {
-    with_runtime_workspace(|slab| {
+async fn rolled_raw_observations_commit_only_enabled_occurrences() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<32, u32>>().roll();
             let target_program: RoleProgram<1> = project(&program);
             let sid = SessionId::new(32);
@@ -476,25 +420,31 @@ fn rolled_raw_observations_commit_only_enabled_occurrences() {
                 ));
             }
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
-            let first = futures::executor::block_on(target_endpoint.recv::<Msg<32, u32>>())
+            let first = (target_endpoint.recv::<Msg<32, u32>>())
+                .await
                 .expect("first observation commits the initial occurrence");
-            let second = futures::executor::block_on(target_endpoint.recv::<Msg<32, u32>>())
+            let second = (target_endpoint.recv::<Msg<32, u32>>())
+                .await
                 .expect("second observation commits only after roll reentry");
             assert_eq!((first, second), (10, 20));
             assert!(transport.queue_is_empty());
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
-    with_runtime_workspace(|slab| {
+async fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
+    {
+        let mut slab = [0; 64 * 1024];
         let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<31, u8>>();
             let target_program: RoleProgram<1> = project(&program);
             let sid = SessionId::new(31);
@@ -510,11 +460,12 @@ fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
                 Poll::Ready(Ok(()))
             ));
             let rv = cluster
-                .rendezvous(slab, transport.clone())
+                .rendezvous(&mut slab, transport.clone())
                 .expect("register rendezvous");
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
-            let error = futures::executor::block_on(target_endpoint.recv::<Msg<31, u8>>())
+            let error = (target_endpoint.recv::<Msg<31, u8>>())
+                .await
                 .expect_err("u8 payload must reject canonical empty frame");
             let rendered = format!("{error:?}");
             assert!(
@@ -525,19 +476,23 @@ fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
                 !rendered.contains("PhaseInvariant"),
                 "zero-length u8 recv must not be classified as a phase invariant: {rendered}"
             );
-        });
-    });
+        };
+    };
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn direct_recv_deadline_emits_transport_fault_tap() {
-    with_runtime_workspace(|slab| {
-        let fault = with_resident_tls_ref(&DEADLINE_SESSION_SLOT, |cluster| {
+async fn direct_recv_deadline_emits_transport_fault_tap() {
+    {
+        let mut slab = [0; 64 * 1024];
+        let fault = {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    slab,
+                    &mut slab,
                     DeadlineRecvTransport {
                         error: hibana::runtime::transport::TransportError::Deadline,
                     },
@@ -547,7 +502,8 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
 
             let sid = SessionId::new(73);
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
-            let error = futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+            let error = (target_endpoint.recv::<Msg<1, FramePayload>>())
+                .await
                 .expect_err("deadline recv must surface transport error");
             let rendered = format!("{error:?}");
             assert!(
@@ -556,14 +512,14 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
             );
             tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_FAULT)
                 .expect("deadline must emit transport fault evidence")
-        });
+        };
         assert_eq!(
             fault.evidence().reason(),
             hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE
         );
         assert_eq!(fault.arg0(), 73);
         assert_eq!(fault.arg1(), 0);
-    });
+    };
 }
 
 #[test]
@@ -583,7 +539,7 @@ fn transport_poll_recv_returns_framed_payload() {
     ));
 
     let mut rx = transport.open_rx(sid, 1, 0);
-    let waker = futures::task::noop_waker_ref();
+    let waker = core::task::Waker::noop();
     let mut context = Context::from_waker(waker);
     let received = match Transport::poll_recv(&transport, &mut rx, &mut context) {
         Poll::Ready(Ok(received)) => received,
@@ -593,20 +549,16 @@ fn transport_poll_recv_returns_framed_payload() {
     assert_eq!(received.payload().as_bytes(), b"peek");
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn direct_recv_session_mismatch_fails_closed_and_poisons_generation() {
+async fn direct_recv_metadata_mismatch_fails_closed_and_poisons_generation() {
     let sid = SessionId::new(71);
-    let bad_sid = SessionId::new(72);
-    assert_malformed_direct_recv_fails_closed(
-        sid,
-        malformed_header(bad_sid, 0, 0, 1, 0),
-        hibana::runtime::tap::TRANSPORT_MISMATCH_SESSION,
-    );
-}
-
-#[test]
-fn direct_recv_lane_source_target_label_mismatch_fails_closed() {
     let cases = [
+        (
+            sid,
+            malformed_header(SessionId::new(72), 0, 0, 1, 0),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_SESSION,
+        ),
         (
             SessionId::new(81),
             malformed_header(SessionId::new(81), 1, 0, 1, 0),
@@ -628,21 +580,83 @@ fn direct_recv_lane_source_target_label_mismatch_fails_closed() {
             hibana::runtime::tap::TRANSPORT_MISMATCH_LABEL,
         ),
     ];
-    for (sid, header, reason) in cases {
-        assert_malformed_direct_recv_fails_closed(sid, header, reason);
+    for (sid, header, expected_reason) in cases {
+        {
+            let mut slab = [0; 64 * 1024];
+            let mismatch = {
+                let mut storage = SessionKitStorage::uninit();
+                let cluster = storage.init();
+                let program = g::send::<0, 1, Msg<1, FramePayload>>();
+                let target_program: RoleProgram<1> = project(&program);
+                let rv = cluster
+                    .rendezvous(&mut slab, MalformedRecvTransport { header })
+                    .expect("register rendezvous");
+                let mut tap = rv.tap();
+
+                let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+
+                let error = (target_endpoint.recv::<Msg<1, FramePayload>>())
+                    .await
+                    .expect_err("descriptor mismatch must fail closed");
+                let rendered = format!("{error:?}");
+                assert!(
+                    rendered.contains("PhaseInvariant"),
+                    "descriptor mismatch must report terminal invariant evidence: {rendered}"
+                );
+
+                let mismatch = tap
+                    .find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                    .expect("descriptor mismatch must emit transport mismatch evidence");
+                assert_eq!(mismatch.evidence().reason(), expected_reason);
+                assert_eq!(mismatch.arg0(), sid.raw());
+                assert!(
+                    !tap.any(|event| event.id() == hibana::runtime::tap::TRANSPORT_FRAME),
+                    "rejected mismatch must not also emit accepted frame evidence"
+                );
+
+                let poisoned = (target_endpoint.recv::<Msg<1, FramePayload>>())
+                    .await
+                    .expect_err("same generation must be poisoned after mismatch");
+                let rendered = format!("{poisoned:?}");
+                assert!(
+                    rendered.contains("SessionFault")
+                        && rendered.contains("ProgressInvariantViolated"),
+                    "mismatch must poison same generation: {rendered}"
+                );
+
+                let poisoned_offer = match (target_endpoint.offer()).await {
+                    Ok(branch) => {
+                        drop(branch);
+                        panic!("faulted endpoint must not publish a route branch");
+                    }
+                    Err(error) => error,
+                };
+                let rendered = format!("{poisoned_offer:?}");
+                assert!(
+                    rendered.contains("SessionFault")
+                        && rendered.contains("ProgressInvariantViolated"),
+                    "faulted offer initialization must preserve the session fault: {rendered}"
+                );
+                mismatch
+            };
+            assert_eq!(mismatch.evidence().reason(), expected_reason);
+        };
     }
 }
 
 #[test]
 fn mismatch_tap_is_emitted_before_terminal_error() {
-    with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&MALFORMED_SESSION_SLOT, |cluster| {
+    {
+        let mut slab = [0; 64 * 1024];
+        {
+            let mut storage = SessionKitStorage::uninit();
+            let cluster = storage.init();
             let sid = SessionId::new(85);
             let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    slab,
+                    &mut slab,
                     MalformedRecvTransport {
                         header: malformed_header(sid, 0, 0, 1, 9),
                     },
@@ -652,7 +666,7 @@ fn mismatch_tap_is_emitted_before_terminal_error() {
             let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let mut recv = core::pin::pin!(target_endpoint.recv::<Msg<1, FramePayload>>());
-            let waker = futures::task::noop_waker_ref();
+            let waker = core::task::Waker::noop();
             let mut context = Context::from_waker(waker);
             match recv.as_mut().poll(&mut context) {
                 Poll::Ready(Err(error)) => {
@@ -668,6 +682,6 @@ fn mismatch_tap_is_emitted_before_terminal_error() {
 
             tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
                 .expect("mismatch tap must be emitted by the failing poll");
-        });
-    });
+        };
+    };
 }

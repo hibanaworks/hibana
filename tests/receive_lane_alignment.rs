@@ -24,8 +24,9 @@ type Pong = g::Msg<6, ()>;
 type Seal = g::Msg<7, ()>;
 type Done = g::Msg<8, ()>;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn delegated_roll_reentry_keeps_the_current_body_before_outgoing_continuation() {
+async fn delegated_roll_reentry_keeps_the_current_body_before_outgoing_continuation() {
     type Loan = g::Msg<60, Endpoint<'static, DB>>;
     type First = g::Msg<61, ()>;
     type Second = g::Msg<62, ()>;
@@ -79,7 +80,7 @@ fn delegated_roll_reentry_keeps_the_current_body_before_outgoing_continuation() 
         let mut worker = rv1.enter(sid, &p1).unwrap();
         let mut service = rv2.enter(sid, &p2).unwrap();
         let db = rv0.enter(sid, &p3).unwrap();
-        futures::executor::block_on(async {
+        async {
             owner.send::<Loan>(db).await.unwrap();
             let mut db = worker.recv::<Loan>().await.unwrap();
             for visit in 0..3 {
@@ -117,7 +118,7 @@ fn delegated_roll_reentry_keeps_the_current_body_before_outgoing_continuation() 
             db.recv::<TailReply>().await.unwrap();
             worker.send::<Loan>(db).await.unwrap();
             drop(owner.recv::<Loan>().await.unwrap());
-        });
+        }.await;
     }
 }
 
@@ -131,7 +132,7 @@ async fn a_carrier_borrows_its_parallel_arm_before_the_resources_prefix()
     type Other = g::Msg<24, ()>;
     type OtherReply = g::Msg<25, ()>;
     let global = g::seq(
-        g::send::<OWNER, WORKER, Loan<'_>>(),
+        g::send::<OWNER, WORKER, Loan>(),
         g::seq(
             g::par(
                 g::seq(
@@ -146,7 +147,7 @@ async fn a_carrier_borrows_its_parallel_arm_before_the_resources_prefix()
                     g::send::<SERVICE, DB, OtherReply>(),
                 ),
             ),
-            g::send::<WORKER, OWNER, Loan<'_>>(),
+            g::send::<WORKER, OWNER, Loan>(),
         ),
     );
     let p0 = project::<OWNER>(&global);
@@ -175,8 +176,8 @@ async fn a_carrier_borrows_its_parallel_arm_before_the_resources_prefix()
         (async {
             async {
                 async {
-                    owner.send::<Loan<'_>>(db).await?;
-                    let _db = owner.recv::<Loan<'_>>().await?;
+                    owner.send::<Loan>(db).await?;
+                    let _db = owner.recv::<Loan>().await?;
                     Ok::<_, EndpointError>(())
                 };
 
@@ -185,7 +186,7 @@ async fn a_carrier_borrows_its_parallel_arm_before_the_resources_prefix()
                         worker.par::<1>().is_err(),
                         "the carrier must first receive its loan"
                     );
-                    let mut db = worker.recv::<Loan<'_>>().await?;
+                    let mut db = worker.recv::<Loan>().await?;
                     {
                         let [mut carrier] = worker
                             .par()
@@ -218,7 +219,7 @@ async fn a_carrier_borrows_its_parallel_arm_before_the_resources_prefix()
                         }
                         .await?;
                     }
-                    worker.send::<Loan<'_>>(db).await?;
+                    worker.send::<Loan>(db).await?;
                     Ok::<_, EndpointError>(())
                 };
 
@@ -272,11 +273,11 @@ async fn delegated_parallel_rolls_keep_their_cross_lane_continuation()
         let global = g::seq(
             g::send::<OWNER, WORKER, Start>(),
             g::seq(
-                g::send::<OWNER, WORKER, Loan<'_>>(),
+                g::send::<OWNER, WORKER, Loan>(),
                 g::seq(
                     work,
                     g::seq(
-                        g::send::<WORKER, OWNER, Loan<'_>>(),
+                        g::send::<WORKER, OWNER, Loan>(),
                         g::seq(
                             g::send::<DB, SERVICE, Seal>(),
                             g::send::<OWNER, SERVICE, Done>(),
@@ -312,7 +313,7 @@ async fn delegated_parallel_rolls_keep_their_cross_lane_continuation()
                 async {
                     async {
                         owner.send::<Start>(&()).await?;
-                        owner.send::<Loan<'_>>(db).await?;
+                        owner.send::<Loan>(db).await?;
                         {
                             let [mut link] = owner.par()?;
                             for _ in 0..4 {
@@ -320,7 +321,7 @@ async fn delegated_parallel_rolls_keep_their_cross_lane_continuation()
                                 link.send::<Pong>(&()).await?;
                             }
                         }
-                        let mut db = owner.recv::<Loan<'_>>().await?;
+                        let mut db = owner.recv::<Loan>().await?;
                         db.send::<Seal>(&()).await?;
                         owner.send::<Done>(&()).await?;
                         let result = core::future::poll_fn(|cx| {
@@ -345,7 +346,7 @@ async fn delegated_parallel_rolls_keep_their_cross_lane_continuation()
 
                     async {
                         worker.recv::<Start>().await?;
-                        let mut db = worker.recv::<Loan<'_>>().await?;
+                        let mut db = worker.recv::<Loan>().await?;
                         {
                             let [mut ticks] = worker.par()?;
                             let [mut requests] = db.par()?;
@@ -368,7 +369,7 @@ async fn delegated_parallel_rolls_keep_their_cross_lane_continuation()
                             }
                             .await?;
                         }
-                        worker.send::<Loan<'_>>(db).await?;
+                        worker.send::<Loan>(db).await?;
                         Ok::<_, EndpointError>(())
                     };
 

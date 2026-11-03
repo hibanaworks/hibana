@@ -1,4 +1,6 @@
 mod common;
+#[path = "../examples/support/in_process.rs"]
+pub mod in_process;
 use common::TestTransport;
 use core::cell::Cell;
 use hibana::{
@@ -39,10 +41,14 @@ fn nested() -> impl Projectable {
     .resolve::<101>()
     .roll()
 }
-fn with_owner(
+async fn with_owner(
     global: impl Projectable,
     choices: (Choice, Choice),
-    check: impl FnOnce(&mut Endpoint<'_, 0>, &RendezvousKit<'_, '_, TestTransport>, &(Choice, Choice)),
+    check: impl AsyncFnOnce(
+        &mut Endpoint<'_, 0>,
+        &RendezvousKit<'_, '_, TestTransport>,
+        &(Choice, Choice),
+    ),
 ) {
     let program: RoleProgram<0> = project(&global);
     let mut slab = [0; 8192];
@@ -62,7 +68,7 @@ fn with_owner(
     )
     .unwrap();
     let mut endpoint = kit.enter(SessionId::new(1), &program).unwrap();
-    check(&mut endpoint, &kit, &choices);
+    check(&mut endpoint, &kit, &choices).await;
 }
 fn assert_no_progress(kit: &RendezvousKit<'_, '_, TestTransport>, expected_calls: &[(u16, u8)]) {
     let mut calls = Vec::new();
@@ -81,21 +87,22 @@ fn assert_no_progress(kit: &RendezvousKit<'_, '_, TestTransport>, expected_calls
         "record actual resolver calls before progress commits"
     );
 }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_right_local_arm_is_received_at_its_own_descriptor_and_audits_each_decision_once() {
+async fn nested_right_local_arm_is_received_at_its_own_descriptor_and_audits_each_decision_once() {
     with_owner(
         nested(),
         (
             Choice::new(DecisionArm::Right),
             Choice::new(DecisionArm::Right),
         ),
-        |endpoint, kit, choices| {
-            futures::executor::block_on(async {
+        async |endpoint, kit, choices| {
+            {
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 3);
                 assert_no_progress(kit, &[(101, 1), (102, 1)]);
                 branch.recv::<Msg<3, ()>>().await.unwrap();
-            });
+            };
             assert_eq!((choices.0.calls.get(), choices.1.calls.get()), (1, 1));
             let mut ids = kit
                 .tap()
@@ -105,18 +112,20 @@ fn nested_right_local_arm_is_received_at_its_own_descriptor_and_audits_each_deci
             ids.sort_unstable();
             assert_eq!(ids, [101, 102]);
         },
-    );
+    )
+    .await;
 }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn dropped_nested_preview_restores_the_same_affine_choice_without_committing_progress() {
+async fn dropped_nested_preview_restores_the_same_affine_choice_without_committing_progress() {
     with_owner(
         nested(),
         (
             Choice::new(DecisionArm::Right),
             Choice::new(DecisionArm::Right),
         ),
-        |endpoint, kit, choices| {
-            futures::executor::block_on(async {
+        async |endpoint, kit, choices| {
+            {
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 3);
                 drop(branch);
@@ -137,21 +146,23 @@ fn dropped_nested_preview_restores_the_same_affine_choice_without_committing_pro
                     .recv::<Msg<1, ()>>()
                     .await
                     .unwrap();
-            });
+            };
             assert_eq!((choices.0.calls.get(), choices.1.calls.get()), (2, 1));
         },
-    );
+    )
+    .await;
 }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn inner_rejection_is_terminal_without_publishing_the_outer_choice() {
+async fn inner_rejection_is_terminal_without_publishing_the_outer_choice() {
     with_owner(
         nested(),
         (
             Choice::new(DecisionArm::Right),
             Choice::new(DecisionArm::Right),
         ),
-        |endpoint, kit, choices| {
-            futures::executor::block_on(async {
+        async |endpoint, kit, choices| {
+            {
                 choices.1.arm.set(None);
                 let error = endpoint.offer().await.err().unwrap();
                 assert!(format!("{error:?}").contains("ResolverReject"));
@@ -160,13 +171,15 @@ fn inner_rejection_is_terminal_without_publishing_the_outer_choice() {
                 let error = endpoint.offer().await.err().unwrap();
                 assert!(format!("{error:?}").contains("SessionFault(ProtocolViolation)"));
                 assert_no_progress(kit, &[(101, 1), (102, 255)]);
-            });
+            };
             assert_eq!((choices.0.calls.get(), choices.1.calls.get()), (1, 1));
         },
-    );
+    )
+    .await;
 }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_future_nested_choice_is_resolved_after_its_sequential_predecessor() {
+async fn a_future_nested_choice_is_resolved_after_its_sequential_predecessor() {
     let global = g::route(
         g::seq(
             g::send::<0, 0, Msg<1, ()>>(),
@@ -182,8 +195,8 @@ fn a_future_nested_choice_is_resolved_after_its_sequential_predecessor() {
             Choice::new(DecisionArm::Left),
             Choice::new(DecisionArm::Right),
         ),
-        |endpoint, _, choices| {
-            futures::executor::block_on(async {
+        async |endpoint, _, choices| {
+            {
                 endpoint
                     .offer()
                     .await
@@ -196,12 +209,14 @@ fn a_future_nested_choice_is_resolved_after_its_sequential_predecessor() {
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 2);
                 branch.recv::<Msg<2, ()>>().await.unwrap();
-            });
+            };
         },
-    );
+    )
+    .await;
 }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_fresh_nested_region_resolves_its_outer_choice_before_a_descendant() {
+async fn a_fresh_nested_region_resolves_its_outer_choice_before_a_descendant() {
     let global = g::seq(
         g::send::<0, 0, Msg<1, ()>>(),
         g::route(
@@ -217,19 +232,21 @@ fn a_fresh_nested_region_resolves_its_outer_choice_before_a_descendant() {
             Choice::new(DecisionArm::Right),
             Choice::new(DecisionArm::Left),
         ),
-        |endpoint, _, choices| {
-            futures::executor::block_on(async {
+        async |endpoint, _, choices| {
+            {
                 endpoint.send::<Msg<1, ()>>(&()).await.unwrap();
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 4);
                 branch.recv::<Msg<4, ()>>().await.unwrap();
-            });
+            };
             assert_eq!((choices.0.calls.get(), choices.1.calls.get()), (1, 0));
         },
-    );
+    )
+    .await;
 }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_roll_can_reenter_before_its_sequential_tail_is_consumed() {
+async fn nested_roll_can_reenter_before_its_sequential_tail_is_consumed() {
     let global = g::route(
         g::seq(
             g::send::<0, 0, Msg<1, ()>>(),
@@ -254,8 +271,8 @@ fn nested_roll_can_reenter_before_its_sequential_tail_is_consumed() {
             Choice::new(DecisionArm::Left),
             Choice::new(DecisionArm::Left),
         ),
-        |endpoint, _, choices| {
-            futures::executor::block_on(async {
+        async |endpoint, _, choices| {
+            {
                 endpoint
                     .offer()
                     .await
@@ -281,13 +298,15 @@ fn nested_roll_can_reenter_before_its_sequential_tail_is_consumed() {
                 drop(preview);
                 endpoint.send::<Msg<4, ()>>(&()).await.unwrap();
                 endpoint.send::<Msg<5, ()>>(&()).await.unwrap();
-            });
+            };
         },
-    );
+    )
+    .await;
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_parked_wire_receive_survives_an_independent_typed_send() {
+async fn a_parked_wire_receive_survives_an_independent_typed_send() {
     let global = g::par(
         g::route(
             g::send::<0, 1, Msg<10, u8>>(),
@@ -316,7 +335,7 @@ fn a_parked_wire_receive_survives_an_independent_typed_send() {
     let mut receiver = kit.enter(sid, &receiver_program).unwrap();
     let mut observer = kit.enter(sid, &observer_program).unwrap();
 
-    futures::executor::block_on(async {
+    {
         sender.send::<Msg<10, u8>>(&71).await.unwrap();
         let preview = receiver.offer().await.unwrap();
         assert_eq!(preview.label(), 10);
@@ -324,7 +343,7 @@ fn a_parked_wire_receive_survives_an_independent_typed_send() {
         receiver.send::<Msg<12, u8>>(&93).await.unwrap();
         assert_eq!(observer.recv::<Msg<12, u8>>().await.unwrap(), 93);
         assert_eq!(receiver.recv::<Msg<10, u8>>().await.unwrap(), 71);
-    });
+    };
     assert_eq!(choice.calls.get(), 1);
     assert_eq!(
         kit.tap()
@@ -340,8 +359,9 @@ fn a_parked_wire_receive_survives_an_independent_typed_send() {
     );
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn nested_branch_send_preserves_preview_and_delivers_the_chosen_payload_to_its_peer() {
+async fn nested_branch_send_preserves_preview_and_delivers_the_chosen_payload_to_its_peer() {
     fn wire() -> impl Projectable {
         g::route(
             g::send::<0, 1, Msg<1, u8>>(),
@@ -356,10 +376,10 @@ fn nested_branch_send_preserves_preview_and_delivers_the_chosen_payload_to_its_p
             Choice::new(DecisionArm::Right),
             Choice::new(DecisionArm::Right),
         ),
-        |sender, kit, choices| {
+        async |sender, kit, choices| {
             let peer: RoleProgram<1> = project(&wire());
             let mut receiver = kit.enter(SessionId::new(1), &peer).unwrap();
-            futures::executor::block_on(async {
+            {
                 let branch = sender.offer().await.unwrap();
                 assert_eq!(branch.label(), 3);
                 let value = 31;
@@ -418,27 +438,30 @@ fn nested_branch_send_preserves_preview_and_delivers_the_chosen_payload_to_its_p
                         .unwrap(),
                     11
                 );
-            });
+            };
             assert_eq!((choices.0.calls.get(), choices.1.calls.get()), (3, 2));
         },
-    );
+    )
+    .await;
 }
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
-fn a_wrong_nested_payload_schema_cannot_publish_any_ancestor_choice() {
+async fn a_wrong_nested_payload_schema_cannot_publish_any_ancestor_choice() {
     with_owner(
         nested(),
         (
             Choice::new(DecisionArm::Right),
             Choice::new(DecisionArm::Right),
         ),
-        |endpoint, kit, _| {
-            futures::executor::block_on(async {
+        async |endpoint, kit, _| {
+            {
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 3);
                 assert!(branch.recv::<Msg<3, u8>>().await.is_err());
                 assert_no_progress(kit, &[(101, 1), (102, 1)]);
-            });
+            };
         },
-    );
+    )
+    .await;
 }
