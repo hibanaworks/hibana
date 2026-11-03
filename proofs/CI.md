@@ -57,7 +57,12 @@ No second source model, admission rule or Endpoint execution path is introduced.
 
 ## Extended certification
 
-The separate `extended-certification` workflow runs nightly or manually. It adds the complete frontier catalog, the existing
+The separate `extended-certification` workflow runs on `ci-certify-*` tags, and
+nightly or manually once its definition is on the default branch. A certification
+tag selects an immutable source revision; it is not a release or a passed result.
+Branch pushes run the ordinary workflow. Certification tags invoke that same
+workflow exactly once, rather than also triggering a duplicate ordinary run.
+It adds the complete frontier catalog, the existing
 deep interaction/spine regressions and seeded depth-4-through-8 syntax samples.
 Sampling is not described as exhaustive. These use the same assignment and
 execution path as mandatory conformance.

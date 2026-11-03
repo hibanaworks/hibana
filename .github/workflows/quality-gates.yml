@@ -2,6 +2,7 @@ name: quality-gates
 
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_call:
     inputs:

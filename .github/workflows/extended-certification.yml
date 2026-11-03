@@ -1,6 +1,8 @@
 name: extended-certification
 
 on:
+  push:
+    tags: ['ci-certify-*']
   schedule:
     - cron: '0 18 * * *'
   workflow_dispatch:
