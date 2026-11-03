@@ -64,19 +64,20 @@ fn with_owner(
     let mut endpoint = kit.enter(SessionId::new(1), &program).unwrap();
     check(&mut endpoint, &kit, &choices);
 }
-fn assert_no_progress(kit: &RendezvousKit<'_, '_, TestTransport>) {
+fn assert_no_progress(kit: &RendezvousKit<'_, '_, TestTransport>, expected_calls: &[(u16, u8)]) {
+    let mut calls = Vec::new();
     for event in kit.tap() {
         assert_ne!(event.id(), tap::ENDPOINT_SEND);
         assert_ne!(event.id(), tap::ENDPOINT_RECV);
         assert_ne!(event.id(), tap::ROUTE_ARM_SELECTION);
         if event.id() == tap::RESOLVER_AUDIT {
-            assert_eq!(
-                event.causal_key() & 0xff,
-                0xff,
-                "only a rejection may audit before commit"
-            );
+            calls.push((event.arg1() as u16, event.causal_key() as u8));
         }
     }
+    assert_eq!(
+        calls, expected_calls,
+        "record actual resolver calls before progress commits"
+    );
 }
 #[test]
 fn nested_right_local_arm_is_received_at_its_own_descriptor_and_audits_each_decision_once() {
@@ -90,7 +91,7 @@ fn nested_right_local_arm_is_received_at_its_own_descriptor_and_audits_each_deci
             futures::executor::block_on(async {
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 3);
-                assert_no_progress(kit);
+                assert_no_progress(kit, &[(101, 1), (102, 1)]);
                 branch.recv::<Msg<3, ()>>().await.unwrap();
             });
             assert_eq!((choices.0.calls.get(), choices.1.calls.get()), (1, 1));
@@ -117,7 +118,7 @@ fn dropped_nested_preview_restores_the_same_affine_choice_without_committing_pro
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 3);
                 drop(branch);
-                assert_no_progress(kit);
+                assert_no_progress(kit, &[(101, 1), (102, 1)]);
                 choices.0.set(DecisionArm::Left);
                 endpoint
                     .offer()
@@ -140,7 +141,7 @@ fn dropped_nested_preview_restores_the_same_affine_choice_without_committing_pro
     );
 }
 #[test]
-fn inner_rejection_is_terminal_without_outer_success_or_event_progress() {
+fn inner_rejection_is_terminal_without_publishing_the_outer_choice() {
     with_owner(
         nested(),
         (
@@ -152,11 +153,11 @@ fn inner_rejection_is_terminal_without_outer_success_or_event_progress() {
                 choices.1.arm.set(None);
                 let error = endpoint.offer().await.err().unwrap();
                 assert!(format!("{error:?}").contains("ResolverReject"));
-                assert_no_progress(kit);
+                assert_no_progress(kit, &[(101, 1), (102, 255)]);
                 choices.0.set(DecisionArm::Left);
                 let error = endpoint.offer().await.err().unwrap();
                 assert!(format!("{error:?}").contains("SessionFault(ProtocolViolation)"));
-                assert_no_progress(kit);
+                assert_no_progress(kit, &[(101, 1), (102, 255)]);
             });
             assert_eq!((choices.0.calls.get(), choices.1.calls.get()), (1, 1));
         },
@@ -361,7 +362,7 @@ fn nested_branch_send_preserves_preview_and_delivers_the_chosen_payload_to_its_p
                 assert_eq!(branch.label(), 3);
                 let value = 31;
                 drop(branch.send::<Msg<3, u8>>(&value));
-                assert_no_progress(kit);
+                assert_no_progress(kit, &[(101, 1), (102, 1)]);
                 sender
                     .offer()
                     .await
@@ -434,7 +435,7 @@ fn a_wrong_nested_payload_schema_cannot_publish_any_ancestor_choice() {
                 let branch = endpoint.offer().await.unwrap();
                 assert_eq!(branch.label(), 3);
                 assert!(branch.recv::<Msg<3, u8>>().await.is_err());
-                assert_no_progress(kit);
+                assert_no_progress(kit, &[(101, 1), (102, 1)]);
             });
         },
     );
