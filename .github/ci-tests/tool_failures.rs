@@ -111,33 +111,84 @@ fn pressure_guard_rejects_process_table_subprocess_failure() {
 #[test]
 fn pressure_guard_rejects_successful_corrupt_tables_and_checks_exit_race() {
     use std::{fs, os::unix::fs::PermissionsExt};
+    let resolved = Command::new("sh")
+        .args(["-c", "command -v ps"])
+        .output()
+        .unwrap();
+    assert!(resolved.status.success());
+    let real_ps = String::from_utf8(resolved.stdout).unwrap();
     let directory =
         std::env::temp_dir().join(format!("pressure-ps-records-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let ps = directory.join("ps");
     let marker = directory.join("sampled");
-    for (table, delay, child_sleep, expected) in [
-        ("", "", "10", 2),
-        ("garbage", "", "10", 2),
-        ("2147483000 0", "", "10", 2),
-        ("2147483000 0 0 bash\n2147483000 0 0 bash", "", "10", 2),
-        ("2147483000 0 0 bash", "", "10", 2),
-        ("2147483000 0 0 bash", "sleep 0.15", "0.05", 0),
+    for (table, exit_race, expected) in [
+        ("", false, 2),
+        ("garbage", false, 2),
+        ("2147483000 0", false, 2),
+        ("2147483000 0 0 bash\n2147483000 0 0 bash", false, 2),
+        ("2147483000 0 0 bash", false, 2),
+        ("2147483000 0 0 bash", true, 0),
     ] {
         let _ = fs::remove_file(&marker);
         fs::write(
             &ps,
-            format!("#!/bin/sh\n: > \"$PRESSURE_MARKER\"\n{delay}\nprintf '%s\\n' '{table}'\n"),
+            format!(
+                r#"#!/bin/sh
+case "$*" in
+  '-axo pid=,ppid=') printf '2147483000 0\n'; exit 0 ;;
+  '-axo pid=,ppid=,rss=,command=') ;;
+  *) exit 77 ;;
+esac
+if [ "$PRESSURE_EXIT_RACE" = 1 ]; then
+  guard_pid=$PPID
+  sampler_pid=$$
+  child_pid=$("$PRESSURE_REAL_PS" -axo pid=,ppid= | while read -r pid parent; do
+    if [ "$parent" = "$guard_pid" ] && [ "$pid" != "$sampler_pid" ]; then
+      printf '%s\n' "$pid"
+    fi
+  done)
+  case "$child_pid" in ''|*[!0-9]*) exit 77 ;; esac
+  : > "$PRESSURE_MARKER"
+  attempts=0
+  while state=$("$PRESSURE_REAL_PS" -p "$child_pid" -o stat= 2>/dev/null); do
+    case "$state" in *Z*) break ;; esac
+    attempts=$((attempts + 1))
+    [ "$attempts" -lt 1000 ] || exit 77
+    sleep 0.01
+  done
+else
+  : > "$PRESSURE_MARKER"
+fi
+printf '%s\n' '{table}'
+"#
+            ),
         )
         .unwrap();
         fs::set_permissions(&ps, fs::Permissions::from_mode(0o755)).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_compile-pressure"))
-            .args(["guard", ".", "record-fixture", "sleep", child_sleep])
+        let mut command = Command::new(env!("CARGO_BIN_EXE_compile-pressure"));
+        command.args(["guard", ".", "record-fixture"]);
+        if exit_race {
+            command.args([
+                "bash",
+                "-c",
+                r#"for attempt in {1..1000}; do
+  if [[ -f "$PRESSURE_MARKER" ]]; then exit 0; fi
+  sleep 0.01
+done
+exit 99"#,
+            ]);
+        } else {
+            command.args(["sleep", "10"]);
+        }
+        let output = command
             .env(
                 "PATH",
                 format!("{}:{}", directory.display(), std::env::var("PATH").unwrap()),
             )
             .env("PRESSURE_MARKER", &marker)
+            .env("PRESSURE_REAL_PS", real_ps.trim())
+            .env("PRESSURE_EXIT_RACE", if exit_race { "1" } else { "0" })
             .env("HIBANA_COMPILE_PRESSURE_MAX_RSS_MIB", "100")
             .env("HIBANA_COMPILE_PRESSURE_MAX_SECONDS", "0")
             .output()

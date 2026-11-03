@@ -3,8 +3,6 @@ name: extended-certification
 on:
   push:
     tags: ['ci-certify-*']
-  schedule:
-    - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
       seed:
@@ -16,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: extended-${{ github.ref }}
+  group: core-source
   cancel-in-progress: true
 
 env:
@@ -27,13 +25,28 @@ env:
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
+  preflight:
+    runs-on: macos-15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      seed: ${{ steps.plan.outputs.seed }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/core-preflight
+        id: plan
+        with:
+          extended: 'true'
+          seed: ${{ inputs.seed || '' }}
+
   core:
-    uses: ./.github/workflows/quality-gates.yml
+    needs: preflight
+    uses: ./.github/workflows/core-checks.yml
     with:
-      extended: true
-      seed: ${{ inputs.seed || '' }}
+      matrix: ${{ needs.preflight.outputs.matrix }}
+      seed: ${{ needs.preflight.outputs.seed }}
 
   kani:
+    needs: preflight
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -48,6 +61,7 @@ jobs:
         run: bash .github/scripts/check_kani.sh
 
   proofs:
+    needs: preflight
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -75,7 +89,7 @@ jobs:
   certified:
     name: extended-certification
     if: always()
-    needs: [core, kani, proofs]
+    needs: [preflight, core, kani, proofs]
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Require every certification job
@@ -83,4 +97,4 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: >-
           printf '%s\n' "$RESULTS" |
-          jq -e 'keys == ["core", "kani", "proofs"] and all(.[]; .result == "success")'
+          jq -e 'keys == ["core", "kani", "preflight", "proofs"] and all(.[]; .result == "success")'

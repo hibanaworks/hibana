@@ -84,8 +84,6 @@ bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard toolchain 
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_DIR}"
 if [[ "$selection" != generated ]]; then
 bash "${ROOT_DIR}/.github/scripts/lib/supplemental_proofs_tool.sh" module-self-test
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory --self-test
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" generated-axioms --self-test
 
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \

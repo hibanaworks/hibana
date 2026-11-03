@@ -209,6 +209,23 @@ impl Tree {
 
 fn compare<const E: usize, const B: usize>(tree: &Tree) {
     let events = tree.events();
+    // Cache only the independent grammar oracle. Every production query below
+    // still runs for every original event, pair, boundary and sampled tree.
+    let order: Vec<Vec<_>> = (0..events)
+        .map(|first| {
+            (0..events)
+                .map(|second| tree.before(first, second))
+                .collect()
+        })
+        .collect();
+    let rolls: Vec<_> = (0..events).map(|event| tree.rolls_at(event, 0)).collect();
+    let before = |first: usize, second: usize| {
+        order
+            .get(first)
+            .and_then(|row| row.get(second))
+            .copied()
+            .unwrap_or(false)
+    };
     let mut source = EffList::<E>::new_partitioned(events, tree.markers(), 0);
     tree.emit(&mut source, &mut 0);
     let plan = ProgramImagePlan::from_program(&source);
@@ -268,23 +285,25 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
     for event in (0..=events + 1).chain([usize::MAX]) {
         assert_eq!(
             image.source_roll_ancestors(event).collect::<Vec<_>>(),
-            tree.rolls_at(event, 0),
+            rolls.get(event).map(Vec::as_slice).unwrap_or_default(),
             "roll ancestors {tree:?}: {event}"
         );
     }
     for first in (0..=events + 1).chain([usize::MAX]) {
         for second in (0..=events + 1).chain([usize::MAX]) {
-            let containing = tree.rolls_at(first, 0).into_iter().find(|scope| {
-                first < second
-                    && second <= events
-                    && (first..second).all(|event| tree.rolls_at(event, 0).contains(scope))
+            let containing = rolls.get(first).and_then(|ancestors| {
+                ancestors.iter().copied().find(|scope| {
+                    first < second
+                        && second <= events
+                        && rolls[first..second].iter().all(|path| path.contains(scope))
+                })
             });
             assert_eq!(
                 image.source_roll_containing(first, second),
                 containing,
                 "containing roll {tree:?}: {first}..{second}"
             );
-            let expected = tree.before(first, second);
+            let expected = before(first, second);
             assert_eq!(
                 image.source_separating_route(first, second),
                 tree.separating_route(first, second, 0, 0),
@@ -307,7 +326,7 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
                 assert!(cut <= first, "cut {tree:?}: {first}->{second}");
                 for omitted in cut..=first {
                     assert!(
-                        !tree.before(omitted, second),
+                        !before(omitted, second),
                         "skipped interval {tree:?}: {omitted}->{second}"
                     );
                 }
@@ -325,9 +344,9 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
     for after in 0..events {
         for skipped in 0..after {
             for before in 0..skipped {
-                if tree.before(before, after) && !tree.before(skipped, after) {
+                if order[before][after] && !order[skipped][after] {
                     assert!(
-                        tree.before(before, skipped),
+                        order[before][skipped],
                         "predecessor skip: {tree:?} {before}/{skipped}/{after}"
                     );
                 }

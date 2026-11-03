@@ -114,24 +114,13 @@ rm -rf "${OUTPUT}/observations" "${OUTPUT}/scope-observations"
 /usr/bin/time -p -o "${OUTPUT}/execute.time" \
   cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
     --bin protocol-shape-runs -- "${OUTPUT}" "${TOOLCHAIN:-stable}"
-GENERATED="${ROOT_DIR}/target/lean-proof/ProtocolShapesGenerated.lean"
-mkdir -p "$(dirname "${GENERATED}")"
-cat "${ROOT_DIR}/.github/ci-tests/endpoint_conformance.lean" \
-  "${ROOT_DIR}/.github/ci-tests/protocol_shapes.lean" > "${GENERATED}.new"
-if ! cmp -s "${GENERATED}.new" "${GENERATED}"; then
-  mv "${GENERATED}.new" "${GENERATED}"
-else
-  rm "${GENERATED}.new"
-fi
-bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial \
-  "${ROOT_DIR}/proofs/lean" --native Hibana.SourceOccurrenceTrace
-(cd "${ROOT_DIR}/proofs/lean" && lake build protocolShapes)
+CHECKER="$(bash "${ROOT_DIR}/.github/scripts/build_protocol_checker.sh")"
 /usr/bin/time -p -o "${OUTPUT}/oracle.time" \
-  "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" \
+  "${CHECKER}" \
   "${OUTPUT}/inputs.json" "${OUTPUT}/observations" | tee "${OUTPUT}/oracle.log"
 cat "${OUTPUT}/diagnose.time" "${OUTPUT}/compile.time" "${OUTPUT}/execute.time" "${OUTPUT}/oracle.time"
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-  --bin protocol-shape-controls -- "${ROOT_DIR}/proofs/lean/.lake/build/bin/protocol-shapes" "${OUTPUT}"
+  --bin protocol-shape-controls -- "${CHECKER}" "${OUTPUT}"
 source_hashes > "${OUTPUT}/source-after.sha256"
 cmp "${OUTPUT}/source.sha256" "${OUTPUT}/source-after.sha256"
 (cd "${OUTPUT}" && shasum -a 256 --check inputs.sha256 > inputs-check.log)

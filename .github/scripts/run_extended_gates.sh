@@ -29,16 +29,3 @@ bash ./.github/scripts/check_package_artifact.sh
 
 bash .github/scripts/check_nested_roll_admission.sh
 bash proofs/checks/runtime/rolled-route-ownership/check.sh
-miri="$(cat .github/miri-toolchain)"
-for case in $(seq 0 15); do
-  out="target/miri-parallel-reentry/$case"
-  mkdir -p "$out"
-  MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-set=HIBANA_PARALLEL_CREDIT_CASE=$case" \
-    timeout --kill-after=10s 480s cargo +"$miri" miri test --locked --test nested_parallel_reentry \
-      nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late \
-      -- --exact --nocapture > "$out/run.log" 2>&1
-  reverse=false
-  if (( case % 2 )); then reverse=true; fi
-  grep -F "parallel-credit complete: right_visit=$((case / 2)) reverse=$reverse" "$out/run.log"
-  test "$(grep -c '^parallel-credit complete:' "$out/run.log")" = 1
-done

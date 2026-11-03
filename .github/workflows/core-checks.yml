@@ -1,0 +1,147 @@
+name: core-checks
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+      seed:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-source-child-${{ github.run_id }}
+  cancel-in-progress: true
+
+env:
+  TOOLCHAIN: stable
+  CARGO_BUILD_JOBS: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
+jobs:
+  quality:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust and embedded targets
+        run: |
+          brew list coreutils >/dev/null 2>&1 || brew install coreutils
+          brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component rust-src
+          rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
+          rustup toolchain install "$(cat .github/miri-toolchain)" --profile minimal --component miri --component rust-src
+      - uses: ./.github/actions/setup-lean
+      - name: Check the required core contract
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/run_ci_gates.sh --kernel
+
+  runtime-work:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust and embedded targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
+      - name: Check portable work and memory budgets
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/measure_runtime_work.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: runtime-work-${{ matrix.os }}
+          path: target/runtime-work/results/
+
+  protocol-checker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - uses: ./.github/actions/setup-lean
+      - name: Build the shared source oracle once
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/build_protocol_checker.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: protocol-checker
+          path: target/protocol-checker/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: protocol-checker-models
+          path: proofs/lean/.lake/build/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  protocol-fuzz:
+    needs: protocol-checker
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    strategy:
+      fail-fast: true
+      max-parallel: 16
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - uses: actions/download-artifact@v8
+        with:
+          name: protocol-checker
+          path: target/protocol-checker/
+      - name: Verify the selected source oracle
+        run: |
+          chmod +x target/protocol-checker/protocol-shapes
+          bash .github/scripts/build_protocol_checker.sh --check
+      - uses: ./.github/actions/setup-lean
+        if: matrix.selection == 'controls'
+      - uses: actions/download-artifact@v8
+        if: matrix.selection == 'controls'
+        with:
+          name: protocol-checker-models
+          path: proofs/lean/.lake/build/
+      - name: Restore the model executable permission
+        if: matrix.selection == 'controls'
+        run: chmod +x proofs/lean/.lake/build/bin/protocol-shapes
+      - name: Execute the assigned protocol population
+        env:
+          CASE_ID: ${{ matrix.id }}
+          SEED: ${{ inputs.seed }}
+        run: >-
+          bash .github/scripts/lib/resource_guard.sh
+          bash .github/scripts/check_protocol_ci.sh "$CASE_ID" "$SEED"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: protocol-${{ matrix.id }}
+          retention-days: 30
+          path: |
+            target/protocol-ci/${{ matrix.id }}/**
+            target/protocol-shapes/**
+            !target/protocol-shapes/**/target/**
+            target/protocol-fuzz-*/**
+            !target/protocol-fuzz-*/**/target/**
+            target/*-sensitivity/**
+            !target/*-sensitivity/**/target/**
+
+  required:
+    name: core-checks
+    if: always()
+    needs: [quality, runtime-work, protocol-checker, protocol-fuzz]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Require every mandatory population and budget check
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: >-
+          printf '%s\n' "$RESULTS" |
+          jq -e 'keys == ["protocol-checker", "protocol-fuzz", "quality", "runtime-work"] and all(.[]; .result == "success")'

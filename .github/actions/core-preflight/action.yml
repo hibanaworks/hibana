@@ -1,0 +1,57 @@
+name: Check verification tools and assign protocol inputs
+description: Validate the CI tools once before starting the expensive verification jobs.
+inputs:
+  extended:
+    description: Include the additional certification populations.
+    default: 'false'
+  seed:
+    description: Syntax sampling seed; empty uses the UTC date once for the entire run.
+    default: ''
+outputs:
+  matrix:
+    description: Complete canonical assignment matrix.
+    value: ${{ steps.plan.outputs.matrix }}
+  seed:
+    description: Sampling seed shared by every assignment.
+    value: ${{ steps.plan.outputs.seed }}
+runs:
+  using: composite
+  steps:
+    - name: Install the CI tool compiler
+      shell: bash
+      run: |
+        brew list coreutils >/dev/null 2>&1 || brew install coreutils
+        brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
+        echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
+        rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+    - name: Check formatting and all verification-tool tests
+      shell: bash
+      run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/run_ci_gates.sh --tools
+    - name: Assign the entire finite population exactly once
+      id: plan
+      shell: bash
+      env:
+        EXTENDED: ${{ inputs.extended }}
+        SEED: ${{ inputs.seed }}
+      run: |
+        set -euo pipefail
+        args=(ci-matrix)
+        case "$EXTENDED" in
+          true) args+=(extended) ;;
+          false) ;;
+          *) echo 'Invalid certification population' >&2; exit 2 ;;
+        esac
+        seed="${SEED:-$(date -u +%Y%m%d)}"
+        [[ "$seed" =~ ^[0-9]+$ ]] || { echo 'Invalid syntax sampling seed' >&2; exit 2; }
+        matrix="$(bash .github/scripts/lib/resource_guard.sh cargo +stable run --quiet --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions -- "${args[@]}")"
+        printf 'matrix=%s\nseed=%s\n' "$matrix" "$seed" >> "$GITHUB_OUTPUT"
+        printf '%s\n' "$matrix" > protocol-plan.json
+        printf '%s\n' "$seed" > protocol-seed.txt
+        git rev-parse HEAD > protocol-revision.txt
+    - uses: actions/upload-artifact@v7
+      with:
+        name: protocol-plan
+        path: |
+          protocol-plan.json
+          protocol-seed.txt
+          protocol-revision.txt

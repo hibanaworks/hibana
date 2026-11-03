@@ -6,7 +6,7 @@ possible protocol, payload, visit count or transport failure.
 
 | Property | Required evidence |
 | --- | --- |
-| Public Rust API, borrowing and affine moves | All native targets, including existing compile-fail inputs and Endpoint regressions; strict Clippy and documentation checks |
+| Public Rust API, borrowing and affine moves | All native targets, including existing compile-fail inputs and Endpoint regressions; doctests, strict Clippy and documentation checks |
 | Projection and source rules | The complete checked Lean model inventory, standalone implementation theorems, theorem types and axiom boundaries; native projection and malformed-image tests |
 | Finite public protocol conformance | Every constructor-budget-2 catalog shard, and every shared-message-contract catalog entry and variant |
 | Missing or extra runtime permission | Every next-operation probe at every prefix of each catalog's finite scripts; complete probe and schedule inventories; no runtime-only or model-only discrepancy |
@@ -24,10 +24,23 @@ shared with the generator rather than copied into workflow inputs.
 it unchanged locally and in CI. It rejects unknown IDs and refuses to overwrite
 an existing assignment receipt. The workflow does not reimplement selection or
 execution rules.
-Generator, rejection-classifier and checker-control unit tests run once in the required
-workspace test job. Individual catalog executions do not rerun the identical
-unit suites; their source-specific compiler, Endpoint, oracle and completeness
-checks still execute for every assignment.
+Formatting and all verification-tool tests (including the generator, rejection
+classifier, checker controls and assignment planner) run once in a small preflight
+job. Kernel tests and Clippy exclude that already-checked tool package. Every
+expensive verification job depends on a successful preflight; a broken tool does
+not start the full population, Kani or the additional proofs. The planner emits
+the complete assignment matrix without repeating its unit tests. The sampling
+seed is chosen once for the whole run, including runs that cross UTC midnight.
+
+Each CI run compiles the shared public conformance oracle once for its selected
+source revision and host platform. Every assignment verifies the oracle's binary hash, source-input
+hashes, source revision and platform before using it. Missing or mismatched
+artifacts fail the job. The controls assignment also receives the compiled Lean
+imports and installs Lean to execute its model mutations. Other assignments do
+not reinstall Lean or rebuild the same oracle. Each source still gets its own
+compiler diagnostics, real Endpoint execution, oracle comparison and controls.
+The build cache is an optimization of the same checker, not another oracle.
+
 
 The budget counts generated constructors, not syntax depth. The grammar includes
 ordinary protocols and Endpoint loan/use/return/onward-transfer protocols,
@@ -45,9 +58,12 @@ actually executed; independently classified illegal candidates must fail
 compilation. A compile-fail-only shard makes no runtime coverage claim. Missing
 inputs, unclassified rejections, incomplete probes, timeouts and budget stops
 fail CI. Each job saves its assignment, generated sources, hashes, observations
-and verdicts. The final result requires the plan, every mandatory matrix assignment and every
-other required job to succeed. Skipped, cancelled and missing jobs are failures.
-The ordinary workflow has no optional verification jobs. Extended certification
+and verdicts. The final result requires preflight, the shared oracle build, every mandatory
+matrix assignment and every other required job to succeed. Skipped, cancelled and missing jobs are failures.
+The ordinary workflow has no optional verification jobs. A failed population
+cancels the remaining matrix work because that source cannot qualify; cancelled
+assignments still make the final contract fail. A fixed revision must run the
+complete matrix successfully. Extended certification
 invokes that same workflow plus Kani and the additional proof/memory checks; its
 final result also rejects every skipped or unsuccessful dependency.
 
@@ -58,10 +74,16 @@ No second source model, admission rule or Endpoint execution path is introduced.
 ## Extended certification
 
 The separate `extended-certification` workflow runs on `ci-certify-*` tags, and
-nightly or manually once its definition is on the default branch. A certification
+explicit manual requests. It does not rerun unchanged Kani/proof populations
+on a nightly timer; seeded syntax samples remain part of every certification
+and can be requested with a new seed. A certification
 tag selects an immutable source revision; it is not a release or a passed result.
 Branch pushes run the ordinary workflow. Certification tags invoke that same
 workflow exactly once, rather than also triggering a duplicate ordinary run.
+A final candidate is published through its certification tag, then advanced
+to main after qualification. Root runs share one concurrency group across
+branches and tags; a newer run cancels the previous source run. The reusable
+core-checks child has a run-specific group so that it cannot cancel its own caller.
 It adds the complete frontier catalog, the existing
 deep interaction/spine regressions and seeded depth-4-through-8 syntax samples.
 Sampling is not described as exhaustive. These use the same assignment and
@@ -77,8 +99,26 @@ refinement theorem.
 The additional proof job runs on macOS, including the actual TCP publication
 and Unix-carrier fixtures that use hibana-runtime's macOS host I/O. Portable
 work-count checks and generated public conformance also run on ARM Linux.
+The 16 delayed-parent schedules execute once in `check_miri.sh`, including
+each scenario's completion record and unique source-specific evidence. The
+extended entry point calls that gate and does not repeat the schedules.
 The required Miri boundary checks and the additional Miri checks are disjoint
-selections of the same script; its default still runs both. Likewise, model
+selections of the same script; its default still runs both. Overlapping broad
+and individual test filters have one execution site, including the parked-view,
+actor-progress, image, tap and delegated-offer regressions. Native and Miri
+executions remain distinct evidence.
+
+The source-order equivalence catalogs (all 19,765 depth-three trees and the same
+1,000 seeded depth-eight trees) remain mandatory native tests. They are not
+rerun as semantic catalog enumerations inside Miri. Miri runs the packed image,
+malformed ownership/offset, selected-preview and temporary-storage lifetime
+fixtures, including the production comparison path's allocation and unwinding
+boundary. This finite memory check does not claim Miri interpreted every sampled
+tree. The former broad module filter accidentally included both native catalog
+enumerators; its 180-second stops are incomplete runs, not passing evidence.
+The independent grammar oracle now caches its relations and ancestor paths;
+all original trees, production queries, boundary values and native assertions
+remain present. Likewise, model
 proofs and generated observation proofs are complementary selections of one
 Lean gate. Certification does not repeat the complete native/Clippy/documentation
 job inside its additional proof job. They do not verify arbitrary user Transports,

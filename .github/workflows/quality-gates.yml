@@ -4,21 +4,13 @@ on:
   push:
     branches: ['**']
   pull_request:
-  workflow_call:
-    inputs:
-      extended:
-        type: boolean
-        default: false
-      seed:
-        type: string
-        default: ''
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: quality-${{ github.ref }}-${{ inputs.extended && 'extended' || 'ci' }}
+  group: core-source
   cancel-in-progress: true
 
 env:
@@ -29,115 +21,32 @@ env:
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
-  quality:
+  preflight:
     runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Rust and embedded targets
-        run: |
-          brew list coreutils >/dev/null 2>&1 || brew install coreutils
-          brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
-          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component rust-src
-          rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
-          rustup toolchain install "$(cat .github/miri-toolchain)" --profile minimal --component miri --component rust-src
-      - uses: ./.github/actions/setup-lean
-      - name: Check the required core contract
-        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/run_ci_gates.sh
-
-  runtime-work:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Rust and embedded targets
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
-      - name: Check portable work and memory budgets
-        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/measure_runtime_work.sh
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: runtime-work-${{ matrix.os }}
-          path: target/runtime-work/results/
-
-  protocol-plan:
-    runs-on: ubuntu-24.04-arm
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      seed: ${{ steps.plan.outputs.seed }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
-      - name: Assign the entire finite population exactly once
+      - uses: ./.github/actions/core-preflight
         id: plan
-        env:
-          EXTENDED: ${{ inputs.extended == true }}
-        run: |
-          set -euo pipefail
-          cargo +stable test --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions
-          args=(ci-matrix)
-          if [[ "$EXTENDED" == true ]]; then args+=(extended); fi
-          matrix="$(cargo +stable run --quiet --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shape-partitions -- "${args[@]}")"
-          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
-          printf '%s\n' "$matrix" > protocol-plan.json
-      - uses: actions/upload-artifact@v7
-        with:
-          name: protocol-plan
-          path: protocol-plan.json
 
-  protocol-fuzz:
-    needs: protocol-plan
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      max-parallel: 16
-      matrix: ${{ fromJSON(needs.protocol-plan.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
-      - uses: ./.github/actions/setup-lean
-      - name: Reuse the shared protocol checker
-        uses: actions/cache@v6
-        with:
-          path: proofs/lean/.lake/build
-          key: protocol-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('proofs/lean/lean-toolchain', 'proofs/lean/lakefile.toml', 'proofs/lean/lake-manifest.json', 'proofs/lean/**/*.lean', '.github/ci-tests/*.lean', '.github/scripts/check_protocol_shapes.sh', '.github/scripts/lib/lean_audit*', '.github/ci-tests/lean_*') }}
-      - name: Execute the assigned protocol population
-        env:
-          CASE_ID: ${{ matrix.id }}
-          SEED: ${{ inputs.seed }}
-        run: >-
-          bash .github/scripts/lib/resource_guard.sh
-          bash .github/scripts/check_protocol_ci.sh "$CASE_ID" "$SEED"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: protocol-${{ matrix.id }}
-          retention-days: 30
-          path: |
-            target/protocol-ci/${{ matrix.id }}/**
-            target/protocol-shapes/**
-            !target/protocol-shapes/**/target/**
-            target/protocol-fuzz-*/**
-            !target/protocol-fuzz-*/**/target/**
-            target/*-sensitivity/**
-            !target/*-sensitivity/**/target/**
+  core:
+    needs: preflight
+    uses: ./.github/workflows/core-checks.yml
+    with:
+      matrix: ${{ needs.preflight.outputs.matrix }}
+      seed: ${{ needs.preflight.outputs.seed }}
 
   required:
     name: core-contract
     if: always()
-    needs: [quality, runtime-work, protocol-plan, protocol-fuzz]
+    needs: [preflight, core]
     runs-on: ubuntu-24.04-arm
     steps:
-      - name: Require every mandatory population and budget check
+      - name: Require the tool checks and the complete core contract
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
-          printf '%s\n' "$RESULTS" | jq -e 'keys == ["protocol-fuzz", "protocol-plan", "quality", "runtime-work"] and all(.[]; .result == "success")'
+          printf '%s\n' "$RESULTS" | jq -e 'keys == ["core", "preflight"] and all(.[]; .result == "success")'
           printf '%s\n' 'The complete required finite CI contract passed; see proofs/CI.md for its scope.' >> "$GITHUB_STEP_SUMMARY"

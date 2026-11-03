@@ -713,10 +713,12 @@ cargo +stable doc -p hibana --no-deps --no-default-features
 ```
 
 The [CI workflow](https://github.com/hibanaworks/hibana/blob/main/.github/workflows/quality-gates.yml)
-also runs Lean, Kani, Miri, and embedded builds. It checks code size, stack and
-storage budgets, and endpoint and future layouts. These measurements describe
-the checked programs and builds. Memory use depends on the protocol and
-configuration.
+also runs Lean, critical Miri checks, embedded builds and the complete required
+finite protocol populations. Extended certification adds Kani, the remaining
+memory/proof checks and deeper samples. Both use the same generator and oracle;
+the [verification contract](proofs/CI.md) defines their scope. Code size, stack,
+storage and endpoint/future measurements describe the checked programs and
+builds. Memory use depends on the protocol and configuration.
 
 The [benchmarks](benches/README.md) measure the current runtime. Receive lookup
 uses an immutable index of logical roles and message labels. Checking each

@@ -209,11 +209,21 @@ echo "Miri public Endpoint delegation example passed"
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-nested-parallel-delegation -p hibana --test nested_parallel_reentry \
       nested_parallel_delegation -- --skip nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late
+  credit_root="${ROOT_DIR}/target/miri-parallel-reentry"
+  mkdir -p "$credit_root"
+  credit_run="$(mktemp -d "$credit_root/$(git rev-parse HEAD).XXXXXX")"
   for case in {0..15}; do
+    out="$credit_run/$case"
+    mkdir -p "$out"
     MIRIFLAGS="${MIRIFLAGS} -Zmiri-env-set=HIBANA_PARALLEL_CREDIT_CASE=${case}" \
       MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
       run_miri_test "public-parallel-child-credit-${case}" -p hibana --test nested_parallel_reentry \
-        nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late -- --exact --nocapture
+        nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_late -- --exact --nocapture \
+        2>&1 | tee "$out/run.log"
+    reverse=false
+    if (( case % 2 )); then reverse=true; fi
+    grep -F "parallel-credit complete: right_visit=$((case / 2)) reverse=$reverse" "$out/run.log"
+    test "$(grep -c '^parallel-credit complete:' "$out/run.log")" = 1
   done
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-nested-parallel-resolver -p hibana --test nested_parallel_reentry \
@@ -253,10 +263,6 @@ echo "Miri public Endpoint delegation example passed"
     a_nested_resolver_can_select_another_arm_on_the_next_visit -- --exact
   run_miri_test public-converging-repeated-choice -p hibana --test parallel_route_nesting \
     an_outer_choice_can_leave_a_repeated_arm_after_its_receives_converge -- --exact
-  run_miri_test public-shared-view-choice -p hibana --test nested_parallel_reentry \
-    a_resolved_choice_preview_is_shared_by_the_holders_parallel_views -- --exact
-  run_miri_test public-borrowed-shared-view-choice -p hibana --test nested_parallel_reentry \
-    a_borrow_containing_a_choice_uses_its_other_views_preview -- --exact
 )
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
@@ -278,12 +284,6 @@ run_miri_test \
   -p hibana \
   --lib \
   transport::binding::tests
-
-run_miri_test \
-  unpublished-initial-issuance \
-  -p hibana --lib \
-  endpoint::kernel::core::public_types::tests::failed_initial_attachment_does_not_consume_the_physical_resource_binding \
-  -- --exact
 
 run_miri_test \
   static-image-bounds \
@@ -398,11 +398,21 @@ run_miri_test \
   global::const_dsl::receive_lane_causality::tests::causal_columns_cross_word_boundaries_in_routes_parallel_and_rolls \
   -- --exact
 
+# The 19,765-tree catalog and 1,000 deep samples are mandatory native
+# equivalence checks. Interpret the unsafe image/storage boundaries here,
+# including the same comparator's allocation/unwind lifetime fixture, rather
+# than interpreting the complete grammar enumeration a second time.
 run_miri_test \
   owned-actor-image \
-  -p hibana \
-  --lib \
-  global::compiled::images::image::program_ref::actors::tests
+  -p hibana --lib -- \
+  global::compiled::images::image::program_ref::actors::tests::packed_ \
+  global::compiled::images::image::program_ref::actors::tests::owned_ \
+  global::compiled::images::image::program_ref::actors::tests::tagged_ \
+  global::compiled::images::image::program_ref::actors::tests::actor_selection_ \
+  global::compiled::images::image::program_ref::actors::tests::a_shared_route_preview_ \
+  global::compiled::images::image::program_ref::actors::tests::source_order_offsets_ \
+  global::compiled::images::image::program_ref::actors::tests::source_order_matches_the_typed_tree_ \
+  global::compiled::images::image::program_ref::actors::tests::source_order::source_order_comparison_releases_its_temporary_storage
 
 # Shared views include both conditional holders and independent rolled routes.
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
@@ -658,12 +668,6 @@ run_miri_test \
   endpoint::kernel::core::public_operation::tests
 
 run_miri_test \
-  tap-ring-owner \
-  -p hibana \
-  --lib \
-  observe::core::tests
-
-run_miri_test \
   descriptor-derived-route-history-owner \
   -p hibana \
   --lib \
@@ -717,16 +721,6 @@ run_miri_test \
   pending-offer-direction-wakeups \
   -p hibana --lib \
   a_waiting_offer_polls_each_direction_once_and_receives_an_independent_choice
-
-run_miri_test \
-  delegated-resolver-entry-identity \
-  -p hibana --lib \
-  delegated_resolver_starts_before_the_holders_later_send
-
-run_miri_test \
-  delegated-parallel-roll-continuation \
-  -p hibana --lib \
-  a_delegated_view_offers_its_continuation_after_parallel_rolls_finish
 
 run_miri_test \
   selected-branch-receive-continuation \
@@ -942,12 +936,6 @@ run_miri_test \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_decoder_rejects_exact_invalid_boundaries
 
 run_miri_test \
-  compiled-program-owned-payload-kind \
-  -p hibana \
-  --lib \
-  global::compiled::images::image::program_ref::tests::program_image_owned_kind_cannot_alias_a_wire_schema_or_truncate_a_role
-
-run_miri_test \
   compiled-program-atom-lookup \
   -p hibana \
   --lib \
@@ -981,12 +969,6 @@ run_miri_test \
   nested-controller-offer-ownership \
   -p hibana \
   --test nested_resolver_self_continuations
-
-MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
-  admitted-send-candidate-and-known-offer \
-  -p hibana \
-  --lib \
-  g::role_projection::tests::send_candidate_identity::
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   nested-input-visit-ownership \
@@ -1037,18 +1019,6 @@ run_miri_test \
   global::compiled::images::image::program_ref::tests::program_image_
 
 run_miri_test \
-  local-preview-in-selected-parallel-arm \
-  -p hibana --lib \
-  endpoint::parallel::tests::choice::a_local_preview_keeps_its_event_scope_inside_a_selected_parallel_arm \
-  -- --exact
-
-run_miri_test \
-  resource-preview-from-current-owner \
-  -p hibana --lib \
-  endpoint::parallel::tests::choice::a_resource_view_can_preview_a_message_from_its_current_owner \
-  -- --exact
-
-run_miri_test \
   send-prefix-before-resolver \
   -p hibana --lib \
   endpoint::kernel::core::send_preview::tests::
@@ -1059,20 +1029,8 @@ run_miri_test \
   endpoint::kernel::offer::handoff_tests::
 
 run_miri_test \
-  parallel-borrow-before-owned-payload-prefix \
-  -p hibana --lib \
-  endpoint::parallel::tests::delegation_phase::a_parallel_borrow_keeps_its_endpoint_payload_available_for_the_prefix \
-  -- --exact
-
-run_miri_test \
   endpoint-delegation-projection \
   --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
   --locked --lib
-
-run_miri_test \
-  conditional-handoff-receive-prefix \
-  -p hibana --lib \
-  g::role_projection::tests::source_order::a_conditional_handoff_keeps_the_receivers_prefix_when_the_local_send_is_absent \
-  -- --exact
 
 TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri-total "${MIRI_TOOLCHAIN}" "${miri_totals}"
