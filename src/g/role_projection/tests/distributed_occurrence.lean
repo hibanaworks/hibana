@@ -28,6 +28,7 @@ def distributedOccurrencePlan : SourceOccurrenceCut distributedOccurrenceSource 
   sameIssuance := by decide
   path := distributedOccurrenceNormalized.paths[0]
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun _ => false
 }

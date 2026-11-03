@@ -95,6 +95,7 @@ def abortPlan : SourceOccurrenceCut abortSource := {
   sameIssuance := by decide
   path := abortNormalized.paths[0]
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun _ => false
 }

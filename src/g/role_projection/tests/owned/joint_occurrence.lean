@@ -15,6 +15,7 @@ def jointOccurrencePlan : SourceOccurrenceCut jointOccurrenceSource := {
   sameIssuance := by decide
   path := jointOccurrenceNormalized.paths[0]
   selected := by decide
+  separated := by decide
   guarded := by decide
   observed := fun _ => false
 }
