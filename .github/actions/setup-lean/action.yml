@@ -41,6 +41,5 @@ runs:
       run: |
         set -euo pipefail
         toolchain="$(cat proofs/lean/lean-toolchain)"
-        elan toolchain install "$toolchain"
-        elan run "$toolchain" lean --version
+        elan run --install "$toolchain" lean --version
         printf 'ELAN_TOOLCHAIN=%s\n' "$toolchain" >> "$GITHUB_ENV"
