@@ -2274,9 +2274,15 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--check-guarded-reentry"] then
     shapeCheckGuardedReentry
     return 0
-  let (inputPath, outputPath, weakenRoot) ← match args with
-    | [input, output] => pure (input, output, false)
-    | [input, output, "--mutant-root-seq-as-par"] => pure (input, output, true)
+  let (inputPath, outputPath, weakenRoot, selected) ← match args with
+    | [input, output] => pure (input, output, false, none)
+    | [input, output, "--mutant-root-seq-as-par"] => pure (input, output, true, none)
+    | ["--source", name, input, output] =>
+      let some name := name.toNat? | throw (IO.userError "invalid source worker name")
+      pure (input, output, false, some name)
+    | ["--source", name, input, output, "--mutant-root-seq-as-par"] =>
+      let some name := name.toNat? | throw (IO.userError "invalid source worker name")
+      pure (input, output, true, some name)
     | _ => throw (IO.userError "usage: protocol-shapes INPUT.json OBSERVATION_DIRECTORY [--mutant-root-seq-as-par]")
   let inputs : Array ShapeInput ← shapeRead inputPath
   unless !inputs.isEmpty do throw (IO.userError "empty shape inventory")
@@ -2290,6 +2296,55 @@ def main (args : List String) : IO UInt32 := do
       (System.FilePath.mk outputPath / ".." / directory)).toList.map (·.fileName)
     unless expectedScripts.mergeSort (· ≤ ·) == observed.mergeSort (· ≤ ·) do
       throw (IO.userError "missing, duplicate or unknown completed script file")
+  if selected.isNone then
+    -- One source owns one native worker's allocation lifetime. The parent
+    -- validates the whole inventory and runs every source, sequentially,
+    -- under the caller's single descendant-memory guard.
+    let executable ← IO.appPath
+    let mut checked := 0
+    let mut continuations := 0
+    let mut parkedChecked := 0
+    let mut completedRuns := 0
+    let mut completedCalls := 0
+    let mut completedSources := 0
+    for input in inputs do
+      let flags := if weakenRoot then #["--mutant-root-seq-as-par"] else #[]
+      let child ← IO.Process.spawn {
+        cmd := executable.toString
+        args := #["--source", toString input.name, inputPath, outputPath] ++ flags
+        stdin := .null
+        stdout := .piped
+        stderr := .inherit
+      }
+      let output ← child.stdout.readToEnd
+      let status ← child.wait
+      unless status == 0 do
+        IO.print output
+        throw (IO.userError s!"shape {input.name}: source worker failed with exit {status}")
+      let counts : Array Nat ← match
+          (Lean.Json.parse output >>= Lean.fromJson? : Except String (Array Nat)) with
+        | .ok counts => pure counts
+        | .error error => throw (IO.userError s!"invalid source worker report: {error}")
+      let #[name, attempts, continued, parked, runs, calls] := counts
+        | throw (IO.userError "invalid source worker report fields")
+      unless name == input.name do
+        throw (IO.userError "source worker returned another source's report")
+      checked := checked + attempts
+      continuations := continuations + continued
+      parkedChecked := parkedChecked + parked
+      completedRuns := completedRuns + runs
+      completedCalls := completedCalls + calls
+      completedSources := completedSources + 1
+    unless completedSources == inputs.size do
+      throw (IO.userError "incomplete source worker inventory")
+    IO.println s!"Completed shape scripts/source: shapes={completedSources} runs={completedRuns} calls={completedCalls} all accepted"
+    IO.println s!"Generated shapes/source: shapes={completedSources} attempts={checked} initial={checked-continuations} continuation={continuations} runtime-only=0 model-only=0"
+    IO.println s!"Successful parked previews/source: attempts={parkedChecked} runtime-only=0 model-only=0"
+    return 0
+  let some name := selected | throw (IO.userError "missing source worker name")
+  let inputs := inputs.filter (·.name == name)
+  let #[input] := inputs | throw (IO.userError "unknown or duplicate source worker name")
+  let name := input.name
   let mut checked := 0
   let mut continuations := 0
   let mut parkedChecked := 0
@@ -2448,7 +2503,8 @@ def main (args : List String) : IO UInt32 := do
     unless runtimeOnly == 0 && modelOnly == 0 do
       throw (IO.userError s!"generated Endpoint/source conformance failed: runtime-only={runtimeOnly} model-only={modelOnly}")
     IO.eprintln s!"shape {input.name}: complete source comparison passed"
-  IO.println s!"Completed shape scripts/source: shapes={inputs.size} runs={completedRuns} calls={completedCalls} all accepted"
-  IO.println s!"Generated shapes/source: shapes={inputs.size} attempts={checked} initial={checked-continuations} continuation={continuations} runtime-only={runtimeOnly} model-only={modelOnly}"
-  IO.println s!"Successful parked previews/source: attempts={parkedChecked} runtime-only={parkedRuntimeOnly} model-only={parkedModelOnly}"
+  -- A worker returns only consumed-source metrics, after every original
+  -- comparison and mismatch check above. Only the parent certifies a population.
+  IO.println (Lean.toJson #[name, checked, continuations, parkedChecked,
+    completedRuns, completedCalls]).compress
   pure 0

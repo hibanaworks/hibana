@@ -95,6 +95,14 @@ theorems preserve the entire inventory and all answers for any split depth;
 an executable guarded-roll fixture also compares serial and split evaluation.
 Task continuations join results without blocking workers. The same aggregate
 descendant-memory limit applies, and an exhausted budget is not a result.
+Each source runs in a fresh native worker, sequentially, so its allocator and
+task-pool workspace are released before the next source's preparation. The
+parent validates the complete input and observation inventory, executes every
+source through the same comparator, checks each returned source identity and
+aggregates all counts. Workers receive the original input and observation
+paths; no candidate, probe, script or source variant is removed. Their reports
+are not population certificates. Only the parent emits the complete population
+summary, after every worker succeeds, under the same descendant-memory guard.
 The oracle build executes its fifteen fixed source-cut regressions once and
 archives their log with the binary hash. Normal population invocations do not
 repeat them. Their mutation controls retain the explicit regression entry.
