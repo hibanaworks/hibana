@@ -1028,9 +1028,12 @@ run_miri_test \
   -p hibana --lib \
   endpoint::kernel::offer::handoff_tests::
 
-run_miri_test \
-  endpoint-delegation-projection \
-  --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
-  --locked --lib
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test \
+    endpoint-delegation-projection \
+    --manifest-path proofs/checks/projection/endpoint-delegation/compiler/Cargo.toml \
+    --locked --lib
+)
 
 TOOLCHAIN="${MIRI_TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/lib/test_result_tool.sh" miri-total "${MIRI_TOOLCHAIN}" "${miri_totals}"

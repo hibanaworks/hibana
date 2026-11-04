@@ -174,6 +174,10 @@ selections of the same script; its default still runs both. Overlapping broad
 and individual test filters have one execution site, including the parked-view,
 actor-progress, image, tap and delegated-offer regressions. Native and Miri
 executions remain distinct evidence.
+The standalone ownership elaborator uses its own test configuration in both
+native and Miri runs and rejects the core-only fixture configuration at compile
+time. The 460,800 mixed-shape dependency comparisons remain in the core native
+suite; they are not accidentally imported into this separate crate's Miri run.
 
 The source-order equivalence catalogs (all 19,765 depth-three trees and the same
 1,000 seeded depth-eight trees) remain mandatory native tests. They are not
