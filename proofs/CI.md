@@ -82,6 +82,11 @@ archives their log with the binary hash. Normal population invocations do not
 repeat them. Their mutation controls retain the explicit regression entry.
 Sensitivity captures stay in their own baseline or mutant source root; an
 outer population-output override cannot redirect both to the same directory.
+Syntax samples and shrink attempts own separate capture roots, including repeat
+tests of the final reduced source. The shrink control runs its weakened model
+as a supplemental invocation of the same sealed oracle, before that trial's
+observations are retired. A supplemental failure retains the trial instead of
+deleting data that another checker still needs.
 The controls assignment prepares its passing populations once. Every subsequent
 production mutation verifies that baseline's completed-run and verdict hashes,
 source content, revision and generated inputs before using it. A missing or

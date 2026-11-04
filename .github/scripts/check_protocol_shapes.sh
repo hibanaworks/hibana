@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# Supplemental source-oracle arguments belong to this same observation
+# lifetime. A failing supplemental check must retain the complete trial.
+population_args=()
+oracle_args=()
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == -- ]]; then
+    shift
+    if [[ $# == 0 ]]; then echo 'Missing supplemental oracle arguments' >&2; exit 2; fi
+    oracle_args=("$@")
+    break
+  fi
+  population_args+=("$1")
+  shift
+done
+set -- "${population_args[@]}"
 admission_controls=false
 check=false
 if [[ "${1:-}" == --check ]]; then
@@ -71,6 +86,10 @@ source_hashes() {
   )
 }
 if [[ "$check" == true ]]; then
+  if [[ ${#oracle_args[@]} != 0 ]]; then
+    echo 'A supplemental oracle requires a fresh trial' >&2
+    exit 2
+  fi
   temporary="$(mktemp)"
   trap 'rm -f -- "$temporary"' EXIT
   source_hashes > "$temporary"
@@ -128,6 +147,7 @@ if [[ "$(cat "${OUTPUT}/inputs.json")" == '[]' ]]; then
     exit 1
   fi
   echo "This shard contains expected compile-fail cases only; no runtime coverage is claimed."
+  rm -r -- "${OUTPUT}/target"
   if [[ -d "${OUTPUT}/rejected/target" ]]; then rm -r -- "${OUTPUT}/rejected/target"; fi
   exit 0
 fi
@@ -150,6 +170,10 @@ if [[ "$admission_controls" == true ]]; then
   cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
     --bin protocol-shape-controls -- --admission-controls "${CHECKER}" "${OUTPUT}" \
     | tee "${OUTPUT}/admission-controls.log"
+fi
+if [[ ${#oracle_args[@]} != 0 ]]; then
+  "${CHECKER}" "${OUTPUT}/inputs.json" "${OUTPUT}/observations" "${oracle_args[@]}" \
+    | tee "${OUTPUT}/additional-oracle.log"
 fi
 source_hashes > "${OUTPUT}/source-after.sha256"
 cmp "${OUTPUT}/source.sha256" "${OUTPUT}/source-after.sha256"
@@ -189,6 +213,7 @@ if [[ -d "${OUTPUT}/rejected/target" ]]; then rm -r -- "${OUTPUT}/rejected/targe
   files=(revision.txt compiler.txt source.patch source.sha256 source-after.sha256
     inputs.sha256 dependencies.sha256 oracle.log controls.log admission-observations.sha256)
   if [[ -f admission-controls.log ]]; then files+=(admission-controls.log); fi
+  if [[ ${#oracle_args[@]} != 0 ]]; then files+=(additional-oracle.log); fi
   shasum -a 256 "${files[@]}" scope-observations/*.jsonl controls/*/rejection.log \
     admission-controls/*/rejection.log > passed.sha256
 )

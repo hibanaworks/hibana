@@ -66,6 +66,7 @@ case "$SELECTION" in
     cargo +stable build --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes --bin protocol-shape-controls
     target/debug/protocol-shapes syntax-shrink "$PWD" 3 19011422329217 target/protocol-fuzz-shrink-control -- "$PWD/target/debug/protocol-shape-controls" --shrink-probe
     target/debug/protocol-shape-controls --check-shrink target/protocol-fuzz-shrink-control
+    find target/protocol-fuzz-shrink-control -type d -name target -prune -exec rm -r -- {} +
     ;;
   *) echo "Unknown protocol selection: $SELECTION" >&2; exit 2 ;;
 esac

@@ -5,8 +5,6 @@ mod json;
 mod roll_coverage;
 #[path = "protocol_shape_scope_audit.rs"]
 mod scope_audit;
-#[path = "protocol_shape_paths.rs"]
-mod syntax_paths;
 use json::Json;
 use std::{
     env, fs,
@@ -669,43 +667,23 @@ fn shrink_probe(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
         return Err("shrink probe requires REPOSITORY DEPTH RANK OUTPUT".into());
     }
     let repo = Path::new(&args[0]);
-    let depth = args[1].parse::<usize>()?;
-    let rank = args[2].parse::<num_bigint::BigUint>()?;
-    let generator = std::env::current_exe()?
-        .with_file_name(format!("protocol-shapes{}", std::env::consts::EXE_SUFFIX));
-    let baseline = Command::new(generator)
-        .arg("syntax-probe")
-        .args(args)
+    let output = Path::new(&args[3]);
+    let observed = Command::new("bash")
+        .arg(repo.join(".github/scripts/check_protocol_shapes.sh"))
+        .args([
+            "--syntax-depth",
+            &args[1],
+            &args[2],
+            "1",
+            "--",
+            "--mutant-root-seq-as-par",
+        ])
+        .env("HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT", output.canonicalize()?)
         .output()?;
-    if !baseline.status.success() {
-        std::io::stdout().write_all(&baseline.stdout)?;
-        std::io::stderr().write_all(&baseline.stderr)?;
-        return Ok(baseline.status.code().unwrap_or(1));
-    }
-    let generated = repo
-        .join("target/protocol-shapes")
-        .join(syntax_paths::relative(depth, &rank, 1));
-    let input = json::parse(&fs::read_to_string(generated.join("inputs.json"))?)?;
-    let Json::Array(cases) = &input else {
-        return Err("invalid shrink control input".into());
-    };
-    let Some(Json::Object(case)) = cases.first() else {
-        return Ok(0);
-    };
-    let Some(Json::Array(nodes)) = case.get("nodes") else {
-        return Err("missing control nodes".into());
-    };
-    let Some(Json::Object(root)) = nodes.last() else {
-        return Err("missing control root".into());
-    };
-    if root.get("kind") != Some(&Json::Number("1".into())) {
-        return Ok(0);
-    }
-    let observed = Command::new(repo.join("proofs/lean/.lake/build/bin/protocol-shapes"))
-        .arg(generated.join("inputs.json"))
-        .arg(generated.join("observations"))
-        .arg("--mutant-root-seq-as-par")
-        .output()?;
+    fs::write(
+        output.join("validation.log"),
+        [observed.stdout.as_slice(), observed.stderr.as_slice()].concat(),
+    )?;
     std::io::stdout().write_all(&observed.stdout)?;
     std::io::stderr().write_all(&observed.stderr)?;
     Ok(observed.status.code().unwrap_or(1))

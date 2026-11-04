@@ -279,6 +279,7 @@ pub(super) fn probe(
     let observed = Command::new("bash")
         .arg(repo.join(".github/scripts/check_protocol_shapes.sh"))
         .args(["--syntax-depth", &depth.to_string(), &rank.to_string(), "1"])
+        .env("HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT", output.canonicalize()?)
         .output()?;
     let report = format!(
         "{}{}",
@@ -348,8 +349,7 @@ pub(super) fn fuzz(
             }
             return Err(format!("source sample failed; retained {}", trial.display()).into());
         }
-        let generated = repo
-            .join("target/protocol-shapes")
+        let generated = trial
             .join(super::syntax_paths::relative(depth, &rank, 1))
             .join("inputs.json");
         let accepted = accepted_assignments(&fs::read_to_string(generated)?)?;
