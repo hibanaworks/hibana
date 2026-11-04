@@ -22,8 +22,8 @@ for defect in resumption context actor guarded-context selected-expansion contin
   cp "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean"
   if [[ "${defect}" == resumption ]]; then
     perl -0pi -e '
-      s/shapeRowsReady prepared\.dependencies points point &&\n    shapeResumptionsReady prepared\.resumptions points point/shapeRowsReady prepared.dependencies points point/ == 1 or die "missing resumption query\n";
-      s/prepared\.ready points point = \(\(occurrenceCut prepared\.plan points\)\.ready point &&\n      \(occurrenceCut prepared\.plan points\)\.resumptionReady point\)/prepared.ready points point = (occurrenceCut prepared.plan points).ready point/ == 1 or die "missing query specification\n";
+      s/shapeRowsReady prepared\.dependencies observed point &&\n    shapeResumptionsReady prepared\.resumptions observed point/shapeRowsReady prepared.dependencies observed point/ == 1 or die "missing resumption query\n";
+      s/prepared\.ready points\.contains point = \(\(occurrenceCut prepared\.plan points\)\.ready point &&\n      \(occurrenceCut prepared\.plan points\)\.resumptionReady point\)/prepared.ready points.contains point = (occurrenceCut prepared.plan points).ready point/ == 1 or die "missing query specification\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='shapeStates resumedOutgoingTail'
   elif [[ "${defect}" == context ]]; then
@@ -33,7 +33,7 @@ for defect in resumption context actor guarded-context selected-expansion contin
     expected="'a_left_roll_can_resume_after_the_common_parallel_continuation' depends on axioms: [propext, sorryAx]"
   elif [[ "${defect}" == actor ]]; then
     perl -0pi -e '
-      s/(def shapeOriginalActorsMatch \(plan : SourceOccurrenceCut source\) : Bool :=)\n.*?\n\nstructure ShapePlan/$1\n  true\n\nstructure ShapePlan/s == 1 or die "missing original actor bindings\n";
+      s/(def shapeOriginalActorsMatch \(plan : SourceOccurrenceCut source\) : Bool :=)\n.*?\n\ndef shapeMessage\?/$1\n  true\n\ndef shapeMessage?/s == 1 or die "missing original actor bindings\n";
     ' "${OUTPUT}/${defect}.lean"
     # The entry-owner check also protects the concrete return example. Keep
     # checking this predicate's own general contract when it is made vacuous.

@@ -37,6 +37,20 @@ structure ShapeOutput where
   attempts : Array ShapeAttempt
   deriving Lean.FromJson
 
+def shapeSharePrefix (previous current : ShapeAttempt) : ShapeAttempt :=
+  { current with
+    «prefix» := if previous.prefix = current.prefix then previous.prefix else current.prefix
+    prefixChoices := if previous.prefixChoices = current.prefixChoices then
+      previous.prefixChoices else current.prefixChoices }
+
+theorem shapeSharePrefix_preserves_every_field (previous current : ShapeAttempt) :
+    shapeSharePrefix previous current = current := by
+  by_cases word : previous.prefix = current.prefix <;>
+    by_cases choices : previous.prefixChoices = current.prefixChoices <;>
+    simp [shapeSharePrefix, word, choices]
+
+#print axioms shapeSharePrefix_preserves_every_field
+
 def parseShape (input : ShapeInput) : Except String Source := do
   let mut sources : Array Source := #[]
   let mut event := 0
@@ -210,15 +224,66 @@ def shapeDependencyRows (plan : SourceOccurrenceCut source) :
     (point, domain.filter fun prior =>
       sourcePointDepends plan.expanded plan.path.bindings prior point)
 
+theorem shapePointRank_injective : Function.Injective SourcePoint.rank := by
+  intro first second same
+  cases first with
+  | accepted a =>
+      cases second with
+      | accepted b =>
+          simp only [SourcePoint.rank] at same
+          have equal : a = b := by omega
+          subst b
+          rfl
+      | committed action =>
+          obtain ⟨b, side⟩ := action
+          cases side <;> simp only [SourcePoint.rank] at same <;> omega
+  | committed action =>
+      obtain ⟨a, side⟩ := action
+      cases second with
+      | accepted b => cases side <;> simp only [SourcePoint.rank] at same <;> omega
+      | committed action =>
+          obtain ⟨b, other⟩ := action
+          cases side <;> cases other <;> simp only [SourcePoint.rank] at same <;> try omega
+          all_goals
+            have equal : a = b := by omega
+            subst b
+            rfl
+
+def shapeObservationBits (points : List SourcePoint) : Nat :=
+  points.foldl (fun bits point => bits ||| (1 <<< point.rank)) 0
+
+theorem shapeObservationFold_matches_list (points : List SourcePoint) (initial : Nat)
+    (point : SourcePoint) :
+    (points.foldl (fun bits point => bits ||| (1 <<< point.rank)) initial).testBit point.rank =
+      (initial.testBit point.rank || points.contains point) := by
+  induction points generalizing initial with
+  | nil => simp
+  | cons head rest ih =>
+      rw [List.foldl_cons, ih]
+      simp only [Nat.testBit_or, Nat.shiftLeft_eq,
+        Nat.one_mul, Nat.testBit_two_pow, List.contains_cons, Bool.or_assoc]
+      have ranks : (head.rank = point.rank) ↔ head = point :=
+        ⟨fun same => shapePointRank_injective same, congrArg SourcePoint.rank⟩
+      by_cases same : head = point
+      · subst head
+        simp
+      · have notEqual : (point == head) = false := beq_eq_false_iff_ne.mpr (Ne.symm same)
+        simp [ranks, same, notEqual]
+
+theorem shapeObservationBits_matches_list (points : List SourcePoint) (point : SourcePoint) :
+    (shapeObservationBits points).testBit point.rank = points.contains point := by
+  simpa [shapeObservationBits] using shapeObservationFold_matches_list points 0 point
+
+
 def shapeRowsReady (rows : List (SourcePoint × List SourcePoint))
-    (points : List SourcePoint) (point : SourcePoint) : Bool :=
+    (observed : SourcePoint → Bool) (point : SourcePoint) : Bool :=
   match rows.lookup point with
   | none => false
-  | some required => !points.contains point && required.all points.contains
+  | some required => !observed point && required.all observed
 
 theorem shapeRowsReady_matches_source_readiness
     (plan : SourceOccurrenceCut source) (points : List SourcePoint) (point : SourcePoint) :
-    shapeRowsReady (shapeDependencyRows plan) points point =
+    shapeRowsReady (shapeDependencyRows plan) points.contains point =
       (occurrenceCut plan points).ready point := by
   by_cases present : point ∈ sourceVisitPoints plan.path.bindings <;>
     simp [shapeRowsReady, shapeDependencyRows, shapeLookupMappedRows, present,
@@ -226,21 +291,31 @@ theorem shapeRowsReady_matches_source_readiness
 
 def shapeResumptionRows (plan : SourceOccurrenceCut source) :
     List (SourcePoint × List ResumptionQuery) :=
-  (sourceVisitPoints plan.path.bindings).map fun point => (point, plan.prepareResumption point)
+  let points := sourceVisitPoints plan.path.bindings
+  let inputs := (points, plan.unfolding.resumptions 0)
+  points.map fun point => (point, plan.prepareResumptionFrom inputs point)
+
+theorem shapeResumptionRows_matches_preparation (plan : SourceOccurrenceCut source) :
+    shapeResumptionRows plan = (sourceVisitPoints plan.path.bindings).map
+      (fun point => (point, plan.prepareResumption point)) := rfl
 
 def shapeResumptionsReady (rows : List (SourcePoint × List ResumptionQuery))
-    (points : List SourcePoint) (point : SourcePoint) : Bool :=
+    (observed : SourcePoint → Bool) (point : SourcePoint) : Bool :=
   match rows.lookup point with
   | none => false
-  | some checks => checks.all (fun query => query.check points.contains)
+  | some checks => checks.all (fun query => query.check observed)
 
 def shapeOriginalActorsMatch (plan : SourceOccurrenceCut source) : Bool :=
+  let occurrences := (plan.unfolding.occurrences 0).toArray
   plan.path.bindings.all fun (event, binding) =>
-    match (plan.unfolding.occurrences 0)[event]? with
+    match occurrences[event]? with
     | none => false
     | some (origin, message) => decide (binding.message = message) &&
         plan.original.paths.any fun path =>
           path.bindings.any fun original => decide (original = (origin, binding))
+
+def shapeMessage? (source : Source) (event : Nat) : Option Message :=
+  ((source.messageEntries 0).find? (fun entry => entry.1 == event)).map Prod.snd
 
 structure ShapePlan (source : Source) where
   plan : SourceOccurrenceCut source
@@ -248,6 +323,8 @@ structure ShapePlan (source : Source) where
   dependencies_eq : dependencies = shapeDependencyRows plan
   resumptions : List (SourcePoint × List ResumptionQuery)
   resumptions_eq : resumptions = shapeResumptionRows plan
+  message : Nat → Option Message
+  message_eq : ∀ event, message event = shapeMessage? source event
   entryChoices : List SourcePoint → List SourcePoint → List Nat → Bool
   entryChoices_eq : ∀ before after choice,
     entryChoices before after choice = shapeEntryChoices plan before after choice
@@ -256,7 +333,9 @@ def ShapePlan.of (plan : SourceOccurrenceCut source) : ShapePlan source :=
   let originals := shapeResolvers source 0
   let resolvers := shapeResolvers plan.expanded 0
   let occurrences := plan.unfolding.occurrences 0
+  let messages := source.messageEntries 0
   ⟨plan, shapeDependencyRows plan, rfl, shapeResumptionRows plan, rfl,
+    (fun event => (messages.find? (fun entry => entry.1 == event)).map Prod.snd), fun _ => rfl,
     shapeEntryChoicesFrom originals resolvers occurrences plan.path.selections,
     fun _ _ _ => rfl⟩
 
@@ -265,14 +344,19 @@ theorem ShapePlan.entryChoices_matches_source (prepared : ShapePlan source)
     prepared.entryChoices before after choice = shapeEntryChoices prepared.plan before after choice :=
   prepared.entryChoices_eq before after choice
 
-def ShapePlan.ready (prepared : ShapePlan source) (points : List SourcePoint)
+theorem ShapePlan.message_matches_source (prepared : ShapePlan source) (event : Nat) :
+    prepared.message event = shapeMessage? source event := prepared.message_eq event
+
+#print axioms ShapePlan.message_matches_source
+
+def ShapePlan.ready (prepared : ShapePlan source) (observed : SourcePoint → Bool)
     (point : SourcePoint) : Bool :=
-  shapeRowsReady prepared.dependencies points point &&
-    shapeResumptionsReady prepared.resumptions points point
+  shapeRowsReady prepared.dependencies observed point &&
+    shapeResumptionsReady prepared.resumptions observed point
 
 theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
     (points : List SourcePoint) (point : SourcePoint) :
-    prepared.ready points point = ((occurrenceCut prepared.plan points).ready point &&
+    prepared.ready points.contains point = ((occurrenceCut prepared.plan points).ready point &&
       (occurrenceCut prepared.plan points).resumptionReady point) := by
   unfold ShapePlan.ready
   rw [prepared.dependencies_eq, prepared.resumptions_eq]
@@ -281,14 +365,33 @@ theorem ShapePlan.ready_matches_source (prepared : ShapePlan source)
     have observations : points.contains = (fun observed => decide (observed ∈ points)) := by
       funext observed
       exact List.contains_eq_mem observed points
-    simp [shapeResumptionsReady, shapeResumptionRows, shapeLookupMappedRows, present,
+    simp [shapeResumptionsReady, shapeResumptionRows_matches_preparation, shapeLookupMappedRows, present,
       prepared_resumption_matches_source, occurrenceCut, observations]
   · simp [shapeRowsReady, shapeDependencyRows, shapeLookupMappedRows, present,
       SourceOccurrenceCut.ready, occurrenceCut]
 
+theorem shapeObservationBits_append (points : List SourcePoint) (point : SourcePoint) :
+    shapeObservationBits (points ++ [point]) =
+      shapeObservationBits points ||| (1 <<< point.rank) := by
+  simp [shapeObservationBits, List.foldl_append]
+
+theorem ShapePlan.observed_ready_matches_list (prepared : ShapePlan source)
+    (points : List SourcePoint) (point : SourcePoint) :
+    prepared.ready (fun prior => (shapeObservationBits points).testBit prior.rank) point =
+      prepared.ready points.contains point := by
+  have same : (fun prior => (shapeObservationBits points).testBit prior.rank) = points.contains := by
+    funext prior
+    exact shapeObservationBits_matches_list points prior
+  rw [same]
+
 #print axioms shapeLookupMappedRows
 #print axioms shapeRowsReady_matches_source_readiness
+#print axioms shapeResumptionRows_matches_preparation
 #print axioms ShapePlan.ready_matches_source
+#print axioms shapePointRank_injective
+#print axioms shapeObservationBits_matches_list
+#print axioms shapeObservationBits_append
+#print axioms ShapePlan.observed_ready_matches_list
 #print axioms ShapePlan.entryChoices_matches_source
 
 theorem shapeOriginalActorsMatch_checks_each_occurrence (plan : SourceOccurrenceCut source)
@@ -298,6 +401,7 @@ theorem shapeOriginalActorsMatch_checks_each_occurrence (plan : SourceOccurrence
       binding.message = message ∧
       ∃ path ∈ plan.original.paths, (origin, binding) ∈ path.bindings := by
   have checkedAt := List.all_eq_true.mp checked (event, binding) present
+  simp only [List.getElem?_toArray] at checkedAt
   cases originAt : (plan.unfolding.occurrences 0)[event]? with
   | none => simp only [originAt, Bool.false_eq_true] at checkedAt
   | some entry =>
@@ -310,9 +414,6 @@ theorem shapeOriginalActorsMatch_checks_each_occurrence (plan : SourceOccurrence
         path, member, same ▸ originalMember⟩
 
 #print axioms shapeOriginalActorsMatch_checks_each_occurrence
-
-def shapeMessage? (source : Source) (event : Nat) : Option Message :=
-  ((source.messageEntries 0).find? (fun entry => entry.1 == event)).map Prod.snd
 
 -- A public call selects a logical role, direction and message contract.
 -- Its alias in a generated script does not select a source occurrence.
@@ -347,20 +448,74 @@ theorem equal_labels_do_not_erase_the_sending_role
 #print axioms a_receive_alias_does_not_select_the_remote_peer
 #print axioms equal_labels_do_not_erase_the_sending_role
 
+def shapeBindingStep (prepared : ShapePlan source) (points : List SourcePoint)
+    (observed : Nat) (entry : Nat × Binding) (receive : Bool) : Option (List SourcePoint) := do
+  let (event, binding) := entry
+  let isLocal := binding.message.sender == binding.message.receiver
+  if isLocal && receive then none else do
+    let point := if isLocal then .committed ⟨event, .local⟩
+      else if receive then .committed ⟨event, .receive⟩ else .accepted event
+    if !prepared.ready (fun prior => observed.testBit prior.rank) point then none else do
+      let points := points ++ [point]
+      if isLocal || receive then some points else do
+        let publication := SourcePoint.committed ⟨event, .send⟩
+        let after := observed ||| (1 <<< point.rank)
+        if prepared.ready (fun prior => after.testBit prior.rank) publication then
+          some (points ++ [publication]) else none
+
 def shapeAdvance (prepared : ShapePlan source) (points : List SourcePoint)
-    (request : Nat) (receive : Bool) : List (List SourcePoint) := Id.run do
-  let some expected := shapeMessage? source request | return []
-  return prepared.plan.path.bindings.filterMap fun (event, binding) => do
-    if !shapeMatchesRequest expected binding.message receive then none else do
-      let isLocal := binding.message.sender == binding.message.receiver
-      if isLocal && receive then none else do
-        let point := if isLocal then .committed ⟨event, .local⟩
-          else if receive then .committed ⟨event, .receive⟩ else .accepted event
-        if !prepared.ready points point then none else do
-          let points := points ++ [point]
-          if isLocal || receive then some points else do
-            let publication := SourcePoint.committed ⟨event, .send⟩
-            if prepared.ready points publication then some (points ++ [publication]) else none
+    (request : Nat) (receive : Bool) : List (List SourcePoint) :=
+  match prepared.message request with
+  | none => []
+  | some expected =>
+      let observed := shapeObservationBits points
+      prepared.plan.path.bindings.filterMap fun entry =>
+        if shapeMatchesRequest expected entry.2.message receive then
+          shapeBindingStep prepared points observed entry receive else none
+
+abbrev ShapeEnabledCall := Message × Bool × List SourcePoint
+
+-- One prefix has one frontier. Every question at that prefix reads the same
+-- enabled calls, rather than repeating readiness and publication checks.
+def shapeEnabledCalls (prepared : ShapePlan source) (points : List SourcePoint) :
+    List ShapeEnabledCall :=
+  let observed := shapeObservationBits points
+  prepared.plan.path.bindings.flatMap fun entry =>
+    let steps := [false, true].filterMap fun receive =>
+      (shapeBindingStep prepared points observed entry receive).map (receive, ·)
+    steps.map fun (receive, after) => (entry.2.message, receive, after)
+
+def shapeSelectEnabled (expected : Message) (receive : Bool) (calls : List ShapeEnabledCall) :
+    List (List SourcePoint) :=
+  calls.filterMap fun (actual, direction, after) =>
+    if direction == receive && shapeMatchesRequest expected actual receive then some after else none
+
+theorem shapeSelectedDirections {value : Type} (step : Bool → Option value)
+    (receive selected : Bool) :
+    ([false, true].filterMap (fun direction => (step direction).map (direction, ·))).filterMap
+      (fun (direction, after) => if direction == receive && selected then some after else none) =
+        (if selected then step receive else none).toList := by
+  cases receive <;> cases selected <;> cases no : step false <;> cases yes : step true <;>
+    simp [no, yes]
+
+theorem shapeFlatMapOptions {item value : Type} (items : List item) (step : item → Option value) :
+    (items.flatMap fun item => (step item).toList) = items.filterMap step := by
+  induction items with
+  | nil => rfl
+  | cons item items ih =>
+      cases outcome : step item <;> simp [outcome, ih]
+
+theorem shapeEnabledCalls_match_individual_advance (prepared : ShapePlan source)
+    (points : List SourcePoint) (expected : Message) (receive : Bool) :
+    shapeSelectEnabled expected receive (shapeEnabledCalls prepared points) =
+      prepared.plan.path.bindings.filterMap (fun entry =>
+        if shapeMatchesRequest expected entry.2.message receive then
+          shapeBindingStep prepared points (shapeObservationBits points) entry receive else none) := by
+  simp only [shapeSelectEnabled, shapeEnabledCalls, List.filterMap_flatMap, List.filterMap_map, Function.comp_def]
+  simp only [shapeSelectedDirections]
+  exact shapeFlatMapOptions _ _
+
+#print axioms shapeEnabledCalls_match_individual_advance
 
 def shapeStates (source : Source) (plans : List (ShapePlan source))
     (word : List Nat) : List (ShapePlan source × List SourcePoint) :=
@@ -496,16 +651,302 @@ def shapeStateQuery (states : List (ShapePlan source × List SourcePoint)) :
   | none => !states.isEmpty
   | some (choice, event, receive) => shapePermits states choice event receive
 
+abbrev ShapeEnabledState (source : Source) :=
+  (ShapePlan source × List SourcePoint) × List ShapeEnabledCall
+
+def shapePrepareEnabled (states : List (ShapePlan source × List SourcePoint)) :
+    List (ShapeEnabledState source) :=
+  states.map fun (plan, points) => ((plan, points), shapeEnabledCalls plan points)
+
+def shapeEnabledQuery (states : List (ShapeEnabledState source)) : Option ShapeRequest → Bool
+  | none => !states.isEmpty
+  | some (choice, event, receive) => states.any fun ((plan, points), calls) =>
+      match plan.message event with
+      | none => false
+      | some expected => calls.any fun (actual, direction, after) =>
+          (direction == receive && shapeMatchesRequest expected actual receive) &&
+            plan.entryChoices points after choice
+
+theorem shapeEnabledQuery_matches_state (states : List (ShapePlan source × List SourcePoint))
+    (request : Option ShapeRequest) :
+    shapeEnabledQuery (shapePrepareEnabled states) request = shapeStateQuery states request := by
+  cases request with
+  | none => simp [shapeEnabledQuery, shapePrepareEnabled, shapeStateQuery]
+  | some request =>
+      obtain ⟨choice, event, receive⟩ := request
+      simp only [shapeEnabledQuery, shapePrepareEnabled, List.any_map, shapeStateQuery, shapePermits]
+      apply congrArg (fun predicate => states.any predicate)
+      funext state
+      obtain ⟨plan, points⟩ := state
+      dsimp only [Function.comp_def]
+      cases message : plan.message event with
+      | none => simp [message, shapeAdvance]
+      | some expected =>
+          simp only [message, shapeAdvance]
+          rw [← shapeEnabledCalls_match_individual_advance]
+          simp only [shapeSelectEnabled, List.any_filterMap]
+          apply congrArg (fun predicate => (shapeEnabledCalls plan points).any predicate)
+          funext call
+          obtain ⟨actual, direction, after⟩ := call
+          split <;> simp_all
+
+#print axioms shapeEnabledQuery_matches_state
+
+-- A cache entry carries the equality to a fresh replay. It cannot manufacture
+-- a model state, even if a caller supplies a populated cache.
+abbrev ShapeReplayMemo {command state : Type} [BEq command] [Hashable command]
+    (step : state → command → state) (initial : state) :=
+  Std.DHashMap (List command)
+    (fun reversed => { after : state // after = reversed.reverse.foldl step initial })
+
+def shapeCachedReplay {command state : Type} [BEq command] [Hashable command]
+    [LawfulBEq command] (step : state → command → state) (initial : state) :
+    (reversed : List command) → ShapeReplayMemo step initial →
+      { after : state // after = reversed.reverse.foldl step initial } ×
+        ShapeReplayMemo step initial
+  | [], memo => (⟨initial, rfl⟩, memo)
+  | item :: rest, memo =>
+    match memo.get? (item :: rest) with
+    | some after => (after, memo)
+    | none =>
+      let (before, memo) := shapeCachedReplay step initial rest memo
+      let after : { after : state // after = (item :: rest).reverse.foldl step initial } :=
+        ⟨step before.val item, by simp only [List.reverse_cons, List.foldl_append,
+          List.foldl_cons, List.foldl_nil]; rw [before.property]⟩
+      (after, memo.insert (item :: rest) after)
+
+theorem shapeCachedReplay_matches_fresh_replay {command state : Type}
+    [BEq command] [Hashable command] [LawfulBEq command]
+    (step : state → command → state) (initial : state)
+    (word : List command) (memo : ShapeReplayMemo step initial) :
+    (shapeCachedReplay step initial word.reverse memo).1.val = word.foldl step initial := by
+  simpa using (shapeCachedReplay step initial word.reverse memo).1.property
+
+abbrev ShapeReplayInput := Nat × Option (List Nat)
+
+def shapeReplayStep (states : List (ShapePlan source × List SourcePoint))
+    (input : ShapeReplayInput) : List (ShapePlan source × List SourcePoint) :=
+  match input.2 with
+  | none => states.flatMap fun (plan, points) =>
+      (shapeAdvance plan points (input.1 / 2) (input.1 % 2 == 1)).map (plan, ·)
+  | some choice => shapeInputStep states input.1 choice
+
+def shapeGroupWord (group : ShapeQueryGroup) : Option (List ShapeReplayInput) :=
+  match group.2.1 with
+  | none => some (group.1.map (·, none))
+  | some inputs => if group.1.length != inputs.length then none
+      else some ((group.1.zip inputs).map fun (command, choice) => (command, some choice))
+
+def shapePreparedGroupStates (plan : ShapePlan source) (group : ShapeQueryGroup) :=
+  match shapeGroupWord group with
+  | none => []
+  | some word => word.foldl shapeReplayStep [(plan, [])]
+
+theorem shapePreparedGroupStates_matches_independent_replay
+    (plan : ShapePlan source) (group : ShapeQueryGroup) :
+    shapePreparedGroupStates plan group =
+      match group.2.1 with
+      | none => shapeStates source [plan] group.1
+      | some inputs => (shapeReplayStates source [plan] group.1 inputs).getD [] := by
+  obtain ⟨word, choices, requests⟩ := group
+  cases choices with
+  | none => simp [shapePreparedGroupStates, shapeGroupWord,
+      List.foldl_map, shapeReplayStep, shapeStates]
+  | some inputs =>
+      have discardEmpty (states : List (ShapePlan source × List SourcePoint)) :
+          (if states = [] then none else some states).getD [] = states := by
+        cases states <;> rfl
+      by_cases matched : word.length = inputs.length <;>
+        simp [shapePreparedGroupStates, shapeGroupWord, shapeReplayStates,
+          matched, List.foldl_map, shapeReplayStep, discardEmpty]
+
+abbrev ShapePreparedQuery := Option (List ShapeReplayInput) × Array (Option ShapeRequest)
+
+def shapePrepareQuery (group : ShapeQueryGroup) : ShapePreparedQuery :=
+  ((shapeGroupWord group).map List.reverse, group.2.2.toArray)
+
+def shapePreparedStates (plan : ShapePlan source) (query : ShapePreparedQuery) :=
+  match query.1 with
+  | none => []
+  | some reversed => reversed.reverse.foldl shapeReplayStep [(plan, [])]
+
+theorem shapePreparedStates_matches_group (plan : ShapePlan source) (group : ShapeQueryGroup) :
+    shapePreparedStates plan (shapePrepareQuery group) = shapePreparedGroupStates plan group := by
+  cases word : shapeGroupWord group <;>
+    simp [shapePreparedStates, shapePrepareQuery, shapePreparedGroupStates, word]
+
+theorem shapeEmptyAnswers_are_neutral (previous : List Bool)
+    (requests : List (Option ShapeRequest)) (sameLength : previous.length = requests.length) :
+    previous = previous.zipWith (· || ·) (requests.map fun _ => false) := by
+  induction previous generalizing requests with
+  | nil => simp
+  | cons value previous ih =>
+      cases requests with
+      | nil => simp at sameLength
+      | cons request requests =>
+          simp only [List.map_cons, List.zipWith_cons_cons, Bool.or_false]
+          exact congrArg (List.cons value) (ih requests (by simpa using sameLength))
+
+theorem shapeTrueAnswers_are_absorbing {question : Type} (previous : List Bool)
+    (requests : List question) (answer : question → Bool)
+    (sameLength : previous.length = requests.length) (finished : previous.all id = true) :
+    previous = previous.zipWith (· || ·) (requests.map answer) := by
+  induction previous generalizing requests with
+  | nil => simp
+  | cons value previous ih =>
+      cases requests with
+      | nil => simp at sameLength
+      | cons request requests =>
+          cases value with
+          | false => simp at finished
+          | true =>
+              simp only [List.map_cons, List.zipWith_cons_cons, Bool.true_or]
+              exact congrArg (List.cons true)
+                (ih requests (by simpa using sameLength) (by simpa using finished))
+
+def shapeMergeAnswers (states : List (ShapePlan source × List SourcePoint))
+    (requests : Array (Option ShapeRequest)) (previous : Array Bool) : Array Bool :=
+  if states.isEmpty && previous.size == requests.size then previous
+  else if requests == #[none] then previous.zipWith (· || ·) #[!states.isEmpty]
+  else
+    let enabled := shapePrepareEnabled states
+    previous.zipWith (· || ·) (requests.map (shapeEnabledQuery enabled))
+
+theorem shapeMergeAnswers_preserves_all_answers
+    (states : List (ShapePlan source × List SourcePoint))
+    (requests : Array (Option ShapeRequest)) (previous : Array Bool) :
+    (shapeMergeAnswers states requests previous).toList =
+      previous.toList.zipWith (· || ·) (requests.toList.map (shapeStateQuery states)) := by
+  unfold shapeMergeAnswers
+  split
+  · rename_i empty
+    have fields := Bool.and_eq_true_iff.mp empty
+    have noStates : states = [] := List.isEmpty_iff.mp fields.1
+    have sameLength : previous.toList.length = requests.toList.length := by
+      simpa using (of_decide_eq_true fields.2 : previous.size = requests.size)
+    subst states
+    have noWitness : shapeStateQuery (source := source) [] = (fun _ => false) := by
+      funext request
+      cases request <;> rfl
+    rw [noWitness]
+    exact shapeEmptyAnswers_are_neutral previous.toList requests.toList sameLength
+  · split
+    · rename_i singleQuery
+      have onlyPrefix : requests = #[none] := beq_iff_eq.mp singleQuery
+      subst requests
+      simp [Array.toList_zipWith, shapeStateQuery]
+    · simp only [Array.toList_zipWith, Array.toList_map]
+      have same : shapeEnabledQuery (shapePrepareEnabled states) = shapeStateQuery states := by
+        funext request
+        exact shapeEnabledQuery_matches_state states request
+      rw [same]
+
+-- Query inputs are prepared once, outside the source-candidate loop. Reuse an
+-- unchanged answer row when this candidate has no execution of its prefix.
+-- The accumulator keeps the group loop tail-recursive for large populations.
+-- Array sizes make the row-shape check constant-time; lists would rescan the
+-- complete probe inventory for every source candidate even on empty states.
+def shapeAccumulateAnswers (plan : ShapePlan source) :
+    List ShapePreparedQuery → List (Array Bool) →
+      ShapeReplayMemo shapeReplayStep [(plan, [])] → List (Array Bool) → List (Array Bool)
+  | [], _, _, accumulated => accumulated.reverse
+  | _ :: _, [], _, accumulated => accumulated.reverse
+  | query :: queries, previous :: rows, memo, accumulated =>
+      if previous.size == query.2.size && previous.all id then
+        shapeAccumulateAnswers plan queries rows memo (previous :: accumulated)
+      else
+      let (states, memo) := match query.1 with
+        | none => ([], memo)
+        | some reversed =>
+            let (checked, memo) := shapeCachedReplay shapeReplayStep [(plan, [])] reversed memo
+            (checked.val, memo)
+      let current := shapeMergeAnswers states query.2 previous
+      shapeAccumulateAnswers plan queries rows memo (current :: accumulated)
+
+theorem shapeAccumulateAnswers_preserves_every_query (plan : ShapePlan source)
+    (queries : List ShapePreparedQuery) (rows accumulated : List (Array Bool))
+    (memo : ShapeReplayMemo shapeReplayStep [(plan, [])]) :
+    (shapeAccumulateAnswers plan queries rows memo accumulated).map Array.toList =
+      accumulated.reverse.map Array.toList ++ rows.zipWith (fun previous query =>
+        previous.toList.zipWith (· || ·)
+          (query.2.toList.map (shapeStateQuery (shapePreparedStates plan query)))) queries := by
+  induction queries generalizing rows memo accumulated with
+  | nil => simp [shapeAccumulateAnswers]
+  | cons query queries ih =>
+      cases rows with
+      | nil => simp [shapeAccumulateAnswers]
+      | cons previous rows =>
+          simp only [shapeAccumulateAnswers]
+          split
+          · rename_i finished
+            have fields := Bool.and_eq_true_iff.mp finished
+            have fit : previous.toList.length = query.2.toList.length := by
+              simpa using (of_decide_eq_true fields.1 : previous.size = query.2.size)
+            have allTrue : previous.toList.all id = true := by simpa using fields.2
+            have same := shapeTrueAnswers_are_absorbing previous.toList query.2.toList
+              (shapeStateQuery (shapePreparedStates plan query)) fit allTrue
+            rw [ih, List.reverse_cons]
+            simp only [List.map_append, List.map_cons, List.map_nil, List.append_assoc,
+              List.singleton_append, List.zipWith_cons_cons]
+            rw [← same]
+          · cases word : query.1 <;> dsimp only
+            · rw [ih, List.reverse_cons]
+              simp [shapeMergeAnswers_preserves_all_answers, shapePreparedStates, word]
+            · rw [ih, List.reverse_cons]
+              rw [(shapeCachedReplay shapeReplayStep [(plan, [])] _ memo).1.property]
+              simp [shapeMergeAnswers_preserves_all_answers, shapePreparedStates, word]
+
+theorem shapeMapFold {input state output : Type} (transform : state → output)
+    (step : state → input → state) (next : output → input → output)
+    (commutes : ∀ state item, transform (step state item) = next (transform state) item)
+    (items : List input) (initial : state) :
+    transform (items.foldl step initial) = items.foldl next (transform initial) := by
+  induction items generalizing initial with
+  | nil => rfl
+  | cons item items ih => simp only [List.foldl_cons, ih, commutes]
+
 def shapeGroupAnswers (source : Source) (plans : List (SourceOccurrenceCut source))
     (groups : List ShapeQueryGroup) : List (List Bool) :=
-  shapeQueryAnswers ShapePlan.of
+  let queries := groups.map shapePrepareQuery
+  let total := plans.length
+  ((plans.foldl (fun (state : List (Array Bool) × Nat) candidate =>
+    let after := (shapeAccumulateAnswers (ShapePlan.of candidate) queries state.1 ∅ [], state.2 + 1)
+    if after.2 % 4096 == 0 then
+      dbgTrace s!"source oracle: {after.2}/{total} witnesses checked" (fun _ => after)
+    else after)
+    (groups.map (fun group => group.2.2.toArray.map fun _ => false), 0)).1).map Array.toList
+
+theorem shapeGroupAnswers_matches_independent_queries (source : Source)
+    (plans : List (SourceOccurrenceCut source)) (groups : List ShapeQueryGroup) :
+    shapeGroupAnswers source plans groups = shapeQueryAnswers ShapePlan.of
     (fun plan group =>
       let states := match group.2.1 with
         | none => shapeStates source [plan] group.1
         | some inputs => (shapeReplayStates source [plan] group.1 inputs).getD []
       group.2.2.map (shapeStateQuery states))
     (fun group => group.2.2.map fun _ => false)
-    (List.zipWith (· || ·)) plans groups
+    (List.zipWith (· || ·)) plans groups := by
+  let ask := fun (candidate : SourceOccurrenceCut source) (group : ShapeQueryGroup) =>
+    group.2.2.map (shapeStateQuery (shapePreparedGroupStates (ShapePlan.of candidate) group))
+  let next := fun (answers : List (List Bool)) candidate =>
+    answers.zipWith (fun previous group => previous.zipWith (· || ·) (ask candidate group)) groups
+  have commutes (rows : List (Array Bool)) (candidate : SourceOccurrenceCut source) :
+      (shapeAccumulateAnswers (ShapePlan.of candidate) (groups.map shapePrepareQuery) rows ∅ []).map
+        Array.toList = next (rows.map Array.toList) candidate := by
+    simp only [shapeAccumulateAnswers_preserves_every_query, List.reverse_nil, List.map_nil,
+      List.nil_append, next, ask, List.zipWith_map_left, List.zipWith_map_right,
+      shapePreparedStates_matches_group]
+    rfl
+  unfold shapeGroupAnswers
+  simp only [dbgTrace, ite_self]
+  rw [shapeMapFold (fun state : List (Array Bool) × Nat => state.1.map Array.toList)
+    (fun state candidate =>
+      (shapeAccumulateAnswers (ShapePlan.of candidate) (groups.map shapePrepareQuery) state.1 ∅ [],
+        state.2 + 1))
+    next (fun state candidate => commutes state.1 candidate) plans
+    (groups.map (fun group => group.2.2.toArray.map fun _ => false), 0)]
+  simp only [List.map_map, Array.toList_map, Function.comp_def]
+  simp only [shapeQueryAnswers, next, ask, shapePreparedGroupStates_matches_independent_replay]
 
 theorem shapeStateQuery_as_any (states : List (ShapePlan source × List SourcePoint))
     (request : Option ShapeRequest) :
@@ -580,7 +1021,7 @@ theorem shapeGroupAnswers_match_whole_family (source : Source)
           | none => shapeStates source (plans.map ShapePlan.of) group.1
           | some inputs => (shapeReplayStates source (plans.map ShapePlan.of) group.1 inputs).getD []
         group.2.2.map (shapeStateQuery states)) := by
-  rw [shapeGroupAnswers, shapeQueryAnswers_matches_independent_folds]
+  rw [shapeGroupAnswers_matches_independent_queries, shapeQueryAnswers_matches_independent_folds]
   apply List.map_congr_left
   intro group _
   rw [shapeQueryRows_fold]
@@ -598,6 +1039,15 @@ theorem shapeGroupAnswers_match_whole_family (source : Source)
       simp only [List.any_map, Function.comp_def]
 
 #print axioms shapeStateQuery_as_any
+#print axioms shapeCachedReplay_matches_fresh_replay
+#print axioms shapePreparedGroupStates_matches_independent_replay
+#print axioms shapePreparedStates_matches_group
+#print axioms shapeMergeAnswers_preserves_all_answers
+#print axioms shapeEmptyAnswers_are_neutral
+#print axioms shapeTrueAnswers_are_absorbing
+#print axioms shapeAccumulateAnswers_preserves_every_query
+#print axioms shapeMapFold
+#print axioms shapeGroupAnswers_matches_independent_queries
 #print axioms shapeStateQuery_after_replay
 #print axioms shapeReplayStates_query
 #print axioms shapeStates_query
@@ -1195,16 +1645,81 @@ theorem an_unread_selected_arm_does_not_block_an_independent_receive_alias :
 
 #print axioms an_unread_selected_arm_does_not_block_an_independent_receive_alias
 
-def shapeKeyLess (a b : List Nat × List Nat × List (List Nat) × Nat × Bool) : Bool :=
-  decide (a.1 < b.1) || (a.1 == b.1 && (decide (a.2.1 < b.2.1) ||
-    (a.2.1 == b.2.1 && (decide (a.2.2.1 < b.2.2.1) ||
-      (a.2.2.1 == b.2.2.1 && (a.2.2.2.1 < b.2.2.2.1 ||
-        (a.2.2.2.1 == b.2.2.2.1 && !a.2.2.2.2 && b.2.2.2.2)))))))
-
 def shapeRead [Lean.FromJson α] (path : System.FilePath) : IO α := do
   let raw ← IO.FS.readFile path
   match Lean.Json.parse raw >>= Lean.fromJson? with
   | .ok value => pure value
+  | .error error => throw (IO.userError s!"invalid shape JSON in {path}: {error}")
+
+-- Decode each observation before reading the next one. Building the entire
+-- generic JSON tree first retains a second copy of every prefix and choice.
+-- Individual fields keep the standard FromJson decoders and JSON grammar.
+open Std.Internal.Parsec Std.Internal.Parsec.String in
+private def shapeJsonValue [Lean.FromJson α] : Parser α := do
+  match Lean.fromJson? (← Lean.Json.Parser.anyCore) with
+  | .ok value => pure value
+  | .error error => fail error
+
+open Std.Internal.Parsec Std.Internal.Parsec.String in
+private partial def shapeAttemptArray (values : Array ShapeAttempt) : Parser (Array ShapeAttempt) := do
+  let value ← shapeJsonValue
+  let value := match values.back? with
+    | some previous => shapeSharePrefix previous value
+    | none => value
+  let values := values.push value
+  let separator ← any
+  ws
+  if separator == ']' then pure values
+  else if separator == ',' then shapeAttemptArray values
+  else fail "unexpected character in observation array"
+
+open Std.Internal.Parsec Std.Internal.Parsec.String in
+private def shapeAttempts : Parser (Array ShapeAttempt) := do
+  skipChar '['
+  ws
+  if (← peek!) == ']' then
+    skip
+    ws
+    pure #[]
+  else shapeAttemptArray #[]
+
+open Std.Internal.Parsec Std.Internal.Parsec.String in
+private partial def shapeOutputFields (name : Option Nat)
+    (attempts : Option (Array ShapeAttempt)) : Parser ShapeOutput := do
+  skipChar '"'
+  let field ← Lean.Json.Parser.str
+  ws
+  skipChar ':'
+  ws
+  let (name, attempts) ← if field == "name" then
+      pure (some (← shapeJsonValue), attempts)
+    else if field == "attempts" then
+      pure (name, some (← shapeAttempts))
+    else do
+      let _ ← Lean.Json.Parser.anyCore
+      pure (name, attempts)
+  let separator ← any
+  ws
+  if separator == '}' then
+    match name, attempts with
+    | some name, some attempts => pure ⟨name, attempts⟩
+    | _, _ => fail "missing observation fields"
+  else if separator == ',' then shapeOutputFields name attempts
+  else fail "unexpected character in observation object"
+
+open Std.Internal.Parsec Std.Internal.Parsec.String in
+private def shapeOutputParser : Parser ShapeOutput := do
+  ws
+  skipChar '{'
+  ws
+  let output ← shapeOutputFields none none
+  eof
+  pure output
+
+def shapeReadOutput (path : System.FilePath) : IO ShapeOutput := do
+  let raw ← IO.FS.readFile path
+  match Std.Internal.Parsec.String.Parser.run shapeOutputParser raw with
+  | .ok output => pure output
   | .error error => throw (IO.userError s!"invalid shape JSON in {path}: {error}")
 
 def shapeGroupStep (attempt : ShapeAttempt)
@@ -1528,7 +2043,7 @@ def shapeCheckCompleted (source : Source) (name : Nat) (parallelCoverage : Bool)
           throw (IO.userError s!"shape {name}: missing parallel pair coverage")
   pure (2 * count, calls, prefixes.toList.map Prod.fst)
 
-def main (args : List String) : IO UInt32 := do
+def shapeCheckGuardedReentry : IO Unit := do
   -- Evaluate the whole bounded plan set natively. The general anchor theorem
   -- is kernel checked; materializing all these plans in a `by decide` proof
   -- duplicates the exhaustive search in the proof term.
@@ -1584,8 +2099,11 @@ def main (args : List String) : IO UInt32 := do
   for ((word, choice, event, expected), answers) in incomingCases.zip incomingAnswers do
     unless answers == [expected] do
       throw (IO.userError s!"continuation-cut regression: word={word} choice={choice} event={event} expected={expected}")
+  IO.println "Guarded reentry regressions: all fifteen source cuts passed"
+
+def main (args : List String) : IO UInt32 := do
   if args == ["--check-guarded-reentry"] then
-    IO.println "Guarded reentry regressions: all fifteen source cuts passed"
+    shapeCheckGuardedReentry
     return 0
   let (inputPath, outputPath, weakenRoot) ← match args with
     | [input, output] => pure (input, output, false)
@@ -1613,6 +2131,7 @@ def main (args : List String) : IO UInt32 := do
   let mut completedRuns := 0
   let mut completedCalls := 0
   for input in inputs do
+    IO.eprintln s!"shape {input.name}: checking complete executions and probe inventory"
     let source ← match parseShape input with
       | .ok source => pure source
       | .error error => throw (IO.userError s!"shape {input.name}: {error}")
@@ -1632,17 +2151,27 @@ def main (args : List String) : IO UInt32 := do
       shapeShortPrefixes source (candidates.map ShapePlan.of) choices else []
     let prefixes := ((plannedPrefixes.map fun word => (word, shapeWordInputs source word)) ++
       shortPrefixes).eraseDups
-    let output : ShapeOutput ← shapeRead (System.FilePath.mk outputPath / s!"{input.name}.json")
-    unless output.attempts.all (fun a => a.prefix.length == a.prefixChoices.length &&
-        a.prefixChoices.all (fun choice => choice == choice.eraseDups.mergeSort (· ≤ ·) &&
-          choice.all (· < input.resolvers))) do
-      throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
-    let actualKeys := output.attempts.toList.map fun a => (a.choice, a.prefix, a.prefixChoices, a.event, a.receive)
-    let actualKeys := actualKeys.mergeSort shapeKeyLess
-    let expectedKeys := (shapeProbeKeys source prefixes choices).mergeSort shapeKeyLess
-    unless input.name == output.name && actualKeys == expectedKeys do
-      let different := (actualKeys.zip expectedKeys).find? fun (actual, expected) => actual != expected
-      throw (IO.userError s!"shape {input.name}: incomplete probe inventory; actual={actualKeys.length} expected={expectedKeys.length} first_difference={repr different}")
+    let output ← shapeReadOutput (System.FilePath.mk outputPath / s!"{input.name}.json")
+    unless input.name == output.name do
+      throw (IO.userError s!"shape {input.name}: incomplete probe inventory; wrong observation name")
+    let mut missing : Std.HashMap
+        (List Nat × List Nat × List (List Nat) × Nat × Bool) Nat := {}
+    for key in shapeProbeKeys source prefixes choices do
+      missing := missing.insert key ((missing.get? key).getD 0 + 1)
+    for attempt in output.attempts do
+      unless attempt.prefix.length == attempt.prefixChoices.length &&
+          attempt.prefixChoices.all (fun choice => choice == choice.eraseDups.mergeSort (· ≤ ·) &&
+            choice.all (· < input.resolvers)) do
+        throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
+      let key := (attempt.choice, attempt.prefix, attempt.prefixChoices, attempt.event, attempt.receive)
+      match missing.get? key with
+      | none => throw (IO.userError s!"shape {input.name}: incomplete probe inventory; unknown or duplicate probe")
+      | some count =>
+          if count == 1 then missing := missing.erase key
+          else missing := missing.insert key (count - 1)
+    unless missing.isEmpty do
+      throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
+    IO.eprintln s!"shape {input.name}: inventory checked, comparing {output.attempts.size} probes against {candidates.length} source witnesses"
     let attemptGroups := shapeAttemptGroups output.attempts.toList
     let mut groups : Array ShapeQueryGroup := #[]
     for (word, inputs) in prefixes do

@@ -79,50 +79,6 @@ fn missing_history(text: &str) -> Result<Option<String>, Box<dyn std::error::Err
     Ok(Some(source_json(&Json::Object(fields))?))
 }
 
-// Bound successful API calls from the source, independently of observations.
-// A self-role message has one local operation; other messages have two ends.
-fn max_completed_calls(case: &Json) -> Result<usize, String> {
-    let Some(Json::Array(nodes)) = case.get("nodes") else {
-        return Err("missing source nodes".into());
-    };
-    let number = |node: &Json, field: &str| match node.get(field) {
-        Some(Json::Number(value)) => value
-            .parse::<usize>()
-            .map_err(|_| "invalid source index".to_owned()),
-        _ => Err("missing source number".to_owned()),
-    };
-    let mut counts: Vec<usize> = Vec::new();
-    for node in nodes {
-        let kind = number(node, "kind")?;
-        let count = if kind == 0 {
-            if number(node, "sender")? == number(node, "receiver")? {
-                1
-            } else {
-                2
-            }
-        } else {
-            let left = *counts
-                .get(number(node, "left")?)
-                .ok_or("source left child is not earlier")?;
-            if kind == 5 {
-                left.checked_mul(2).ok_or("source call count overflow")?
-            } else {
-                let right = *counts
-                    .get(number(node, "right")?)
-                    .ok_or("source right child is not earlier")?;
-                match kind {
-                    1 | 2 => left
-                        .checked_add(right)
-                        .ok_or("source call count overflow")?,
-                    3 | 4 => left.max(right),
-                    _ => return Err("unknown source constructor".into()),
-                }
-            }
-        };
-        counts.push(count);
-    }
-    counts.last().copied().ok_or("empty source".into())
-}
 // Probe kinds are the only string-valued fields in these test records.
 fn source_json(value: &Json) -> Result<String, Box<dyn std::error::Error>> {
     Ok(match value {
@@ -393,8 +349,77 @@ fn rejected(
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
+    fs::write(
+        outputs
+            .parent()
+            .ok_or("missing control directory")?
+            .join("rejection.log"),
+        &report,
+    )?;
     if result.status.success() || !report.contains(expected) {
         return Err(format!("negative control was not detected: {expected}: {report}").into());
+    }
+    Ok(())
+}
+
+fn admission_controls(checker: &Path, output: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let inventory = json::parse(&fs::read_to_string(output.join("inputs.json"))?)?;
+    let mut paths = fs::read_dir(output.join("observations"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    for (name, accepted, continued, expected) in [
+        (
+            "false-rejection",
+            true,
+            false,
+            "runtime-only=0 model-only=1",
+        ),
+        (
+            "false-admission",
+            false,
+            false,
+            "runtime-only=1 model-only=0",
+        ),
+        (
+            "continuation-false-rejection",
+            true,
+            true,
+            "runtime-only=0 model-only=1",
+        ),
+        (
+            "continuation-false-admission",
+            false,
+            true,
+            "runtime-only=1 model-only=0",
+        ),
+    ] {
+        let needle = format!("\"accepted\":{accepted}");
+        let mut selected = None;
+        for path in &paths {
+            let text = fs::read_to_string(path)?;
+            let range = if continued {
+                continuation(&text, accepted)
+            } else {
+                text.find(&needle).map(|start| start..start + needle.len())
+            };
+            if let Some(range) = range {
+                selected = Some((path, text, range));
+                break;
+            }
+        }
+        let (path, mut text, range) = selected.ok_or("missing admission control point")?;
+        let changed =
+            text[range.clone()].replacen(&needle, &format!("\"accepted\":{}", !accepted), 1);
+        text.replace_range(range, &changed);
+        let (input, observations) = single_case(
+            &inventory,
+            &output.join("admission-controls").join(name),
+            path,
+            &text,
+        )?;
+        rejected(checker, &input, &observations, expected)?;
+        println!("Admission checker control: {name}: pass");
     }
     Ok(())
 }
@@ -719,6 +744,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.first().is_some_and(|arg| arg == "--shrink-probe") {
         std::process::exit(shrink_probe(&args[1..])?);
     }
+    if let [command, checker, output] = args.as_slice()
+        && command == "--admission-controls"
+    {
+        return admission_controls(Path::new(checker), Path::new(output));
+    }
     if args.len() != 2 {
         return Err("usage: protocol-shape-controls CHECKER GENERATED_DIRECTORY".into());
     }
@@ -737,33 +767,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     completed_controls(&checker, &inventory, &paths, &output)?;
     parallel_coverage_control(&checker, &inventory, &paths, &output)?;
     causal_control(&checker, &inventory, &paths, &output)?;
-    for (name, needle, replacement, expected) in [
-        (
-            "false-rejection",
-            r#""accepted":true"#,
-            r#""accepted":false"#,
-            "runtime-only=0 model-only=1",
-        ),
-        (
-            "false-admission",
-            r#""accepted":false"#,
-            r#""accepted":true"#,
-            "runtime-only=1 model-only=0",
-        ),
-    ] {
-        let target = output.join("controls").join(name);
-        let text = fs::read_to_string(first)?;
-        if !text.contains(needle) {
-            return Err(format!("missing mutation point {name}").into());
-        }
-        let (input, observations) = single_case(
-            &inventory,
-            &target,
-            first,
-            &text.replacen(needle, replacement, 1),
-        )?;
-        rejected(&checker, &input, &observations, expected)?;
-    }
     let missing = output.join("controls/missing-case");
     let (input, observations) =
         single_case(&inventory, &missing, first, &fs::read_to_string(first)?)?;
@@ -804,27 +807,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "incomplete probe inventory",
     )?;
     {
-        let Json::Array(cases) = &inventory else {
-            return Err("invalid source inventory".into());
-        };
-        let has_positive_continuation = cases
-            .iter()
-            .map(max_completed_calls)
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .any(|count| count > 1);
         let mut checked = Vec::new();
         for (name, accepted, expected) in [
-            (
-                "continuation-false-admission",
-                false,
-                "runtime-only=1 model-only=0",
-            ),
-            (
-                "continuation-false-rejection",
-                true,
-                "runtime-only=0 model-only=1",
-            ),
             (
                 "continuation-missing-probe",
                 false,
@@ -855,12 +839,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let Some((path, mut text, range)) = selected else {
-                if accepted && !has_positive_continuation {
-                    println!(
-                        "Continuation false-rejection control is inapplicable: every source path has one local operation"
-                    );
-                    continue;
-                }
                 return Err("missing continuation mutation point".into());
             };
             let record = text[range.clone()].to_owned();
@@ -899,16 +877,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     fields.insert("prefixChoices".into(), Json::Array(Vec::new()));
                     text.replace_range(range, &source_json(&Json::Object(fields))?);
                 }
-                _ => {
-                    text.replace_range(
-                        range,
-                        &record.replacen(
-                            &format!("\"accepted\":{accepted}"),
-                            &format!("\"accepted\":{}", !accepted),
-                            1,
-                        ),
-                    );
-                }
+                _ => return Err("unknown continuation control".into()),
             }
             let target = output.join("controls").join(name);
             let (input, observations) = single_case(&inventory, &target, path, &text)?;
@@ -948,13 +917,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     );
     println!(
-        "Generated shape checker controls: false-admission, false-rejection, missing-case, malformed, unknown-resolver-input: pass"
+        "Generated shape checker controls: missing-case, malformed, unknown-resolver-input: pass"
     );
     Ok(())
 }
 
 #[cfg(test)]
-mod source_bounds {
+mod tests {
     use super::*;
 
     #[test]
@@ -968,36 +937,5 @@ mod source_bounds {
         assert_eq!(attempts.len(), 1);
         assert_eq!(attempts[0].get("accepted"), Some(&Json::Bool(true)));
         assert!(missing_history(&mutated).unwrap().is_none());
-    }
-
-    #[test]
-    fn local_choices_sequences_and_repetitions_have_different_call_bounds() {
-        let choice = r#"{"nodes":[{"kind":0,"sender":0,"receiver":0},{"kind":0,"sender":0,"receiver":0},{"kind":4,"left":0,"right":1}]}"#;
-        assert_eq!(
-            max_completed_calls(&json::parse(choice).unwrap()).unwrap(),
-            1
-        );
-        let sequence = choice.replace("\"kind\":4", "\"kind\":1");
-        assert_eq!(
-            max_completed_calls(&json::parse(&sequence).unwrap()).unwrap(),
-            2
-        );
-        let repeated = r#"{"nodes":[{"kind":0,"sender":0,"receiver":0},{"kind":5,"left":0}]}"#;
-        assert_eq!(
-            max_completed_calls(&json::parse(repeated).unwrap()).unwrap(),
-            2
-        );
-        let ordinary = r#"{"nodes":[{"kind":0,"sender":0,"receiver":1}]}"#;
-        assert_eq!(
-            max_completed_calls(&json::parse(ordinary).unwrap()).unwrap(),
-            2
-        );
-        for invalid in [
-            r#"{"nodes":[]}"#,
-            r#"{"nodes":[{"kind":0}]}"#,
-            r#"{"nodes":[{"kind":1,"left":0,"right":0}]}"#,
-        ] {
-            assert!(max_completed_calls(&json::parse(invalid).unwrap()).is_err());
-        }
     }
 }

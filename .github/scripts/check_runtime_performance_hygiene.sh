@@ -38,28 +38,8 @@ run_runtime_test() {
   rm -f "${output}"
 }
 
-echo "== runtime performance operation-count tests =="
-
-run_runtime_test \
-  "offer_branch_recv_evidence" \
-  -p hibana \
-  --test offer_branch_recv_evidence
-
-run_runtime_test \
-  "parallel_route_nesting" \
-  -p hibana \
-  --test parallel_route_nesting
-
-run_runtime_test \
-  "parallel_route_alternating" \
-  -p hibana \
-  --test parallel_route_alternating
-
-run_runtime_test \
-  "huge_choreography_runtime" \
-  -p hibana \
-  --test huge_choreography_runtime
-
+# Their assertions run in the required native suite. Repeating those tests
+# against a warm target measures Cargo reuse, not cold compilation pressure.
 echo "== current-kernel runtime cost measurements =="
 cargo +"${TOOLCHAIN}" bench --locked --bench runtime_cost
 

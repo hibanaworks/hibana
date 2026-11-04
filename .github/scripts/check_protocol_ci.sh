@@ -44,6 +44,18 @@ case "$SELECTION" in
     target/debug/protocol-shapes syntax-fuzz "$PWD" "$DEPTH" "$seed" 4 "target/protocol-fuzz-$DEPTH-$seed"
     ;;
   controls)
+    # Positive baselines belong to this assignment, rather than being executed
+    # both here and in separate matrix jobs. Mutants never inherit an outer
+    # capture root shared with the passing source.
+    unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
+    ranks="$(jq -er '.contracts | select(length > 0) | .[]' <<< "$ASSIGNMENT")"
+    while IFS= read -r rank; do
+      extra=()
+      if [[ "$rank" == 2 ]]; then extra+=(--admission-controls); fi
+      bash .github/scripts/check_protocol_shapes.sh "${extra[@]}" --contracts "$rank" 1
+    done <<< "$ranks"
+    # Preserve the existing combined parked-receive execution fixture too.
+    bash .github/scripts/check_protocol_shapes.sh --contracts 6 2
     for check in shape-resumption prefix-input resolver-occurrence resolver-observation recv-contract parked-offer parked-receive reentry-component; do
       bash ".github/scripts/check_${check//-/_}_sensitivity.sh"
     done

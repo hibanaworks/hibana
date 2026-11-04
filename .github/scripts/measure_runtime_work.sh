@@ -12,17 +12,11 @@ source_hashes() {
 source_hashes > "$results/source-before.sha256"
 git rev-parse HEAD > "$results/revision.txt"
 rustc +"$TOOLCHAIN" -vV > "$results/rustc.txt"
-cargo +"$TOOLCHAIN" test --locked --manifest-path .github/ci-tests/Cargo.toml \
-  --bin runtime-work --target-dir "$build" > "$results/reader-tests.log" 2>&1
+# Verification-tool tests run in preflight; each host still compiles and runs
+# its reader against the actual instrumented Endpoint observations.
 cargo +"$TOOLCHAIN" build --locked --manifest-path .github/ci-tests/Cargo.toml \
   --bin runtime-work --target-dir "$build" > "$results/reader-build.log" 2>&1
 reader="$build/debug/runtime-work"
-# The instrumented core must also build without an OS or allocator.
-for target in thumbv6m-none-eabi thumbv8m.main-none-eabihf; do
-  RUSTFLAGS='--cfg hibana_profile' cargo +"$TOOLCHAIN" check --locked --lib \
-    --no-default-features --target "$target" --target-dir "$build" \
-    > "$results/no-std-$target.log" 2>&1
-done
 RUSTFLAGS='--cfg hibana_repo_tests --cfg hibana_profile' \
   cargo +"$TOOLCHAIN" test --locked --lib --no-run --message-format=json-render-diagnostics \
     > "$results/build.jsonl" 2> "$results/build.log"

@@ -51,42 +51,71 @@ def ResumptionQuery.check (query : ResumptionQuery) (observed : SourcePoint → 
 
 /-- Prepare immutable resumption inputs once for one source point. Only the
 observations change when the table is queried. This preserves the source rule
-and adds no execution state. -/
+and adds no execution state. The explicit input values let callers share the
+same source domain and unfolding scopes across the whole table. A partially
+applied function alone can be uncurried back into repeated source traversals. -/
+def SourceOccurrenceCut.prepareResumptionFrom (plan : SourceOccurrenceCut source)
+    (inputs : List SourcePoint × List SourceResumption) (point : SourcePoint) :
+    List ResumptionQuery :=
+  let (points, resumptions) := inputs
+  match point with
+  | .committed _ => points.map fun prior => ⟨prior, false, []⟩
+  | .accepted after =>
+      match occurrenceActor? plan (.accepted after) with
+      | none => points.map fun prior => ⟨prior, false, []⟩
+      | some actor =>
+          let domain := occurrenceLocalDomain plan actor
+          let scopes := resumptions.map fun (scope : SourceResumption) =>
+            (scope, scope.inTail after,
+              domain.map fun member => (member, scope.committedPoint member))
+          points.map fun prior => match prior with
+            | .accepted _ => ⟨prior, false, []⟩
+            | .committed before =>
+                ⟨prior, occurrenceActor? plan prior == some actor,
+                  scopes.map fun (scope, tail, body) =>
+                    (scope.inBody before.event && tail, body)⟩
+
 def SourceOccurrenceCut.prepareResumption (plan : SourceOccurrenceCut source)
     (point : SourcePoint) : List ResumptionQuery :=
-  (sourceVisitPoints plan.path.bindings).map fun prior =>
-    match prior, point with
-    | .committed before, .accepted after =>
-        match occurrenceActor? plan (.accepted after) with
-        | none => ⟨prior, false, []⟩
-        | some actor =>
-            let sameActor := occurrenceActor? plan (.committed before) == some actor
-            let scopes := (plan.unfolding.resumptions 0).map fun (scope : SourceResumption) =>
-              (scope.inBody before.event && scope.inTail after,
-                (occurrenceLocalDomain plan actor).map fun member =>
-                  (member, scope.committedPoint member))
-            ⟨prior, sameActor, scopes⟩
-    | _, _ => ⟨prior, false, []⟩
+  plan.prepareResumptionFrom
+    (sourceVisitPoints plan.path.bindings, plan.unfolding.resumptions 0) point
 
 theorem prepared_resumption_matches_source
     (plan : SourceOccurrenceCut source) (point : SourcePoint) (observed : SourcePoint → Bool) :
     ((plan.prepareResumption point).all fun query => query.check observed) =
       ({ plan with observed := observed } : SourceOccurrenceCut source).resumptionReady point := by
-  unfold SourceOccurrenceCut.prepareResumption SourceOccurrenceCut.resumptionReady
-  simp only [List.all_map]
-  apply congrArg (fun predicate => (sourceVisitPoints plan.path.bindings).all predicate)
-  funext prior
-  change _ = (!plan.resumptionDepends observed prior point || observed prior)
   cases point with
   | committed after =>
-      cases prior <;> simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check]
+      unfold SourceOccurrenceCut.prepareResumption SourceOccurrenceCut.prepareResumptionFrom
+        SourceOccurrenceCut.resumptionReady
+      simp only [List.all_map]
+      apply congrArg (fun predicate => (sourceVisitPoints plan.path.bindings).all predicate)
+      funext prior
+      change _ = (!plan.resumptionDepends observed prior (.committed after) || observed prior)
+      simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check]
   | accepted after =>
-      cases prior with
-      | accepted before => simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check]
-      | committed before =>
-          cases actorAt : occurrenceActor? plan (.accepted after) with
-          | none => simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check, actorAt]
-          | some actor =>
+      cases actorAt : occurrenceActor? plan (.accepted after) with
+      | none =>
+          unfold SourceOccurrenceCut.prepareResumption SourceOccurrenceCut.prepareResumptionFrom
+            SourceOccurrenceCut.resumptionReady
+          simp only [actorAt, List.all_map]
+          apply congrArg (fun predicate => (sourceVisitPoints plan.path.bindings).all predicate)
+          funext prior
+          change _ = (!plan.resumptionDepends observed prior (.accepted after) || observed prior)
+          cases prior with
+          | accepted before => simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check]
+          | committed before =>
+              simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check, actorAt]
+      | some actor =>
+          unfold SourceOccurrenceCut.prepareResumption SourceOccurrenceCut.prepareResumptionFrom
+            SourceOccurrenceCut.resumptionReady
+          simp only [actorAt, List.all_map]
+          apply congrArg (fun predicate => (sourceVisitPoints plan.path.bindings).all predicate)
+          funext prior
+          change _ = (!plan.resumptionDepends observed prior (.accepted after) || observed prior)
+          cases prior with
+          | accepted before => simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check]
+          | committed before =>
               simp [SourceOccurrenceCut.resumptionDepends, ResumptionQuery.check, actorAt,
                 List.any_map, Function.comp_def]
 

@@ -6,6 +6,9 @@ mod catalog_counts;
 /// One execution plan for exhaustive catalogs and seeded syntax sampling.
 fn ci_matrix(extended: bool) -> serde_json::Value {
     const BUDGET: usize = 2;
+    // These full populations also provide the positive side of the required
+    // production mutations. The controls assignment executes each once.
+    const SENSITIVITY_CONTRACTS: [usize; 5] = [2, 6, 7, 8, 14];
     let plan = Plan::new(BUDGET, 0).expect("the mandatory finite catalog is defined");
     let mut entries = (0..plan.jobs)
         .map(|partition| {
@@ -17,12 +20,17 @@ fn ci_matrix(extended: bool) -> serde_json::Value {
         })
         .collect::<Vec<_>>();
     for first in 0..catalog_counts::CONTRACTS {
+        if SENSITIVITY_CONTRACTS.contains(&first) {
+            continue;
+        }
         entries.push(serde_json::json!({
             "id": format!("contracts-{first}"), "selection": "contracts",
             "first": first, "count": 1,
         }));
     }
-    entries.push(serde_json::json!({"id": "controls", "selection": "controls"}));
+    entries.push(serde_json::json!({
+        "id": "controls", "selection": "controls", "contracts": SENSITIVITY_CONTRACTS,
+    }));
     if extended {
         for first in (0..catalog_counts::FRONTIERS).step_by(4) {
             entries.push(serde_json::json!({
@@ -178,7 +186,15 @@ mod tests {
                     assert_eq!(entry["count"], 1);
                     assert!(!std::mem::replace(&mut contracts[first], true));
                 }
-                "controls" => controls += 1,
+                "controls" => {
+                    controls += 1;
+                    let assigned = entry["contracts"].as_array().unwrap();
+                    assert!(!assigned.is_empty());
+                    for rank in assigned {
+                        let rank = rank.as_u64().unwrap() as usize;
+                        assert!(!std::mem::replace(&mut contracts[rank], true));
+                    }
+                }
                 other => panic!("unexpected mandatory selection {other}"),
             }
         }

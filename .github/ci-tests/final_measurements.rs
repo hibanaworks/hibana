@@ -579,19 +579,6 @@ fn llvm_sections(text: &str, mode: &str) -> Result<()> {
     }
     Ok(())
 }
-fn nonempty_test(text: &str) -> Result<()> {
-    require(
-        text.lines().any(|line| {
-            line.split("running ").skip(1).any(|tail| {
-                let Some((n, tail)) = tail.split_once(' ') else {
-                    return false;
-                };
-                n.parse::<u64>().is_ok_and(|n| n > 0) && tail.starts_with("test")
-            })
-        }),
-        "cargo test filter matched no tests",
-    )
-}
 fn aeabi(bin: &str, llvm_nm: &str) -> Result<()> {
     let output = Command::new(llvm_nm)
         .arg(bin)
@@ -782,7 +769,6 @@ fn run() -> Result<()> {
             )
         }
         "llvm-sections" => llvm_sections(&stdin_text()?, &argument(2)?),
-        "nonempty-test" => nonempty_test(&stdin_text()?),
         "aeabi" => aeabi(&var("BIN_PATH")?, &var("LLVM_NM")?),
         "role-count" => {
             print!("{}", role_count(&argument(2)?)?);
@@ -868,8 +854,6 @@ mod tests {
         assert!(message_budget([0, 0, 0], [0, 0, 65537]).is_err());
         assert!(message_budget([0, 100000, 524289], [0, 0, 0]).is_err());
         assert!(message_budget([0, 0, 0], [0, 1000000, 2097153]).is_err());
-        assert!(nonempty_test("running 2 tests").is_ok());
-        assert!(nonempty_test("running 0 tests").is_err());
         assert!(role_count("unknown").is_err());
     }
 

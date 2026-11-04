@@ -551,33 +551,9 @@ async fn replay(
                 }
             }};
         }
-        macro_rules! on_view {
-            ($label:literal, $carrier:ident) => {
-                match command.message.endpoint {
-                    None => unit!($label, $carrier),
-                    Some(0) => dispatch_endpoint_roles!(),
-                    Some(_) => panic!("endpoint payload outside source inventory"),
-                }
-            };
-        }
-        macro_rules! execute {
-            ($label:literal) => {{
-                let view = if command.receive {
-                    command.message.to
-                } else {
-                    command.message.from
-                };
-                match view {
-                    0 => on_view!($label, views0),
-                    1 => on_view!($label, views1),
-                    2 => on_view!($label, views2),
-                    3 => on_view!($label, views3),
-                    _ => panic!("view outside generated role domain"),
-                }
-            }};
-        }
-        outcome = match command.message.contract {
-            0 => dispatch_labels!(),
+        let view = if command.receive { command.message.to } else { command.message.from };
+        outcome = match (command.message.contract, view, command.message.endpoint) {
+            (0, 0, None) => dispatch_operations!(),
             _ => panic!("generated message contract outside dispatch inventory"),
         };
         assert_eq!(resolver_audits.get(), resolver_calls.get(),

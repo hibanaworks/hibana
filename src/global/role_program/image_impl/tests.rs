@@ -1010,14 +1010,17 @@ fn resident_descriptor_rejects_local_step_lane_outside_logical_domain() {
 fn resident_descriptor_rejects_program_lane_mismatch() {
     let program: RoleProgram<0> = project(&g::send::<0, 1, Msg<1, ()>>());
     let original = program.role_image_ref();
-    let mut columns = empty_columns();
-    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
-    columns.lanes = ColumnRange::new(
-        ROLE_IMAGE_EVENT_STRIDE,
-        1,
-        super::super::ROLE_IMAGE_LANE_STRIDE,
-    );
-    let raw = image(&columns, &LOCAL_EVENT_LANE_MISMATCH_BYTES);
+    const COLUMNS: RoleImageColumns = {
+        let mut columns = empty_columns();
+        columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+        columns.lanes = ColumnRange::new(
+            ROLE_IMAGE_EVENT_STRIDE,
+            1,
+            super::super::ROLE_IMAGE_LANE_STRIDE,
+        );
+        columns
+    };
+    let raw = image(&COLUMNS, &LOCAL_EVENT_LANE_MISMATCH_BYTES);
     let node = raw.local_step_node(0, original.program()).unwrap();
     assert!(matches!(node.action(), LocalAction::Send { lane: 0, .. }));
     assert_eq!(raw.local_step_lane(0, 2), Some(1));
@@ -1026,7 +1029,7 @@ fn resident_descriptor_rejects_program_lane_mismatch() {
             original.program(),
             0,
             original.facts(),
-            std::boxed::Box::leak(std::boxed::Box::new(columns)),
+            &COLUMNS,
             &LOCAL_EVENT_LANE_MISMATCH_BYTES,
         );
     });
@@ -1039,14 +1042,17 @@ fn resident_descriptor_rejects_foreign_role_event() {
         g::send::<0, 2, Msg<2, ()>>(),
     ));
     let original = program.role_image_ref();
-    let mut columns = empty_columns();
-    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
-    columns.lanes = ColumnRange::new(
-        ROLE_IMAGE_EVENT_STRIDE,
-        1,
-        super::super::ROLE_IMAGE_LANE_STRIDE,
-    );
-    let raw = image(&columns, &LOCAL_EVENT_LANE_MISMATCH_BYTES);
+    const COLUMNS: RoleImageColumns = {
+        let mut columns = empty_columns();
+        columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+        columns.lanes = ColumnRange::new(
+            ROLE_IMAGE_EVENT_STRIDE,
+            1,
+            super::super::ROLE_IMAGE_LANE_STRIDE,
+        );
+        columns
+    };
+    let raw = image(&COLUMNS, &LOCAL_EVENT_LANE_MISMATCH_BYTES);
     // A raw row describes a logical operation; the role image constructor
     // establishes that this operation belongs to its projected participant.
     assert!(matches!(
@@ -1058,7 +1064,7 @@ fn resident_descriptor_rejects_foreign_role_event() {
             original.program(),
             2,
             original.facts(),
-            std::boxed::Box::leak(std::boxed::Box::new(columns)),
+            &COLUMNS,
             &LOCAL_EVENT_LANE_MISMATCH_BYTES,
         );
     });
@@ -1068,14 +1074,17 @@ fn resident_descriptor_rejects_foreign_role_event() {
 fn resident_descriptor_rejects_missing_program_event() {
     let program: RoleProgram<0> = project(&g::send::<0, 1, Msg<1, ()>>());
     let original = program.role_image_ref();
-    let mut columns = empty_columns();
-    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
-    columns.lanes = ColumnRange::new(
-        ROLE_IMAGE_EVENT_STRIDE,
-        1,
-        super::super::ROLE_IMAGE_LANE_STRIDE,
-    );
-    let raw = image(&columns, &MISSING_PROGRAM_EVENT_BYTES);
+    const COLUMNS: RoleImageColumns = {
+        let mut columns = empty_columns();
+        columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+        columns.lanes = ColumnRange::new(
+            ROLE_IMAGE_EVENT_STRIDE,
+            1,
+            super::super::ROLE_IMAGE_LANE_STRIDE,
+        );
+        columns
+    };
+    let raw = image(&COLUMNS, &MISSING_PROGRAM_EVENT_BYTES);
     assert_invariant(|| {
         let _ = raw.local_step_node(0, original.program());
     });
@@ -1084,7 +1093,7 @@ fn resident_descriptor_rejects_missing_program_event() {
             original.program(),
             0,
             original.facts(),
-            std::boxed::Box::leak(std::boxed::Box::new(columns)),
+            &COLUMNS,
             &MISSING_PROGRAM_EVENT_BYTES,
         );
     });
@@ -1094,8 +1103,8 @@ fn resident_descriptor_rejects_missing_program_event() {
 fn resident_descriptor_rejects_in_range_missing_event_and_lane_columns() {
     let program: RoleProgram<0> = project(&g::send::<0, 1, Msg<1, ()>>());
     let original = program.role_image_ref();
-    let columns = empty_columns();
-    let raw = image(&columns, &EMPTY_DESCRIPTOR_BYTES);
+    const COLUMNS: RoleImageColumns = empty_columns();
+    let raw = image(&COLUMNS, &EMPTY_DESCRIPTOR_BYTES);
     assert_eq!(raw.local_step_lane(0, 1), None);
     assert!(raw.local_step_node(0, original.program()).is_none());
     assert_invariant(|| {
@@ -1103,7 +1112,7 @@ fn resident_descriptor_rejects_in_range_missing_event_and_lane_columns() {
             original.program(),
             0,
             original.facts(),
-            std::boxed::Box::leak(std::boxed::Box::new(columns)),
+            &COLUMNS,
             &EMPTY_DESCRIPTOR_BYTES,
         );
     });

@@ -1,5 +1,6 @@
 import Hibana.SourceOccurrenceTrace
 import Lean.Data.Json
+import Init.Data.Nat.Bitwise.Lemmas
 
 open Hibana Hibana.EndpointDelegation
 set_option maxRecDepth 100000

@@ -5,7 +5,7 @@ use std::{
     env, fs,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -81,39 +81,35 @@ fn invoke(
     Ok(())
 }
 
-fn binaries(output: &Path, toolchain: &str) -> Result<Vec<PathBuf>> {
-    let mut child = Command::new("cargo")
-        .arg(format!("+{toolchain}"))
-        .args(["test", "--locked", "--manifest-path"])
-        .arg(output.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(output.join("target"))
-        .args(["--no-run", "--message-format=json"])
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let mut transcript = BufWriter::new(fs::File::create(output.join("test-binaries.jsonl"))?);
+fn binaries(output: &Path) -> Result<Vec<PathBuf>> {
+    let manifest = output.join("Cargo.toml").canonicalize()?;
+    let target = output.join("target").canonicalize()?;
     let mut paths = BTreeSet::new();
-    let result = (|| -> Result<()> {
-        for line in BufReader::new(child.stdout.take().ok_or("missing cargo output")?).lines() {
-            let line = line?;
-            writeln!(transcript, "{line}")?;
-            let value: Value = serde_json::from_str(&line)?;
-            if value["reason"] == "compiler-artifact" && value["profile"]["test"] == true {
-                let path = value["executable"]
+    for line in BufReader::new(fs::File::open(output.join("test-binaries.jsonl"))?).lines() {
+        let value: Value = serde_json::from_str(&line?)?;
+        if value["reason"] == "compiler-artifact" && value["profile"]["test"] == true {
+            let owner = value["manifest_path"]
+                .as_str()
+                .ok_or("missing artifact manifest")?;
+            if Path::new(owner).canonicalize()? != manifest {
+                return Err("foreign generated test artifact".into());
+            }
+            let path = PathBuf::from(
+                value["executable"]
                     .as_str()
-                    .ok_or("test has no executable")?;
-                if !paths.insert(PathBuf::from(path)) {
-                    return Err("duplicate generated test binary".into());
-                }
+                    .ok_or("test has no executable")?,
+            )
+            .canonicalize()?;
+            if !path.is_file() || !path.starts_with(&target) {
+                return Err("generated test binary is outside its target directory".into());
+            }
+            if !paths.insert(path) {
+                return Err("duplicate generated test binary".into());
             }
         }
-        transcript.flush()?;
-        Ok(())
-    })();
-    let status = child.wait()?;
-    result?;
-    if !status.success() || paths.is_empty() {
-        return Err(format!("cannot enumerate generated test binaries: {status}").into());
+    }
+    if paths.is_empty() {
+        return Err("empty generated test artifact inventory".into());
     }
     Ok(paths.into_iter().collect())
 }
@@ -265,8 +261,13 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
     }
     writer.flush()?;
     drop(writer);
-    fs::copy(first_initial, initial)?;
+    fs::copy(&first_initial, initial)?;
     fs::rename(assembled, observation)?;
+    fs::remove_dir_all(
+        first_initial
+            .parent()
+            .ok_or("missing partition directory")?,
+    )?;
     println!(
         "{name}: all {} source scripts and all rejection probes completed",
         case.scripts
@@ -274,7 +275,7 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
     Ok(())
 }
 
-fn run(output: &Path, toolchain: &str, size: usize) -> Result<()> {
+fn run(output: &Path, size: usize) -> Result<()> {
     let entries: Vec<Value> =
         serde_json::from_reader(fs::File::open(output.join("scope-inputs.json"))?)?;
     let mut cases = BTreeMap::new();
@@ -292,7 +293,16 @@ fn run(output: &Path, toolchain: &str, size: usize) -> Result<()> {
         return Err("empty generated execution inventory".into());
     }
     let mut seen = BTreeSet::new();
-    for binary in binaries(output, toolchain)? {
+    let binaries = binaries(output)?;
+    let hashes = Command::new("shasum")
+        .args(["-a", "256", "--"])
+        .args(&binaries)
+        .output()?;
+    if !hashes.status.success() {
+        return Err("cannot hash generated test binaries".into());
+    }
+    fs::write(output.join("test-binaries.sha256"), hashes.stdout)?;
+    for binary in binaries {
         let listed = Command::new(&binary)
             .args(["--list", "--format", "terse"])
             .output()?;
@@ -323,31 +333,77 @@ fn run(output: &Path, toolchain: &str, size: usize) -> Result<()> {
     if seen.len() != cases.len() {
         return Err("missing executable source case".into());
     }
+    let hashes = Command::new("shasum")
+        .args(["-a", "256", "--check"])
+        .arg(output.join("test-binaries.sha256"))
+        .output()?;
+    fs::write(output.join("test-binaries-check.log"), &hashes.stdout)?;
+    if !hashes.status.success() {
+        return Err("generated test binary changed during execution".into());
+    }
     Ok(())
 }
 
 fn main() -> Result<()> {
     let args = env::args_os().skip(1).collect::<Vec<_>>();
-    if args.len() != 2 && args.len() != 3 {
-        return Err("usage: protocol-shape-runs OUTPUT TOOLCHAIN [SCRIPTS_PER_PROCESS]".into());
+    if args.len() != 1 && args.len() != 2 {
+        return Err("usage: protocol-shape-runs OUTPUT [SCRIPTS_PER_PROCESS]".into());
     }
     let size = args
-        .get(2)
+        .get(1)
         .map(|value| -> Result<usize> {
             Ok(value.to_str().ok_or("invalid process size")?.parse()?)
         })
         .transpose()?
         .unwrap_or(DEFAULT_BATCH);
-    run(
-        Path::new(&args[0]),
-        args[1].to_str().ok_or("invalid toolchain")?,
-        size,
-    )
+    run(Path::new(&args[0]), size)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compiler_transcript_requires_unique_binaries_from_the_selected_source() {
+        let root = env::temp_dir().join(format!("hibana-shape-artifacts-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let target = root.join("target");
+        fs::create_dir(&target).unwrap();
+        let manifest = root.join("Cargo.toml");
+        fs::write(&manifest, "").unwrap();
+        let executable = target.join("shapes");
+        fs::write(&executable, "").unwrap();
+        let other_manifest = root.join("foreign.toml");
+        fs::write(&other_manifest, "").unwrap();
+        let foreign_binary = root.join("foreign-shapes");
+        fs::write(&foreign_binary, "").unwrap();
+        let mut record = serde_json::json!({
+            "reason":"compiler-artifact", "profile":{"test":true},
+            "manifest_path":manifest, "executable":executable,
+        });
+        let transcript = root.join("test-binaries.jsonl");
+        fs::write(&transcript, record.to_string()).unwrap();
+        assert_eq!(
+            binaries(&root).unwrap(),
+            [executable.canonicalize().unwrap()]
+        );
+        record["manifest_path"] = serde_json::json!(other_manifest);
+        fs::write(&transcript, record.to_string()).unwrap();
+        assert!(binaries(&root).is_err());
+        record["manifest_path"] = serde_json::json!(manifest);
+        record["executable"] = serde_json::json!(foreign_binary);
+        fs::write(&transcript, record.to_string()).unwrap();
+        assert!(binaries(&root).is_err());
+        record["executable"] = serde_json::json!(executable);
+        fs::write(&transcript, format!("{record}\n{record}\n")).unwrap();
+        assert!(binaries(&root).is_err());
+        record["executable"] = Value::Null;
+        fs::write(&transcript, record.to_string()).unwrap();
+        assert!(binaries(&root).is_err());
+        fs::write(&transcript, "").unwrap();
+        assert!(binaries(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn process_intervals_keep_every_script_exactly_once() {

@@ -5,40 +5,35 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-fn run(program: &str, args: &[&str], cwd: &Path) -> String {
-    let output = Command::new("timeout")
-        .arg("300")
-        .arg(program)
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("start proof process");
-    let stdout = String::from_utf8(output.stdout).expect("UTF-8 stdout");
-    let stderr = String::from_utf8(output.stderr).expect("UTF-8 stderr");
-    print!("{stdout}");
-    eprint!("{stderr}");
-    assert!(
-        output.status.success(),
-        "{program} failed: {}",
-        output.status
-    );
-    stdout
-}
 fn main() {
-    let mut args = env::args().skip(1);
-    let repo = PathBuf::from(
-        args.next()
-            .expect("usage: implementation-proofs REPO [--lean LEAN]"),
+    let args: Vec<_> = env::args().skip(1).collect();
+    let [repo] = args.as_slice() else {
+        panic!("usage: implementation-proofs REPO");
+    };
+    let repo = PathBuf::from(repo);
+    let toolchain = fs::read_to_string(repo.join("proofs/lean/lean-toolchain"))
+        .expect("source-selected Lean toolchain");
+    // Resolve once against the same pin as the library proofs. An ambient
+    // `lean` shim or LEAN variable must not select another compiler.
+    let selected = Command::new("elan")
+        .args(["which", "lean"])
+        .env("ELAN_TOOLCHAIN", toolchain.trim())
+        .current_dir(&repo)
+        .output()
+        .expect("resolve source-selected Lean compiler");
+    assert!(
+        selected.status.success(),
+        "cannot select {}: {}",
+        toolchain.trim(),
+        String::from_utf8_lossy(&selected.stderr)
     );
-    let mut lean = env::var("LEAN").unwrap_or_else(|_| "lean".into());
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--lean" => lean = args.next().expect("--lean requires path"),
-            _ => panic!("unknown argument: {arg}"),
-        }
-    }
-    let version = run(&lean, &["--version"], &repo);
-    assert!(version.contains("version 4.30.0"), "Lean 4.30.0 required");
+    let lean = String::from_utf8(selected.stdout).expect("UTF-8 compiler path");
+    let lean = lean.trim();
+    assert!(
+        Path::new(lean).is_absolute(),
+        "Lean compiler path is not absolute"
+    );
+    println!("Lean compiler: {} ({lean})", toolchain.trim());
     fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
         for entry in fs::read_dir(directory).expect("implementation proof directory") {
             let path = entry.expect("proof directory entry").path();
@@ -61,7 +56,7 @@ fn main() {
     assert!(!files.is_empty(), "no implementation proofs");
     for file in &files {
         println!("CHECK {}", file.strip_prefix(&repo).unwrap().display());
-        lean_module::check(&lean, file, None).expect("compiled implementation theorem closures");
+        lean_module::check(lean, file, None).expect("compiled implementation theorem closures");
     }
     println!("PASS implementation proof modules={}", files.len());
 }

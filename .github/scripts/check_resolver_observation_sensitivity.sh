@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
 cd "$(dirname "$0")/../.."
 root="$PWD"
 output="$root/target/resolver-observation-sensitivity"
@@ -11,7 +12,7 @@ for path in select send provenance; do
     send) catalog=14 ;;
     provenance) catalog=2 ;;
   esac
-  bash .github/scripts/check_protocol_shapes.sh --contracts "$catalog" 1 \
+  bash .github/scripts/check_protocol_shapes.sh --check --contracts "$catalog" 1 \
     > "$output/$path-positive.log" 2>&1
   mutant="$output/$path"
   test ! -e "$mutant"

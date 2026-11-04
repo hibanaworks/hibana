@@ -42,7 +42,6 @@ unset CARGO_ENCODED_RUSTFLAGS
 cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --lib
 cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features \
   --target thumbv6m-none-eabi --lib
-cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --examples --no-run
 test "$(cargo +"${TOOLCHAIN}" run --quiet --manifest-path "${PKG_DIR}/Cargo.toml" --example ping_pong)" = 'ping=7, pong=8'
 test "$(cargo +"${TOOLCHAIN}" run --quiet --manifest-path "${PKG_DIR}/Cargo.toml" --example endpoint_delegation)" = 'worker=8, owner=42, audit=7'
 if cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" \

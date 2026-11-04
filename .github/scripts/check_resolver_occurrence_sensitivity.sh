@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Baseline and mutant captures belong to their respective source roots.
+unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 OUTPUT="${ROOT_DIR}/target/resolver-occurrence-sensitivity"
 MUTANT="${OUTPUT}/source"
@@ -12,7 +14,7 @@ fi
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
-bash .github/scripts/check_protocol_shapes.sh --contracts 2 1 \
+bash .github/scripts/check_protocol_shapes.sh --check --contracts 2 1 \
   > "${OUTPUT}/positive.log" 2>&1
 relative="target/protocol-shapes/contracts/range-2-count-1"
 expected_case="$(awk -F '\t' '

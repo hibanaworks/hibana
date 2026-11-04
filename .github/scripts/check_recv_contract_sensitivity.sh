@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 OUTPUT="${ROOT_DIR}/target/recv-contract-sensitivity"
 MUTANT="${OUTPUT}/source"
@@ -14,7 +15,7 @@ cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 for rank in 6 7; do
-  bash .github/scripts/check_protocol_shapes.sh --contracts "${rank}" 1 \
+  bash .github/scripts/check_protocol_shapes.sh --check --contracts "${rank}" 1 \
     > "${OUTPUT}/positive-${rank}.log" 2>&1
 done
 git clone --quiet --shared --no-checkout "${ROOT_DIR}" "${MUTANT}"

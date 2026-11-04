@@ -22,7 +22,6 @@ fn seq(a: Protocol, b: Protocol) -> Protocol {
 
 pub(super) struct Interaction {
     pub source: Protocol,
-    pub labels: u16,
     pub resolvers: u16,
     pub identity: String,
     pub unpermitted_reentry: Option<Protocol>,
@@ -116,14 +115,13 @@ fn finish(body: Protocol, identity: String) -> Interaction {
         super::syntax::number(&mut unpermitted);
         unpermitted
     });
-    let (labels, resolvers) = super::syntax::number(&mut global);
+    let (_, resolvers) = super::syntax::number(&mut global);
     assert!(
         ownership::violations(&global).is_empty(),
         "constructed ownership violation"
     );
     Interaction {
         source: global,
-        labels,
         resolvers,
         identity: format!("{identity}/reentry-permits={permits}"),
         unpermitted_reentry,
@@ -317,7 +315,9 @@ mod tests {
         let mut coverage = super::super::coverage::Coverage::default();
         for rank in (0..spine_count(5)).step_by(2) {
             let generated = spine(5, rank);
-            assert!(generated.labels < 100);
+            let mut messages = Vec::new();
+            generated.source.messages(&mut messages);
+            assert!(messages.len() < 100);
             coverage.add(rank, &generated.source);
         }
         let counts = coverage.counts();
@@ -351,10 +351,17 @@ mod tests {
         for length in 0..=3 {
             let mut representatives = BTreeSet::new();
             for rank in 0..count(length) {
-                let Interaction { source, labels, .. } = protocol(length, rank);
+                let Interaction { source, .. } = protocol(length, rank);
                 let mut messages = Vec::new();
                 source.messages(&mut messages);
-                assert_eq!(messages.len(), usize::from(labels));
+                let events = messages
+                    .iter()
+                    .map(|message| match message {
+                        Protocol::Message { event, .. } => usize::from(*event),
+                        _ => unreachable!(),
+                    })
+                    .collect::<BTreeSet<_>>();
+                assert!(events.into_iter().eq(0..messages.len()));
                 assert!(representatives.insert(super::super::symmetry::canonical(&source)));
             }
             assert_eq!(representatives.len(), count(length));
@@ -362,8 +369,10 @@ mod tests {
         for context in 0..CONTEXTS {
             let word = (0..5).fold(0, |rank, _| CONTEXTS * rank + context);
             for nested in 0..2 {
-                let Interaction { source, labels, .. } = protocol(5, 2 * word + nested);
-                assert!(labels <= 254);
+                let Interaction { source, .. } = protocol(5, 2 * word + nested);
+                let mut messages = Vec::new();
+                source.messages(&mut messages);
+                assert!(messages.len() <= 254);
                 assert!(source.syntax_depth() >= 5);
             }
         }

@@ -42,19 +42,6 @@ else
   exit 1
 fi
 
-run_final_form_test() {
-  local output
-  if ! output="$(cargo +"${TOOLCHAIN}" test "$@" 2>&1)"; then
-    printf '%s\n' "${output}"
-    exit 1
-  fi
-  printf '%s\n' "${output}"
-  if ! bash "${ROOT_DIR}/.github/scripts/lib/final_measurements_tool.sh" nonempty-test <<<"${output}"; then
-    echo "final-form measurement violation: cargo test filter matched no tests: $*" >&2
-    exit 1
-  fi
-}
-
 MEASURE_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}"
 MEASURE_DIR="${MEASURE_TARGET_DIR}/final_form_measurements"
 SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json"
@@ -112,10 +99,8 @@ else
 fi
 
 echo "== final-form future/layout sizes =="
-run_final_form_test -p hibana endpoint_surface_size_gates_hold --lib
-run_final_form_test -p hibana recv_future_state_caches_completion --lib
-run_final_form_test -p hibana message_type_variation_does_not_change_future_layout --lib
-run_final_form_test -p hibana send_future_and_runtime_descriptor_size_gates_hold --lib
+# Layout assertions run in the required native suite. This job collects the
+# additional numerical report rather than rerunning those same four tests.
 FUTURE_LAYOUT_OUTPUT="$(
   cargo +"${TOOLCHAIN}" test -p hibana final_form_future_layout_measurement_report --lib -- --nocapture
 )"

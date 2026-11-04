@@ -37,9 +37,8 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component rust-src
           rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
           rustup toolchain install "$(cat .github/miri-toolchain)" --profile minimal --component miri --component rust-src
-      - uses: ./.github/actions/setup-lean
-      - name: Check the required core contract
-        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/run_ci_gates.sh --kernel
+      - name: Check the required Rust contract
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/run_ci_gates.sh --rust
 
   runtime-work:
     strategy:
@@ -49,10 +48,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install Rust and embedded targets
+      - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal
-          rustup target add --toolchain stable thumbv6m-none-eabi thumbv8m.main-none-eabihf
       - name: Check portable work and memory budgets
         run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/measure_runtime_work.sh
       - uses: actions/upload-artifact@v7
@@ -68,6 +66,8 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
       - uses: ./.github/actions/setup-lean
+      - name: Check the source model and implementation theorems
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/check_lean_proofs.sh --models
       - name: Build the shared source oracle once
         run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/build_protocol_checker.sh
       - uses: actions/upload-artifact@v7

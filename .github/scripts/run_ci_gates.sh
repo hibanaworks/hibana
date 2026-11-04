@@ -4,8 +4,8 @@ set -euo pipefail
 case "$#:${1:-}" in
   0:) selection=all ;;
   1:--tools) selection=tools ;;
-  1:--kernel) selection=kernel ;;
-  *) echo 'usage: run_ci_gates.sh [--tools|--kernel]' >&2; exit 2 ;;
+  1:--rust) selection=rust ;;
+  *) echo 'usage: run_ci_gates.sh [--tools|--rust]' >&2; exit 2 ;;
 esac
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -15,7 +15,7 @@ export CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0
 export CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only
 source .github/scripts/repo_rustflags.sh
 
-if [[ "$selection" != kernel ]]; then
+if [[ "$selection" != rust ]]; then
   cargo +"$TOOLCHAIN" fmt --all -- --check
   cargo +"$TOOLCHAIN" test --locked -p hibana-ci-tests --all-targets -- --test-threads=1
   cargo +"$TOOLCHAIN" clippy --locked -p hibana-ci-tests --all-targets -- -D warnings
@@ -35,5 +35,7 @@ cargo +"$TOOLCHAIN" clippy --locked --workspace --exclude hibana-ci-tests --all-
 RUSTDOCFLAGS=-Dwarnings cargo +"$TOOLCHAIN" test --locked -p hibana --doc
 RUSTDOCFLAGS=-Dwarnings cargo +"$TOOLCHAIN" doc --locked -p hibana --no-deps --document-private-items
 bash .github/scripts/check_no_std_build.sh
-bash .github/scripts/check_lean_proofs.sh --models
+if [[ "$selection" == all ]]; then
+  bash .github/scripts/check_lean_proofs.sh --models
+fi
 bash .github/scripts/check_miri.sh --contract

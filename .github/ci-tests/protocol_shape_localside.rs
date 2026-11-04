@@ -841,9 +841,7 @@ impl Emitter<'_> {
                 };
                 (
                     format!(
-                        "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let (_a,_b)=if reverse ^ reverse_poll{{let (b,a)=async{{{};{};}}.await?;(a,b)}}else{{async{{{};{};}}.await?}};{result}}}",
-                        bind("_right", &right),
-                        bind("_left", &left),
+                        "{{let (_left,_right,reverse)=match script{{Script::Par(a,b,reverse)=>(a.as_ref(),b.as_ref(),*reverse),_=>panic!(\"expected parallel script\")}};let left_future={};let right_future={};let (_a,_b)=if reverse ^ reverse_poll{{let (b,a)=async{{async{{right_future.await}};async{{left_future.await}};}}.await?;(a,b)}}else{{async{{async{{left_future.await}};async{{right_future.await}};}}.await?}};{result}}}",
                         bind("_left", &left),
                         bind("_right", &right)
                     ),

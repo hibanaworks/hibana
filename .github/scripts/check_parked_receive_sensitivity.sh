@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 OUTPUT="${ROOT_DIR}/target/parked-receive-sensitivity"
 MUTANT="${OUTPUT}/source"
@@ -11,7 +12,7 @@ fi
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
-bash .github/scripts/check_protocol_shapes.sh --contracts 6 2 > "${OUTPUT}/positive.log" 2>&1
+bash .github/scripts/check_protocol_shapes.sh --check --contracts 6 2 > "${OUTPUT}/positive.log" 2>&1
 relative="target/protocol-shapes/contracts/range-6-count-2"
 expected_case="$(awk -F '\t' '
   $2 == "contract-collision=6/contracts=distinct" && $1 ~ /^[0-9]+$/ { value = $1; count++ }

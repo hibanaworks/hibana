@@ -45,7 +45,9 @@ else
   cmp "$work/source.sha256" "$work/source-after.sha256"
   rm "$work/source-after.sha256"
   cp proofs/lean/.lake/build/bin/protocol-shapes "$work/protocol-shapes"
-  (cd "$work" && shasum -a 256 protocol-shapes > binary.sha256)
+  "$work/protocol-shapes" --check-guarded-reentry > "$work/guarded-reentry.log"
+  cat "$work/guarded-reentry.log" >&2
+  (cd "$work" && shasum -a 256 protocol-shapes guarded-reentry.log > binary.sha256)
   if [[ -e "$out" ]]; then rm -r -- "$out"; fi
   mv "$work" "$out"
   trap - EXIT

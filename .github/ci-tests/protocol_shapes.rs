@@ -989,7 +989,6 @@ struct CaseSet {
     delegated: BTreeSet<usize>,
     expected_rejections: BTreeMap<usize, &'static str>,
     negative_sources: BTreeMap<String, (Protocol, &'static str)>,
-    max_label: u16,
     max_resolvers: u16,
     origin: CatalogOrigin,
 }
@@ -1324,7 +1323,6 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
     let mut delegated_cases = BTreeSet::new();
     let mut expected_rejections = BTreeMap::new();
     let mut negative_sources = BTreeMap::new();
-    let mut max_label = 0;
     let mut max_resolvers = 0;
     // Unrank only the cases assigned to this shard. The exchange-only prefix
     // retains its IDs; mixed-leaf populations add no duplicate trees to it.
@@ -1338,11 +1336,10 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
                     "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
                 ));
             }
-            let (labels, resolvers) = syntax::number(&mut source);
+            let (_, resolvers) = syntax::number(&mut source);
             if context::has_transfer(&source) {
                 delegated_cases.insert(case);
             }
-            max_label = max_label.max(labels);
             max_resolvers = max_resolvers.max(resolvers);
             cases.push((case, identity, 2, 0, source, resolvers));
             continue;
@@ -1425,7 +1422,6 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
                 (global.clone(), "Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation; role=2; help: notify the affected role of the branch, or make its local paths mergeable; keep terminal acknowledgments within the selected arm"),
             );
         }
-        max_label = max_label.max(u16::from(count));
         max_resolvers = max_resolvers.max(resolvers);
         cases.push((
             case,
@@ -1446,7 +1442,6 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
         delegated: delegated_cases,
         expected_rejections,
         negative_sources,
-        max_label,
         max_resolvers,
         origin: CatalogOrigin::Templates,
     }
@@ -1468,7 +1463,6 @@ fn frontier_cases(first: usize, count: usize) -> Result<CaseSet, Box<dyn std::er
         delegated: BTreeSet::new(),
         expected_rejections: BTreeMap::new(),
         negative_sources: BTreeMap::new(),
-        max_label: 0,
         max_resolvers: 0,
         origin: CatalogOrigin::Contexts,
     };
@@ -1480,12 +1474,11 @@ fn frontier_cases(first: usize, count: usize) -> Result<CaseSet, Box<dyn std::er
                 "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
             ));
         }
-        let (labels, resolvers) = syntax::number(&mut source);
+        let (_, resolvers) = syntax::number(&mut source);
         let case = catalog.cases.len();
         if context::has_transfer(&source) {
             catalog.delegated.insert(case);
         }
-        catalog.max_label = catalog.max_label.max(labels);
         catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
         catalog
             .cases
@@ -1514,13 +1507,12 @@ fn syntax_cases(
         delegated: BTreeSet::new(),
         expected_rejections: BTreeMap::new(),
         negative_sources: BTreeMap::new(),
-        max_label: 0,
         max_resolvers: 0,
         origin: CatalogOrigin::Syntax,
     };
     for case in 0..count {
         let rank = &first + case;
-        let (global, labels, resolvers) = grammar.protocol(depth, rank.clone());
+        let (global, _, resolvers) = grammar.protocol(depth, rank.clone());
         let mut messages = Vec::new();
         global.messages(&mut messages);
         let owner = messages
@@ -1543,7 +1535,6 @@ fn syntax_cases(
                 .negative_sources
                 .insert(format!("syntax_{case}"), (global.clone(), reason));
         }
-        catalog.max_label = catalog.max_label.max(labels);
         catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
         catalog.cases.push((
             case,
@@ -1594,12 +1585,11 @@ fn representative_cases(
         delegated: BTreeSet::new(),
         expected_rejections: BTreeMap::new(),
         negative_sources: BTreeMap::new(),
-        max_label: 0,
         max_resolvers: 0,
         origin: CatalogOrigin::Representatives,
     };
     for (case, &rank) in ranks[first..first + count].iter().enumerate() {
-        let (source, labels, resolvers) = grammar.protocol(depth, rank.into());
+        let (source, _, resolvers) = grammar.protocol(depth, rank.into());
         assert!(context::valid(&source));
         assert_eq!(source, symmetry::canonical(&source));
         let mut messages = Vec::new();
@@ -1616,7 +1606,6 @@ fn representative_cases(
         if localside::mobile(&source) {
             catalog.delegated.insert(case);
         }
-        catalog.max_label = catalog.max_label.max(labels);
         catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
         catalog.cases.push((
             case,
@@ -1680,7 +1669,6 @@ fn interaction_cases(
         delegated: BTreeSet::new(),
         expected_rejections: BTreeMap::new(),
         negative_sources: BTreeMap::new(),
-        max_label: 0,
         max_resolvers: 0,
         origin: CatalogOrigin::Contexts,
     };
@@ -1688,7 +1676,6 @@ fn interaction_cases(
     for rank in first..first + count {
         let interactions::Interaction {
             source,
-            labels,
             resolvers,
             identity,
             unpermitted_reentry,
@@ -1705,7 +1692,6 @@ fn interaction_cases(
         }
         let case = catalog.cases.len();
         catalog.delegated.insert(case);
-        catalog.max_label = catalog.max_label.max(labels);
         catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
         catalog.cases.push((
             case,
@@ -1735,12 +1721,10 @@ fn contract_collision_cases(
     }
     let mut cases = Vec::new();
     let mut delegated = BTreeSet::new();
-    let mut max_label = 0;
     let mut max_resolvers = 0;
     for rank in first..first + count {
         let mut global = contracts::protocol(rank);
-        let (labels, resolvers) = syntax::number(&mut global);
-        max_label = max_label.max(labels);
+        let (_, resolvers) = syntax::number(&mut global);
         max_resolvers = max_resolvers.max(resolvers);
         if localside::mobile(&global) {
             delegated.insert(rank);
@@ -1762,7 +1746,6 @@ fn contract_collision_cases(
         delegated,
         expected_rejections: BTreeMap::new(),
         negative_sources: BTreeMap::new(),
-        max_label,
         max_resolvers,
         origin: CatalogOrigin::Contexts,
     })
@@ -1834,7 +1817,6 @@ fn emit_cases(
         delegated: delegated_cases,
         expected_rejections,
         mut negative_sources,
-        max_label,
         max_resolvers,
         origin,
     } = catalog;
@@ -2122,16 +2104,37 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     for (name, label) in replay_contracts {
         writeln!(source, "const {name}:u8={label};")?;
     }
-    let dispatch = (0..max_label)
-        .chain(replay_contracts.map(|(_, label)| u16::from(label)))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|label| format!("{label} => execute!({label}),\n"))
-        .collect::<String>();
-    let payload_dispatch = [2u8, 3]
-        .into_iter()
-        .map(|role| format!("Some({role})=>loan!($label,{role},$carrier,views{role}),"))
-        .collect::<String>();
+    let mut operations = BTreeSet::new();
+    for (_, label) in replay_contracts {
+        for view in 0..4 {
+            for payload in [None, Some(2u8), Some(3)] {
+                operations.insert((label, view, payload));
+            }
+        }
+    }
+    for (_, _, _, _, global, _) in &cases {
+        let mut messages = Vec::new();
+        global.messages(&mut messages);
+        for message in messages {
+            let Protocol::Message {
+                contract,
+                from,
+                to,
+                owned,
+                ..
+            } = message
+            else {
+                unreachable!()
+            };
+            for view in [*from, *to] {
+                operations.insert((*contract, view, owned.then_some(3)));
+            }
+        }
+    }
+    let dispatch = operations.into_iter().map(|(label, view, payload)| match payload {
+        None => format!("({label},{view},None)=>unit!({label},views{view}),\n"),
+        Some(resource) => format!("({label},{view},Some({resource}))=>loan!({label},{resource},views{view},views{resource}),\n"),
+    }).collect::<String>();
     let mut driver = fs::read_to_string(root.join(".github/ci-tests/protocol_shape_driver.rs"))?;
     driver.push_str(&fs::read_to_string(
         root.join(".github/ci-tests/protocol_shape_observations.rs"),
@@ -2140,8 +2143,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     source.push_str(
         &driver
             .replace("register_resolvers!();", &registers)
-            .replace("0 => dispatch_labels!(),", &dispatch)
-            .replace("Some(0) => dispatch_endpoint_roles!(),", &payload_dispatch),
+            .replace("(0, 0, None) => dispatch_operations!(),", &dispatch),
     );
     let (mut probes, mut trace_count, mut operations, mut concurrent_traces) = (0, 0, 0, 0);
     let (mut continuation_shapes, mut trace_prefix_probes) = (0, 0);
@@ -2533,10 +2535,14 @@ mod population_tests {
             for case in part.cases {
                 let mut messages = Vec::new();
                 case.4.messages(&mut messages);
-                assert!(messages.iter().all(|message| match message {
-                    Protocol::Message { event: label, .. } => u16::from(*label) < part.max_label,
-                    _ => unreachable!(),
-                }));
+                let events = messages
+                    .iter()
+                    .map(|message| match message {
+                        Protocol::Message { event, .. } => usize::from(*event),
+                        _ => unreachable!(),
+                    })
+                    .collect::<BTreeSet<_>>();
+                assert!(events.into_iter().eq(0..messages.len()));
                 assert!(case.5 <= part.max_resolvers);
                 assert!(cases.insert(case.0, case).is_none());
             }
