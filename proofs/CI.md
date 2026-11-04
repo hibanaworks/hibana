@@ -193,9 +193,13 @@ aggregate non-growth rule. No measurement checkout or second cold build repeats
 these results. There is no environment option to omit the snapshot checks.
 The runtime-performance job likewise leaves the four warm-target regression
 tests in the native suite. It retains the independent cold-target compile budget
-and the runtime measurements. Packaged examples are executed, and the delegated
-example's tests are run; a separate compile-only pass of those same examples is
-unnecessary.
+and the runtime measurements. An external package-consumer fixture depends on
+the untouched extracted archive and the public runtime revision selected by
+the repository manifest. It executes the shipped example files directly and
+runs the delegated example's tests; it does not copy the example source or
+rewrite the archive's manifest. Cargo omits unversioned Git dev-dependencies
+from published manifests, so the executor belongs to this consumer. A separate
+compile-only pass of those same examples is unnecessary.
 The compile-pressure inputs include the original 100-role, 4,000-event mixed
 and hierarchical protocols under forbidden long const evaluation. Batched
 receive facts use the existing physical-participant index for each subtree;
