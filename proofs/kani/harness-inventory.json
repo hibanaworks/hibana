@@ -216,6 +216,7 @@
       "global::const_dsl::receive_lane_causality::kani::boundary_seek_matches_the_first_qualifying_marker_for_all_compact_offsets",
       "global::const_dsl::receive_lane_causality::kani::causal_role_facts_and_joins_are_role_exact",
       "global::const_dsl::receive_lane_causality::kani::direction_index_is_the_last_matching_receive_in_every_subrange",
+      "global::const_dsl::receive_lane_causality::kani::first_participant_iteration_removes_exactly_the_least_present_role",
       "global::const_dsl::receive_lane_causality::kani::indexed_receives_cover_each_matching_event_once_in_source_order",
       "global::const_dsl::receive_lane_causality::kani::logical_interval_participants_are_exact",
       "global::const_dsl::receive_lane_causality::kani::physical_interval_participants_are_exact",
@@ -450,7 +451,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 321,
+    "standard-harnesses": 322,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

@@ -8825,6 +8825,10 @@ Hibana.causal_flow_after_cut_preserves_facts : ∀ (choreo : Hibana.Choreo) (bas
     @Eq.{1} Hibana.CausalRoles ((Hibana.Choreo.causalFlowAt base earlier cutoff roleCount choreo).eval facts) facts
 @Hibana.causal_flow_is_must_analysis : ∀ {flow : Hibana.CausalFlowExpr} {before after : Hibana.CausalRoles},
   Hibana.CausalFlowRun flow before after → (flow.eval before).Subset after
+Hibana.causal_flow_leaves_absent_actors_unchanged : ∀ (flow : Hibana.CausalFlowExpr) (actors facts : Hibana.CausalRoles)
+  (role : Nat),
+  @Eq.{1} Bool (Hibana.CausalFlowExpr.actorsWithin actors flow) true →
+    @Eq.{1} Bool (actors role) false → @Eq.{1} Bool (flow.eval facts role) (facts role)
 Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : Hibana.CausalRoles},
   left.Subset right → (flow.eval left).Subset (flow.eval right)
 Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (facts : Hibana.CausalRoles),
@@ -8833,6 +8837,11 @@ Hibana.causal_flow_preserves_known_facts : ∀ (flow : Hibana.CausalFlowExpr) (f
   {before after : Hibana.CausalRoleTimes},
   Hibana.TimedCausalFlowRun origin flow before after →
     ∀ {facts : Hibana.CausalRoles}, facts.SoundAt origin before → (flow.eval facts).SoundAt origin after
+Hibana.causal_flow_respects_input_agreement_on_its_actors : ∀ (flow : Hibana.CausalFlowExpr)
+  (actors before after : Hibana.CausalRoles),
+  @Eq.{1} Bool (Hibana.CausalFlowExpr.actorsWithin actors flow) true →
+    (∀ (role : Nat), @Eq.{1} Bool (actors role) true → @Eq.{1} Bool (before role) (after role)) →
+      ∀ (role : Nat), @Eq.{1} Bool (actors role) true → @Eq.{1} Bool (flow.eval before role) (flow.eval after role)
 Hibana.causal_join_with_an_absent_arm : ∀ (facts : Bool),
   And (@Eq.{1} Bool (Hibana.conditionalCausalJoin facts true true false) facts)
     (@Eq.{1} Bool (Hibana.conditionalCausalJoin true facts false true) facts)
@@ -8844,6 +8853,9 @@ Hibana.causal_receive_column_is_the_scalar_update : ∀ (sender receiver isSeed 
   @Eq.{1} Bool ((receiver.or sender).or isSeed)
     (@ite.{1} Bool (@Eq.{1} Bool isSeed true) (instDecidableEqBool isSeed true) true
       (@ite.{1} Bool (@Eq.{1} Bool sender true) (instDecidableEqBool sender true) true receiver))
+Hibana.causal_scope_masks_cancel_for_nonparticipants : ∀ (facts leftSeed rightSeed : Bool),
+  @Eq.{1} Bool (leftSeed.and (@decide (@Eq.{1} Bool rightSeed false) (instDecidableEqBool rightSeed false))) true →
+    @Eq.{1} Bool (Hibana.conditionalCausalJoin (facts.or rightSeed) (facts.or leftSeed) leftSeed rightSeed) facts
 @Hibana.checked_active_rows_are_exactly_the_source_actions : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath},
   @Eq.{1} Bool (image.actorRowsCheck choreo) true →

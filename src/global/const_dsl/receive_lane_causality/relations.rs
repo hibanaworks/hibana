@@ -110,32 +110,13 @@ impl<const E: usize, const W: usize> ReceiveRelations<E, W> {
         {
             crate::invariant();
         }
-        let mut builder = Builder {
+        let builder = Builder {
             events,
             scopes,
             actors,
-            active: [0; 256],
-            active_len: 0,
             words: seeds.count.div_ceil(64),
             seeds,
         };
-        let mut seen = CausalRoles::empty();
-        let mut event = 0;
-        while event < events.len() {
-            let (sender, receiver) = builder.pair(event);
-            let pair = [sender, receiver];
-            let mut side = 0;
-            while side < 2 {
-                let actor = pair[side];
-                if !seen.contains(actor) {
-                    seen.insert(actor);
-                    builder.active[builder.active_len] = actor;
-                    builder.active_len += 1;
-                }
-                side += 1;
-            }
-            event += 1;
-        }
         let mut result = Self {
             rows: [[0; W]; E],
             repeated: [[0; W]; E],
@@ -169,8 +150,6 @@ struct Builder<'a, const E: usize, const D: usize> {
     events: &'a EffList<E>,
     scopes: &'a FlowIndex<E>,
     actors: Option<&'a SourceActorImage<E, D>>,
-    active: [u8; 256],
-    active_len: usize,
     words: usize,
     seeds: &'a ReceiveSeeds<E>,
 }
@@ -260,6 +239,7 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
         let last_word = self.seeds.before(body.end as usize).div_ceil(64);
         while range.start < range.end {
             if let Some((marker, kind, split, end)) = self.scopes.scope_at(&mut range) {
+                let participants = self.scopes.participants.members(range.start, end);
                 let left = FlowRange {
                     start: range.start,
                     end: split,
@@ -271,11 +251,10 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     let mut right = [[0; W]; 256];
                     let mut word = first_word;
                     while word < last_word {
-                        let mut member = 0;
-                        while member < self.active_len {
-                            let actor = self.active[member] as usize;
+                        let mut members = participants;
+                        while let Some(actor) = members.pop_first() {
+                            let actor = actor as usize;
                             right[actor][word] = facts[actor][word];
-                            member += 1;
                         }
                         word += 1;
                     }
@@ -292,9 +271,9 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     );
                     word = first_word;
                     while word < last_word {
-                        let mut member = 0;
-                        while member < self.active_len {
-                            let actor = self.active[member] as usize;
+                        let mut members = participants;
+                        while let Some(actor) = members.pop_first() {
+                            let actor = actor as usize;
                             let a = facts[actor][word];
                             let b = right[actor][word];
                             facts[actor][word] = if matches!(kind, ScopeKind::Parallel) {
@@ -302,7 +281,6 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                             } else {
                                 a & b
                             };
-                            member += 1;
                         }
                         word += 1;
                     }
@@ -346,6 +324,10 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
     ) {
         while range.start < range.end {
             if let Some((marker, kind, split, end)) = self.scopes.scope_at(&mut range) {
+                // Only actors in this subtree can read or change its facts.
+                // For absent actors the parallel join is idempotent, and a
+                // route's disjoint seed masks cancel back to the input.
+                let participants = self.scopes.participants.members(range.start, end);
                 let left = FlowRange {
                     start: range.start,
                     end: split,
@@ -363,11 +345,10 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     let mut word = first_seed / 64;
                     while word < last_seed.div_ceil(64) {
                         let mask = interval(first_seed, last_seed, word);
-                        let mut member = 0;
-                        while member < self.active_len {
-                            let actor = self.active[member] as usize;
+                        let mut members = participants;
+                        while let Some(actor) = members.pop_first() {
+                            let actor = actor as usize;
                             next[actor][word] = facts[actor][word] & mask;
-                            member += 1;
                         }
                         word += 1;
                     }
@@ -393,15 +374,14 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                         } else {
                             (0, 0)
                         };
-                        let mut member = 0;
-                        while member < self.active_len {
-                            let actor = self.active[member] as usize;
+                        let mut members = participants;
+                        while let Some(actor) = members.pop_first() {
+                            let actor = actor as usize;
                             right[actor][word] = facts[actor][word];
                             // An event in the other arm cannot coexist with
                             // this arm's send: its implication is true.
                             facts[actor][word] |= right_mask;
                             right[actor][word] |= left_mask;
-                            member += 1;
                         }
                         word += 1;
                     }
@@ -419,9 +399,9 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     while word < self.words {
                         let left_mask = interval(seed_start, seed_split, word);
                         let right_mask = interval(seed_split, seed_end, word);
-                        let mut member = 0;
-                        while member < self.active_len {
-                            let actor = self.active[member] as usize;
+                        let mut members = participants;
+                        while let Some(actor) = members.pop_first() {
+                            let actor = actor as usize;
                             let a = facts[actor][word];
                             let b = right[actor][word];
                             facts[actor][word] = if matches!(kind, ScopeKind::Parallel) {
@@ -429,7 +409,6 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                             } else {
                                 (a & b) | (a & left_mask) | (b & right_mask)
                             };
-                            member += 1;
                         }
                         word += 1;
                     }

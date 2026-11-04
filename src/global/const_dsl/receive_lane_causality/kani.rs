@@ -67,6 +67,28 @@ fn physical_interval_participants_are_exact() {
 
 #[kani::proof]
 #[kani::unwind(5)]
+fn first_participant_iteration_removes_exactly_the_least_present_role() {
+    let before = CausalRoles(kani::any());
+    let mut after = before;
+    let query: u8 = kani::any();
+    match after.pop_first() {
+        Some(role) => {
+            assert!(before.contains(role));
+            assert_eq!(
+                after.contains(query),
+                before.contains(query) && query != role
+            );
+            assert!(query >= role || !before.contains(query));
+        }
+        None => {
+            assert!(before.is_empty());
+            assert!(!after.contains(query));
+        }
+    }
+}
+
+#[kani::proof]
+#[kani::unwind(5)]
 fn a_relay_between_known_participants_preserves_all_causal_facts() {
     let mut facts = CausalRoles(kani::any());
     let before = facts;

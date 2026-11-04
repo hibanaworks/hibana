@@ -41,6 +41,19 @@ impl CausalRoles {
         self.0[role as usize / 64] |= 1u64 << (role as usize % 64);
     }
 
+    const fn pop_first(&mut self) -> Option<u8> {
+        let mut word = 0;
+        while word < self.0.len() {
+            let bits = self.0[word];
+            if bits != 0 {
+                self.0[word] = bits & (bits - 1);
+                return Some((word * 64 + bits.trailing_zeros() as usize) as u8);
+            }
+            word += 1;
+        }
+        None
+    }
+
     const fn is_subset_of(&self, other: &Self) -> bool {
         self.0[0] & !other.0[0] == 0
             && self.0[1] & !other.0[1] == 0

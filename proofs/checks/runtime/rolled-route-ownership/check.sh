@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
 PROOFS="$ROOT/proofs/checks/runtime/rolled-route-ownership"
+source "$ROOT/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
 export ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0
 EVIDENCE=${1:-$(mktemp -d /tmp/hibana-rolled-route-proofs.XXXXXX)}
 mkdir -p "$EVIDENCE"
@@ -14,7 +16,6 @@ for proof in TraceValidity PhaseOwnership NestedReentry EligibleIngress ReentryA
     bash "$ROOT/.github/scripts/lib/supplemental_proofs_tool.sh" module "$PROOFS/$proof.lean" "$EVIDENCE/$proof.olean" > "$EVIDENCE/$proof.log" 2>&1
 done
 HIBANA_ROLL_COMPLETION_OBSERVATIONS="$EVIDENCE/completion.jsonl" \
-  RUSTFLAGS="${RUSTFLAGS:-} --cfg hibana_repo_tests" \
   cargo +"${TOOLCHAIN:-stable}" test --locked --manifest-path "$ROOT/Cargo.toml" --lib \
   parallel_completion_observations_cover_every_bit_credit_and_entry \
   > "$EVIDENCE/completion-rust.log" 2>&1

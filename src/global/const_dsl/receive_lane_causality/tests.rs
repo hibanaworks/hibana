@@ -384,8 +384,29 @@ fn role_facts_cover_the_exact_wire_domain_and_join_algebra() {
         assert!(singleton.intersect(singleton).contains(role));
         assert!(!singleton.intersect(CausalRoles::empty()).contains(role));
         assert!(singleton.union(CausalRoles::empty()).contains(role));
+        assert_eq!(singleton.pop_first(), Some(role));
+        assert_eq!(singleton.pop_first(), None);
     }
     assert_eq!(core::mem::size_of::<CausalRoles>(), 32);
+}
+
+#[test]
+fn participant_iteration_is_sorted_and_exact_across_word_boundaries() {
+    let roles = [0, 1, 63, 64, 127, 128, 254, 255];
+    for mask in 0..256u16 {
+        let mut members = CausalRoles::empty();
+        for (bit, role) in roles.into_iter().enumerate() {
+            if mask & (1 << bit) != 0 {
+                members.insert(role);
+            }
+        }
+        for (bit, role) in roles.into_iter().enumerate() {
+            if mask & (1 << bit) != 0 {
+                assert_eq!(members.pop_first(), Some(role));
+            }
+        }
+        assert_eq!(members.pop_first(), None);
+    }
 }
 
 #[test]

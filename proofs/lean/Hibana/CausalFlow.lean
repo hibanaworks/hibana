@@ -297,6 +297,85 @@ theorem a_covered_flow_preserves_its_input (flow : CausalFlowExpr) (facts : Caus
       funext role
       simp [CausalFlowExpr.eval, leftIH covered.1, rightIH covered.2]
 
+/-- A compiler workspace must include both ends of every relay it evaluates. -/
+def CausalFlowExpr.actorsWithin (actors : CausalRoles) : CausalFlowExpr → Bool
+  | .empty => true
+  | .seed role => actors role
+  | .relay sender receiver => actors sender && actors receiver
+  | .seq left right | .choice left right | .parallel left right =>
+      left.actorsWithin actors && right.actorsWithin actors
+
+theorem causal_flow_leaves_absent_actors_unchanged
+    (flow : CausalFlowExpr) (actors facts : CausalRoles) (role : Nat)
+    (covered : flow.actorsWithin actors = true) (absent : actors role = false) :
+    flow.eval facts role = facts role := by
+  induction flow generalizing facts with
+  | empty => rfl
+  | seed target =>
+      have known : actors target = true := covered
+      have different : role ≠ target := by
+        intro same
+        subst role
+        simp [absent] at known
+      simp [CausalFlowExpr.eval, CausalRoles.insert, different]
+  | relay sender receiver =>
+      simp only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] at covered
+      have known : actors receiver = true := covered.2
+      have different : role ≠ receiver := by
+        intro same
+        subst role
+        simp [absent] at known
+      by_cases present : facts sender = true <;>
+        simp [CausalFlowExpr.eval, present, CausalRoles.insert, different]
+  | seq left right leftIH rightIH =>
+      have both : left.actorsWithin actors = true ∧ right.actorsWithin actors = true :=
+        by simpa only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] using covered
+      simp only [CausalFlowExpr.eval]
+      rw [rightIH (left.eval facts) both.2, leftIH facts both.1]
+  | choice left right leftIH rightIH =>
+      have both : left.actorsWithin actors = true ∧ right.actorsWithin actors = true :=
+        by simpa only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] using covered
+      simp [CausalFlowExpr.eval, leftIH facts both.1, rightIH facts both.2]
+  | parallel left right leftIH rightIH =>
+      have both : left.actorsWithin actors = true ∧ right.actorsWithin actors = true :=
+        by simpa only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] using covered
+      simp [CausalFlowExpr.eval, leftIH facts both.1, rightIH facts both.2]
+
+/-- Zeroed rows outside this subtree cannot affect any actor it reads or writes. -/
+theorem causal_flow_respects_input_agreement_on_its_actors
+    (flow : CausalFlowExpr) (actors before after : CausalRoles)
+    (covered : flow.actorsWithin actors = true)
+    (same : ∀ role, actors role = true → before role = after role) :
+    ∀ role, actors role = true → flow.eval before role = flow.eval after role := by
+  induction flow generalizing before after with
+  | empty => exact same
+  | seed target =>
+      intro role present
+      simp [CausalFlowExpr.eval, CausalRoles.insert, same role present]
+  | relay sender receiver =>
+      simp only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] at covered
+      have senderSame := same sender covered.1
+      intro role present
+      by_cases known : after sender = true <;>
+        simp [CausalFlowExpr.eval, senderSame, known, CausalRoles.insert, same role present]
+  | seq left right leftIH rightIH =>
+      have both : left.actorsWithin actors = true ∧ right.actorsWithin actors = true :=
+        by simpa only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] using covered
+      exact rightIH (left.eval before) (left.eval after) both.2
+        (leftIH before after both.1 same)
+  | choice left right leftIH rightIH =>
+      have both : left.actorsWithin actors = true ∧ right.actorsWithin actors = true :=
+        by simpa only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] using covered
+      intro role present
+      simp [CausalFlowExpr.eval, leftIH before after both.1 same role present,
+        rightIH before after both.2 same role present]
+  | parallel left right leftIH rightIH =>
+      have both : left.actorsWithin actors = true ∧ right.actorsWithin actors = true :=
+        by simpa only [CausalFlowExpr.actorsWithin, Bool.and_eq_true] using covered
+      intro role present
+      simp [CausalFlowExpr.eval, leftIH before after both.1 same role present,
+        rightIH before after both.2 same role present]
+
 /-- Keep the earliest source position rejected by either possible owner path. -/
 def firstCausalFailure : Option Nat → Option Nat → Option Nat
   | none, right => right
@@ -361,6 +440,14 @@ theorem causal_join_with_an_absent_arm (facts : Bool) :
     conditionalCausalJoin facts true true false = facts ∧
     conditionalCausalJoin true facts false true = facts := by
   cases facts <;> decide
+
+/-- Actors outside both arms keep their input after the synthetic branch masks
+cancel. Consequently the compiler need not copy or join those workspace rows. -/
+theorem causal_scope_masks_cancel_for_nonparticipants
+    (facts leftSeed rightSeed : Bool) (disjoint : leftSeed && rightSeed = false) :
+    conditionalCausalJoin (facts || rightSeed) (facts || leftSeed) leftSeed rightSeed = facts := by
+  cases facts <;> cases leftSeed <;> cases rightSeed <;>
+    simp_all [conditionalCausalJoin]
 
 /-- A bit at the receiving actor is the old bit, a relayed sender bit, or the
 new receive itself. This is the scalar seed/relay update for that column. -/

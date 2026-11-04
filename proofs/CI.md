@@ -67,16 +67,34 @@ reuses the previous answer row instead of constructing another all-false row.
 Neither optimization removes source candidates, scripts or admission probes.
 Source-occurrence lookup is prepared once per witness, and the resumption
 table receives shared source-domain and unfolding-scope values explicitly.
+The order predicate retains subtree counts in closures rather than recounting
+the expanded source for every dependency pair. Each dependency row lazily
+remembers the prerequisite prefix actually inspected; readiness stops at the
+first missing predecessor and reuses that prefix for later queries. It neither
+builds the full quadratic matrix nor repeats uncached pair comparisons.
+Physical actors are resolved lazily once per point and shared across dependency
+comparisons, rather than rescanning bindings for both ends of every pair.
+Per-point resumption conditions are prepared lazily, only after causal readiness
+succeeds. General theorems equate the cached counts, order and readiness to the
+original source definitions, including all predecessor and resumption conditions.
 Answer rows use arrays, so reusing an empty candidate's row does not traverse
 every probe merely to check its length. These representations remain equal to
 the original source-readiness and list-query specifications.
-Each prefix computes its enabled calls once for the whole group of questions.
-The grouped path and individual calls use the same binding step; general Lean
-theorems equate their selections and every resulting query answer. A positive
-existential answer remains true for the whole family once it has a witness;
-the proven row fold reuses those answers. Prefix-only questions do not build
-an operation frontier. A periodic counter reports considered witnesses and
-does not change the result or candidate population.
+Each prefix computes its observation bits once for the whole group of questions.
+Send and receive frontiers are evaluated lazily, once per direction, and shared
+by all resolver-input questions at that prefix. A query with an existing positive
+witness does not force a frontier. The grouped path and individual calls use
+the same binding step; general Lean theorems equate every resulting query answer
+and preserve the whole candidate family. Prefix-only questions do not check
+operation readiness. A periodic counter reports considered witnesses and does
+not change the result or population.
+Large witness inventories are split into disjoint contiguous batches in one
+guarded oracle process. Pure Lean tasks evaluate the batches on the native
+worker pool and merge every answer by disjunction. General append and task
+theorems preserve the entire inventory and all answers for any split depth;
+an executable guarded-roll fixture also compares serial and split evaluation.
+Task continuations join results without blocking workers. The same aggregate
+descendant-memory limit applies, and an exhausted budget is not a result.
 The oracle build executes its fifteen fixed source-cut regressions once and
 archives their log with the binary hash. Normal population invocations do not
 repeat them. Their mutation controls retain the explicit regression entry.
@@ -178,6 +196,14 @@ tests in the native suite. It retains the independent cold-target compile budget
 and the runtime measurements. Packaged examples are executed, and the delegated
 example's tests are run; a separate compile-only pass of those same examples is
 unnecessary.
+The compile-pressure inputs include the original 100-role, 4,000-event mixed
+and hierarchical protocols under forbidden long const evaluation. Batched
+receive facts use the existing physical-participant index for each subtree;
+unrelated global actors are not copied at every fork. General causal-flow
+theorems cover absent-actor stability, input agreement and cancellation of
+disjoint route seed masks. Bounded scalar/batch comparisons and the symbolic
+participant iterator check connect those rules to the Rust implementation;
+they are not a general Rust refinement theorem.
 The 16 delayed-parent schedules execute once in `check_miri.sh`, including
 each scenario's completion record and unique source-specific evidence. The
 extended entry point calls that gate and does not repeat the schedules.
