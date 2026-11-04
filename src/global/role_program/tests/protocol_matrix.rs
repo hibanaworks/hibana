@@ -13,6 +13,11 @@ mod final_form_protocol_measure_roles;
 struct ProtocolMatrixMeasurement {
     program_blob_len: usize,
     role_blob_len: usize,
+    role_columns_len: usize,
+    role_lookup_len: usize,
+    role_steps: usize,
+    role_routes: usize,
+    role_route_index_slots: usize,
     endpoint_scratch_bytes: usize,
     largest_section_bytes: usize,
 }
@@ -21,6 +26,11 @@ impl ProtocolMatrixMeasurement {
     const EMPTY: Self = Self {
         program_blob_len: 0,
         role_blob_len: 0,
+        role_columns_len: 0,
+        role_lookup_len: 0,
+        role_steps: 0,
+        role_routes: 0,
+        role_route_index_slots: 0,
         endpoint_scratch_bytes: 0,
         largest_section_bytes: 0,
     };
@@ -29,6 +39,13 @@ impl ProtocolMatrixMeasurement {
         Self {
             program_blob_len: self.program_blob_len.max(other.program_blob_len),
             role_blob_len: self.role_blob_len.max(other.role_blob_len),
+            role_columns_len: self.role_columns_len.max(other.role_columns_len),
+            role_lookup_len: self.role_lookup_len.max(other.role_lookup_len),
+            role_steps: self.role_steps.max(other.role_steps),
+            role_routes: self.role_routes.max(other.role_routes),
+            role_route_index_slots: self
+                .role_route_index_slots
+                .max(other.role_route_index_slots),
             endpoint_scratch_bytes: self
                 .endpoint_scratch_bytes
                 .max(other.endpoint_scratch_bytes),
@@ -92,6 +109,14 @@ fn largest_role_section(rows: &RoleImageRef) -> usize {
             ROLE_IMAGE_LANE_RANGE_STRIDE,
         ))
         .max(rbl(columns.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE))
+        .max(columns.route_index().len())
+        .max(columns.route_entry_steps().len())
+        .max(columns.view_predecessors().len())
+        .max(columns.view_lane_index().len())
+        .max(columns.lane_successors().len())
+        .max(columns.offer_alternative_heads().len())
+        .max(columns.offer_alternative_scopes().len())
+        .max(columns.offer_alternative_outer().len())
 }
 
 fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMeasurement {
@@ -99,10 +124,17 @@ fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMe
     let program_ref = *compiled.program();
     let descriptor = RoleDescriptorRef::from_resident(compiled);
     let rows = descriptor.local_event_rows();
+    let columns = rows.columns();
+    let role_columns_len = columns.route_index().start;
     let endpoint_layout = descriptor.endpoint_arena_layout();
     ProtocolMatrixMeasurement {
         program_blob_len: program_ref.columns.blob_len(),
-        role_blob_len: rows.columns().blob_len(),
+        role_blob_len: columns.blob_len(),
+        role_columns_len,
+        role_lookup_len: columns.blob_len() - role_columns_len,
+        role_steps: columns.events.len as usize,
+        role_routes: columns.route_scopes.len as usize,
+        role_route_index_slots: columns.route_index_len as usize,
         endpoint_scratch_bytes: endpoint_layout.total_bytes(),
         largest_section_bytes: largest_program_section(program_ref)
             .max(largest_role_section(rows))
@@ -112,9 +144,14 @@ fn measure_role<const ROLE: u8>(program: &RoleProgram<ROLE>) -> ProtocolMatrixMe
 
 fn report_protocol_matrix(name: &str, measured: ProtocolMatrixMeasurement) {
     println!(
-        "protocol-matrix name={name} program_blob_len={} role_blob_len={} endpoint_scratch_bytes={} largest_section_bytes={}",
+        "protocol-matrix name={name} program_blob_len={} role_blob_len={} role_columns_len={} role_lookup_len={} role_steps={} role_routes={} role_route_index_slots={} endpoint_scratch_bytes={} largest_section_bytes={}",
         measured.program_blob_len,
         measured.role_blob_len,
+        measured.role_columns_len,
+        measured.role_lookup_len,
+        measured.role_steps,
+        measured.role_routes,
+        measured.role_route_index_slots,
         measured.endpoint_scratch_bytes,
         measured.largest_section_bytes
     );

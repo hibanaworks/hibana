@@ -92,11 +92,26 @@ TOOLCHAIN="${TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_
 THUMB_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
   | bash "${ROOT_DIR}/.github/scripts/lib/final_measurements_tool.sh" llvm-sections thumb)"
 printf '%s\n' "${THUMB_SECTION_OUTPUT}"
-if [[ "${HIBANA_OMIT_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" bash "${ROOT_DIR}/.github/scripts/lib/final_measurements_tool.sh" thumb
-else
-  echo "fixed snapshot thumb budget check omitted by explicit override; worktree size snapshot still runs"
-fi
+
+echo "== final-form projected Pico example sections =="
+CARGO_TERM_COLOR=never \
+CARGO_TERM_PROGRESS_WHEN=never \
+TERM=dumb \
+  cargo +"${TOOLCHAIN}" build \
+    --manifest-path "${ROOT_DIR}/examples/pico/Cargo.toml" \
+    --no-default-features \
+    --target thumbv6m-none-eabi \
+    --release \
+    --lib \
+    --target-dir "${MEASURE_TARGET_DIR}" \
+    >/dev/null
+PICO_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv \
+  "${MEASURE_TARGET_DIR}/thumbv6m-none-eabi/release/libhibana_pico_projection_example.rlib" \
+  | bash "${ROOT_DIR}/.github/scripts/lib/final_measurements_tool.sh" llvm-sections thumb)"
+printf '%s\n' "${PICO_SECTION_OUTPUT}"
+THUMB_SECTION_OUTPUT="${PICO_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" \
+  bash "${ROOT_DIR}/.github/scripts/lib/final_measurements_tool.sh" thumb
 
 echo "== final-form future/layout sizes =="
 # Layout assertions run in the required native suite. This job collects the
@@ -208,23 +223,13 @@ STACK_HIGH_WATER_OUTPUT="$(
     --test-threads=1
 )"
 printf '%s\n' "${STACK_HIGH_WATER_OUTPUT}"
-if [[ "${HIBANA_OMIT_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" bash "${ROOT_DIR}/.github/scripts/lib/final_measurements_tool.sh" runtime
-else
-  echo "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs"
-fi
 
 MEASUREMENT_HOST="${HOST}" \
 THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" \
 PROTOCOL_ARTIFACT_OUTPUT="${PROTOCOL_ARTIFACT_OUTPUT}" \
 STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" \
 bash "${ROOT_DIR}/.github/scripts/lib/final_measurements_tool.sh" live
-
-if [[ "${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}" != "1" ]]; then
-  echo "== final-form worktree size snapshot =="
-  HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=1 \
-    bash "${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh"
-fi
 
 echo "== final-form message-heavy matrix =="
 bash "${ROOT_DIR}/.github/scripts/check_message_heavy_matrix.sh"

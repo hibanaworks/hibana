@@ -64,10 +64,6 @@ name = "implementation-proofs"
 path = "implementation_proofs.rs"
 
 [[bin]]
-name = "size-snapshot"
-path = "size_snapshot.rs"
-
-[[bin]]
 name = "check-thumb-codegen"
 path = "check_thumb_codegen.rs"
 

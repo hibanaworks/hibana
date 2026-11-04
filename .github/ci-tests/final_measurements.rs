@@ -81,7 +81,10 @@ fn rows(text: &str, marker: &str, key: &str) -> Result<BTreeMap<String, Metrics>
         if let Some((_, tail)) = line.split_once(marker)
             && let Some(name) = field(tail, key)
         {
-            out.insert(name.into(), metrics(tail)?);
+            require(
+                out.insert(name.into(), metrics(tail)?).is_none(),
+                format!("duplicate measurement {name}"),
+            )?;
         }
     }
     Ok(out)
@@ -208,16 +211,61 @@ fn matrix(text: &str) -> Result<()> {
     let minimal = rows
         .get("minimal_send_recv")
         .ok_or("missing minimal protocol")?;
-    for (key, maximum) in MATRIX_KEYS.into_iter().zip([16, 32, 512, 192]) {
+    let budget_keys = [
+        "program_blob_len",
+        "role_columns_len",
+        "endpoint_scratch_bytes",
+        "largest_section_bytes",
+    ];
+    for (key, maximum) in budget_keys.into_iter().zip([16, 32, 512, 192]) {
         budget(minimal, key, maximum, "protocol-matrix minimal")?;
     }
     for name in PROTOCOLS {
         let row = rows
             .get(name)
             .ok_or_else(|| format!("missing protocol {name}"))?;
-        for (key, maximum) in MATRIX_KEYS.into_iter().zip([256, 512, 1024, 384]) {
+        for (key, maximum) in budget_keys.into_iter().zip([256, 512, 1024, 384]) {
             budget(row, key, maximum, &format!("protocol-matrix name={name}"))?;
         }
+        let steps = get(row, "role_steps")?;
+        let routes = get(row, "role_routes")?;
+        let slots = get(row, "role_route_index_slots")?;
+        require(
+            steps <= u16::MAX as u64 / 9,
+            "event column exceeds its byte domain",
+        )?;
+        require(
+            routes <= slots && slots <= 8192,
+            "route index exceeds its scope domain",
+        )?;
+        require(
+            (routes == 0) == (slots == 0),
+            "empty route index disagrees with route rows",
+        )?;
+        // Published immutable layout: two bytes per lane successor; when routes
+        // exist, ten per event and eight per route; two per route-index slot.
+        let lookup_limit = slots * 2
+            + steps * 2
+            + if routes == 0 {
+                0
+            } else {
+                steps * 10 + routes * 8
+            };
+        let columns = get(row, "role_columns_len")?;
+        let lookup = get(row, "role_lookup_len")?;
+        let image = get(row, "role_blob_len")?;
+        budget(
+            row,
+            "role_lookup_len",
+            lookup_limit,
+            &format!("protocol-matrix name={name}"),
+        )?;
+        // These are maxima across all roles, possibly attained by different
+        // roles. Keep the complete image visible and bounded by both parts.
+        require(
+            image >= columns && image >= lookup && image <= total([columns, lookup])?,
+            "complete role image disagrees with column and lookup maxima",
+        )?;
     }
     Ok(())
 }
@@ -337,11 +385,10 @@ fn artifacts(text: &str) -> Result<()> {
     }
     Ok(())
 }
-fn add_sram(rows: &mut BTreeMap<String, Metrics>, data_bss: u64, strict: bool) -> Result<()> {
+fn add_sram(rows: &mut BTreeMap<String, Metrics>, data_bss: u64) -> Result<()> {
     for row in rows.values_mut() {
         require(
-            row.get("resident_prefix_bytes").copied().unwrap_or(0)
-                >= row.get("tap_ring_bytes").copied().unwrap_or(0),
+            get(row, "resident_prefix_bytes")? >= get(row, "tap_ring_bytes")?,
             "resident_prefix_bytes must include tap ring",
         )?;
         let mut total = data_bss;
@@ -351,11 +398,7 @@ fn add_sram(rows: &mut BTreeMap<String, Metrics>, data_bss: u64, strict: bool) -
             "peak_live_slab_bytes",
             "localside_peak_stack_bytes",
         ] {
-            let value = if strict {
-                get(row, key)?
-            } else {
-                row.get(key).copied().unwrap_or(0)
-            };
+            let value = get(row, key)?;
             total = total.checked_add(value).ok_or("SRAM metric overflow")?;
         }
         row.insert("modeled_runtime_sram_bytes".into(), total);
@@ -375,12 +418,16 @@ fn runtime(snapshot: &Json, thumb: &str, stack: &str, headroom: u64) -> Result<(
         .map(|(k, v)| Ok((k.clone(), json_metrics(v)?)))
         .collect::<Result<BTreeMap<_, _>>>()?;
     let mut seen = rows(stack, "large-choreography-runtime ", "shape")?;
+    require(
+        seen.keys().eq(expected.keys()),
+        "runtime shape inventory disagrees with the snapshot",
+    )?;
     let sections = sections(thumb)?;
     let data_bss = total([
         sections.get(".data").copied().unwrap_or(0),
         sections.get(".bss").copied().unwrap_or(0),
     ])?;
-    add_sram(&mut seen, data_bss, false)?;
+    add_sram(&mut seen, data_bss)?;
     for (shape, limits) in &expected {
         let row = seen
             .get(shape)
@@ -464,7 +511,7 @@ fn live(thumb: &str, artifact: &str, stack: &str, host: &str) -> Result<()> {
         thumb.get(".data").copied().unwrap_or(0),
         thumb.get(".bss").copied().unwrap_or(0),
     ])?;
-    add_sram(&mut runtime, data_bss, true)?;
+    add_sram(&mut runtime, data_bss)?;
     let tap = max_metric(runtime.values(), "tap_ring_bytes")?;
     println!("Live footprint report: host={host}");
     for (label, key) in [
@@ -788,10 +835,7 @@ fn run() -> Result<()> {
             &snapshot()?,
             &var("THUMB_SECTION_OUTPUT")?,
             &var("STACK_HIGH_WATER_OUTPUT")?,
-            env::var("HIBANA_MODELED_RUNTIME_SRAM_MIN_HEADROOM_BYTES")
-                .unwrap_or_else(|_| "64".into())
-                .parse()
-                .map_err(|_| "invalid SRAM headroom")?,
+            64,
         ),
         "live" => live(
             &var("THUMB_SECTION_OUTPUT")?,
@@ -811,6 +855,137 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn footprint_fixture(sram: u64, flash: u64) -> (Json, String, String) {
+        let object = |values: &[(&str, u64)]| {
+            Json::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| ((*key).into(), Json::Number(value.to_string())))
+                    .collect(),
+            )
+        };
+        let shape_limits = || {
+            object(&[
+                ("session_kit_storage_bytes", 10),
+                ("resident_prefix_bytes", 20),
+                ("tap_ring_bytes", 10),
+                ("sidecar_scratch_high_water_bytes", 10),
+                ("live_endpoint_bytes", 30),
+                ("peak_live_slab_bytes", 30),
+                ("localside_peak_stack_bytes", 40),
+                ("peak_stack_bytes", 40),
+                ("modeled_runtime_sram_bytes", sram),
+            ])
+        };
+        let shapes = ["fanout_heavy", "linear_heavy", "route_heavy"];
+        let snapshot = Json::Object(BTreeMap::from([(
+            "budget".into(),
+            Json::Object(BTreeMap::from([
+                (
+                    "thumbv6m_none_eabi_no_std_release_lib".into(),
+                    Json::Object(BTreeMap::from([(
+                        "sections".into(),
+                        object(&[
+                            (".text", 50),
+                            (".rodata", 30),
+                            (".data", 0),
+                            (".bss", 0),
+                            ("flash_total", flash),
+                        ]),
+                    )])),
+                ),
+                (
+                    "runtime_shapes".into(),
+                    Json::Object(shapes.map(|name| (name.into(), shape_limits())).into()),
+                ),
+            ])),
+        )]));
+        let thumb = "thumb section name=.text bytes=40\nthumb section name=.rodata bytes=20\nthumb section name=.data bytes=0\nthumb section name=.bss bytes=0\n".into();
+        let stack = shapes.map(|name| format!("large-choreography-runtime shape={name} session_kit_storage_bytes=10 resident_prefix_bytes=20 tap_ring_bytes=10 sidecar_scratch_high_water_bytes=10 live_endpoint_bytes=30 peak_live_slab_bytes=30 localside_peak_stack_bytes=40 peak_stack_bytes=40\n")).concat();
+        (snapshot, thumb, stack)
+    }
+
+    #[test]
+    fn one_footprint_sample_preserves_all_section_runtime_and_headroom_bounds() {
+        let (snapshot, sections, stack) = footprint_fixture(164, 80);
+        assert!(thumb(&snapshot, &sections).is_ok());
+        assert!(runtime(&snapshot, &sections, &stack, 64).is_ok());
+        assert!(runtime(&snapshot, &sections, &stack, 65).is_err());
+        let (tight, _, _) = footprint_fixture(163, 80);
+        assert!(runtime(&tight, &sections, &stack, 64).is_err());
+        assert!(runtime(&tight, &sections, &stack, 63).is_ok());
+        let (equal, _, _) = footprint_fixture(100, 60);
+        assert!(runtime(&equal, &sections, &stack, 0).is_err());
+        for (key, before, after) in [
+            (".text", 40, 51),
+            (".rodata", 20, 31),
+            (".data", 0, 1),
+            (".bss", 0, 1),
+        ] {
+            let corrupted = sections.replace(
+                &format!("name={key} bytes={before}"),
+                &format!("name={key} bytes={after}"),
+            );
+            assert!(thumb(&snapshot, &corrupted).is_err(), "{key}");
+        }
+        for (key, before) in [
+            ("session_kit_storage_bytes", 10),
+            ("resident_prefix_bytes", 20),
+            ("tap_ring_bytes", 10),
+            ("sidecar_scratch_high_water_bytes", 10),
+            ("live_endpoint_bytes", 30),
+            ("peak_live_slab_bytes", 30),
+            ("localside_peak_stack_bytes", 40),
+            ("peak_stack_bytes", 40),
+        ] {
+            let corrupted =
+                stack.replace(&format!("{key}={before}"), &format!("{key}={}", before + 1));
+            assert!(
+                runtime(&snapshot, &sections, &corrupted, 64).is_err(),
+                "{key}"
+            );
+            assert!(
+                runtime(
+                    &snapshot,
+                    &sections,
+                    &stack.replace(&format!("{key}={before}"), ""),
+                    64
+                )
+                .is_err(),
+                "missing {key}"
+            );
+        }
+        assert!(
+            runtime(
+                &snapshot,
+                &sections,
+                &stack.replace("route_heavy", "unknown"),
+                64
+            )
+            .is_err()
+        );
+        assert!(runtime(&snapshot, &sections, &format!("{stack}{stack}"), 64).is_err());
+        assert!(
+            runtime(
+                &snapshot,
+                &sections,
+                &stack.lines().skip(1).collect::<Vec<_>>().join("\n"),
+                64
+            )
+            .is_err()
+        );
+        assert!(
+            runtime(
+                &snapshot,
+                &sections,
+                &stack.replace("resident_prefix_bytes=20", "resident_prefix_bytes=9"),
+                64
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn oversized_measurements_never_wrap() {
         assert!(total([u64::MAX, 1]).is_err());
@@ -824,9 +999,12 @@ mod tests {
             BTreeMap::from([
                 ("session_kit_storage_bytes".into(), u64::MAX),
                 ("resident_prefix_bytes".into(), 1),
+                ("tap_ring_bytes".into(), 0),
+                ("peak_live_slab_bytes".into(), 0),
+                ("localside_peak_stack_bytes".into(), 0),
             ]),
         )]);
-        assert!(add_sram(&mut rows, 0, false).is_err());
+        assert_eq!(add_sram(&mut rows, 0).unwrap_err(), "SRAM metric overflow");
     }
 
     #[test]
@@ -875,11 +1053,29 @@ mod tests {
     }
     #[test]
     fn protocol_budget_and_mutants() {
-        let good=PROTOCOLS.iter().map(|name|format!("protocol-matrix name={name} program_blob_len=16 role_blob_len=32 endpoint_scratch_bytes=512 largest_section_bytes=192\n")).collect::<String>();
+        let good=PROTOCOLS.iter().map(|name|format!("protocol-matrix name={name} program_blob_len=16 role_blob_len=32 role_columns_len=30 role_lookup_len=2 role_steps=1 role_routes=0 role_route_index_slots=0 endpoint_scratch_bytes=512 largest_section_bytes=192\n")).collect::<String>();
         assert!(matrix(&good).is_ok());
+        assert!(matrix(&format!("{good}{good}")).is_err());
         assert!(matrix(&good.replace("program_blob_len=16", "program_blob_len=257")).is_err());
         assert!(matrix(&good.replace("role_blob_len=32", "missing=32")).is_err());
+        assert!(matrix(&good.replace("role_lookup_len=2", "role_lookup_len=3")).is_err());
+        assert!(matrix(&good.replace("role_steps=1", "role_steps=0")).is_err());
+        assert!(matrix(&good.replace("role_routes=0", "role_routes=1")).is_err());
+        assert!(
+            matrix(&good.replace("role_route_index_slots=0", "role_route_index_slots=8193"))
+                .is_err()
+        );
+        assert!(matrix(&good.replace("role_columns_len=30", "role_columns_len=33")).is_err());
+        assert!(matrix(&good.replace("role_blob_len=32", "role_blob_len=33")).is_err());
+        assert!(matrix(&good.replace("role_blob_len=32", "role_blob_len=29")).is_err());
         assert!(matrix(&good.lines().skip(1).collect::<Vec<_>>().join("\n")).is_err());
+
+        let actual = "protocol-matrix name=huge_legal_choreography program_blob_len=223 role_blob_len=635 role_columns_len=421 role_lookup_len=214 role_steps=16 role_routes=2 role_route_index_slots=3 endpoint_scratch_bytes=201 largest_section_bytes=144";
+        let mixed = good.replace(good.lines().last().unwrap(), actual);
+        assert!(matrix(&mixed).is_ok());
+        assert!(matrix(&mixed.replace("role_columns_len=421", "role_columns_len=513")).is_err());
+        assert!(matrix(&mixed.replace("role_lookup_len=214", "role_lookup_len=215")).is_err());
+        assert!(matrix(&mixed.replace("role_lookup_len=214", "role_lookup_len=213")).is_err());
     }
     #[test]
     fn future_layout_payload_independence() {

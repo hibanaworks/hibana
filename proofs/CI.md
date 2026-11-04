@@ -161,6 +161,18 @@ and Unix-carrier fixtures that use hibana-runtime's macOS host I/O. Portable
 work-count checks and generated public conformance also run on ARM Linux.
 The four native layout assertions remain in the required Rust suite; the
 measurement job collects their numerical report and does not rerun those tests.
+The representative role-column budgets retain their original limits, including
+512 bytes for the larger matrix entries. Immutable lookup data is reported
+separately and bounded by the published layout: two bytes per local successor,
+two per route-index slot, and, where routes exist, ten per local event plus
+eight per local route. The complete role image remains reported and checked
+against those two parts. Linked artifact and total Flash/SRAM budgets remain
+independent and unchanged; lookup data is never omitted from linked footprints.
+The library and projected Pico example use the same section-budget reader.
+Runtime stack/SRAM measurements are collected once in the authoritative source
+and checked once, including the fixed 64-byte modeled SRAM headroom and the
+aggregate non-growth rule. No measurement checkout or second cold build repeats
+these results. There is no environment option to omit the snapshot checks.
 The runtime-performance job likewise leaves the four warm-target regression
 tests in the native suite. It retains the independent cold-target compile budget
 and the runtime measurements. Packaged examples are executed, and the delegated
