@@ -21,6 +21,8 @@ for path in select send provenance; do
     perl -0ne 'print "$_\0" for grep { -f $_ } split /\0/' |
     rsync -a --from0 --files-from=- ./ "$mutant/"
   git -C "$mutant" add -A
+  mkdir -p "$mutant/target"
+  cp -R "$root/target/protocol-checker" "$mutant/target/protocol-checker"
   git -C "$mutant" diff --cached --binary HEAD > "$output/$path-source.patch"
   if [[ "$path" == provenance ]]; then
     changed="src/endpoint/kernel/core/send_ops/route_evidence.rs"

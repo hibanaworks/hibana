@@ -76,10 +76,12 @@ jobs:
           path: target/protocol-checker/
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: protocol-checker-models
-          path: proofs/lean/.lake/build/
-          include-hidden-files: true
+          name: protocol-checker-evidence
+          path: |
+            target/shape-resumption-sensitivity/**
+            target/prefix-input-sensitivity/**
           if-no-files-found: error
 
   protocol-fuzz:
@@ -102,16 +104,6 @@ jobs:
         run: |
           chmod +x target/protocol-checker/protocol-shapes
           bash .github/scripts/build_protocol_checker.sh --check
-      - uses: ./.github/actions/setup-lean
-        if: matrix.selection == 'controls'
-      - uses: actions/download-artifact@v8
-        if: matrix.selection == 'controls'
-        with:
-          name: protocol-checker-models
-          path: proofs/lean/.lake/build/
-      - name: Restore the model executable permission
-        if: matrix.selection == 'controls'
-        run: chmod +x proofs/lean/.lake/build/bin/protocol-shapes
       - name: Execute the assigned protocol population
         env:
           CASE_ID: ${{ matrix.id }}

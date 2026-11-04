@@ -42,9 +42,13 @@ targets, rather than being repeated on both host jobs.
 Each CI run compiles the shared public conformance oracle once for its selected
 source revision and host platform. Every assignment verifies the oracle's binary hash, source-input
 hashes, source revision and platform before using it. Missing or mismatched
-artifacts fail the job. The controls assignment also receives the compiled Lean
-imports and installs Lean to execute its model mutations. Other assignments do
-not reinstall Lean or rebuild the same oracle. Each source still gets its own
+artifacts fail the job. All eleven model-omission controls run once while building
+that oracle, before any generated population starts. Their implementation inputs
+and result tables are sealed with it. The model logs and patches are archived;
+the compiled Lean build tree is not transferred to consumers. No population job
+installs Lean or rebuilds a matching oracle. Runtime-only mutants receive a copy
+of that same sealed oracle and verify its source inputs, revision and platform;
+their Cargo targets remain separate. Each source still gets its own
 compiler diagnostics, real Endpoint execution, oracle comparison and structural
 observation controls. The four synthetic accepted-bit mutations (initial and
 continuation, false admission and false rejection) run once in the required

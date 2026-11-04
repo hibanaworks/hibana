@@ -40,6 +40,8 @@ git ls-files --cached --others --exclude-standard -z |
   perl -0ne 'print "$_\0" for grep { -f $_ } split /\0/' |
   rsync -a --from0 --files-from=- ./ "${MUTANT}/"
 git -C "${MUTANT}" add -A
+mkdir -p "${MUTANT}/target"
+cp -R "${ROOT_DIR}/target/protocol-checker" "${MUTANT}/target/protocol-checker"
 git -C "${MUTANT}" diff --cached --binary HEAD > "${OUTPUT}/current-source.patch"
 perl -0pi -e '
   my $start = index($_, "    const fn origins(");

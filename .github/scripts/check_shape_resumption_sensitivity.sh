@@ -22,7 +22,7 @@ for defect in resumption context actor guarded-context selected-expansion contin
   cp "${OUTPUT}/current.lean" "${OUTPUT}/${defect}.lean"
   if [[ "${defect}" == resumption ]]; then
     perl -0pi -e '
-      s/shapeRowsReady prepared\.dependencies observed point &&\n    shapeResumptionsReady prepared\.resumptions observed point/shapeRowsReady prepared.dependencies observed point/ == 1 or die "missing resumption query\n";
+      s/shapeDependenciesReady prepared\.dependencies observed point &&\n    shapeResumptionsReady prepared\.resumptions observed point/shapeDependenciesReady prepared.dependencies observed point/ == 1 or die "missing resumption query\n";
       s/prepared\.ready points\.contains point = \(\(occurrenceCut prepared\.plan points\)\.ready point &&\n      \(occurrenceCut prepared\.plan points\)\.resumptionReady point\)/prepared.ready points.contains point = (occurrenceCut prepared.plan points).ready point/ == 1 or die "missing query specification\n";
     ' "${OUTPUT}/${defect}.lean"
     expected='shapeStates resumedOutgoingTail'

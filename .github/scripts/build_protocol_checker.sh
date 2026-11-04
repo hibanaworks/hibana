@@ -15,7 +15,11 @@ inputs() {
   git ls-files --cached --others --exclude-standard -z -- \
     proofs/lean .github/ci-tests/endpoint_conformance.lean .github/ci-tests/protocol_shapes.lean \
     .github/ci-tests/build_lean_serial.rs .github/ci-tests/lean_audit.rs \
-    .github/scripts/lib/lean_audit_tool.sh .github/scripts/build_protocol_checker.sh |
+    .github/ci-tests/lean_module.rs .github/ci-tests/supplemental_proofs.rs \
+    .github/ci-tests/check_lean_proof_guard.rs \
+    .github/scripts/lib/lean_audit_tool.sh .github/scripts/lib/supplemental_proofs_tool.sh \
+    .github/scripts/check_shape_resumption_sensitivity.sh \
+    .github/scripts/check_prefix_input_sensitivity.sh .github/scripts/build_protocol_checker.sh |
     xargs -0 shasum -a 256 --
 }
 inputs > "$work/source.sha256"
@@ -41,13 +45,19 @@ else
   bash .github/scripts/lib/lean_audit_tool.sh build-serial \
     "$ROOT_DIR/proofs/lean" --native Hibana.SourceOccurrenceTrace >&2
   (cd proofs/lean && lake build protocolShapes) >&2
-  inputs > "$work/source-after.sha256"
-  cmp "$work/source.sha256" "$work/source-after.sha256"
-  rm "$work/source-after.sha256"
   cp proofs/lean/.lake/build/bin/protocol-shapes "$work/protocol-shapes"
   "$work/protocol-shapes" --check-guarded-reentry > "$work/guarded-reentry.log"
   cat "$work/guarded-reentry.log" >&2
-  (cd "$work" && shasum -a 256 protocol-shapes guarded-reentry.log > binary.sha256)
+  # Model mutations belong to this oracle's build, before any population runs.
+  bash .github/scripts/check_shape_resumption_sensitivity.sh >&2
+  bash .github/scripts/check_prefix_input_sensitivity.sh >&2
+  cp target/shape-resumption-sensitivity/mutants.tsv "$work/resumption-controls.tsv"
+  cp target/prefix-input-sensitivity/results.tsv "$work/input-controls.tsv"
+  inputs > "$work/source-after.sha256"
+  cmp "$work/source.sha256" "$work/source-after.sha256"
+  rm "$work/source-after.sha256"
+  (cd "$work" && shasum -a 256 protocol-shapes guarded-reentry.log \
+    resumption-controls.tsv input-controls.tsv > binary.sha256)
   if [[ -e "$out" ]]; then rm -r -- "$out"; fi
   mv "$work" "$out"
   trap - EXIT
