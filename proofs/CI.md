@@ -171,8 +171,15 @@ and can be requested with a new seed. A certification
 tag selects an immutable source revision; it is not a release or a passed result.
 Branch pushes run the ordinary workflow. Certification tags invoke that same
 workflow exactly once, rather than also triggering a duplicate ordinary run.
-A final candidate is published through its certification tag, then advanced
-to main after qualification. Root runs share one concurrency group across
+A final candidate is published through its certification tag. Only after all
+certification jobs succeed, the same run fast-forwards main to that exact SHA
+and deletes branch tips already contained in it. Both operations are atomic;
+each deletion requires the observed branch tip to remain unchanged. Divergent
+or concurrently advanced branches are preserved. Only this post-success job
+has content-write permission. Its repository `GITHUB_TOKEN` does not recursively
+trigger another push workflow, so advancing main does not rerun the same checks.
+Manual certification requests verify their selected source without publishing it.
+Root runs share one concurrency group across
 branches and tags; a newer run cancels the previous source run. The reusable
 core-checks child has a run-specific group so that it cannot cancel its own caller.
 It adds the complete frontier catalog, the existing
