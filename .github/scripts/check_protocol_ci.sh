@@ -48,6 +48,10 @@ case "$SELECTION" in
     # both here and in separate matrix jobs. Mutants never inherit an outer
     # capture root shared with the passing source.
     unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
+    # Reject stale model mutations before compiling the larger populations.
+    for check in shape-resumption prefix-input; do
+      bash ".github/scripts/check_${check//-/_}_sensitivity.sh"
+    done
     ranks="$(jq -er '.contracts | select(length > 0) | .[]' <<< "$ASSIGNMENT")"
     while IFS= read -r rank; do
       extra=()
@@ -56,7 +60,7 @@ case "$SELECTION" in
     done <<< "$ranks"
     # Preserve the existing combined parked-receive execution fixture too.
     bash .github/scripts/check_protocol_shapes.sh --contracts 6 2
-    for check in shape-resumption prefix-input resolver-occurrence resolver-observation recv-contract parked-offer parked-receive reentry-component; do
+    for check in resolver-occurrence resolver-observation recv-contract parked-offer parked-receive reentry-component; do
       bash ".github/scripts/check_${check//-/_}_sensitivity.sh"
     done
     cargo +stable build --locked --manifest-path .github/ci-tests/Cargo.toml --bin protocol-shapes --bin protocol-shape-controls

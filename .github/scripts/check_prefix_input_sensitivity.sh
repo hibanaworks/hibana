@@ -15,9 +15,17 @@ printf 'mutation\texit\n' > "${OUTPUT}/results.tsv"
 for mutation in forget-inputs choose-future; do
   case "${mutation}" in
     forget-inputs)
-      # Preserve input validation, then restore the old unconstrained final
-      # states. This is the specific disconnect found in the original checker.
-      perl -0pe 's/if states\.isEmpty then none else some states/if states.isEmpty then none else some (shapeStates source plans word)/g == 1 or die "missing replay result\n"' \
+      # Both direct replay and the proved cached traversal use this step.
+      # Remove its recorded-input constraint, so the executable path as well
+      # as the concrete source examples must detect the lost history.
+      perl -0pe '
+        s/(def shapeInputStep\b.*?)\n\n/
+          my $step = $1;
+          ($step =~ s!plan\.entryChoices points after choice!true!g) == 1
+            or die "missing replay input constraint\n";
+          "$step\n\n";
+        /se == 1 or die "missing replay step definition\n";
+      ' \
         "${OUTPUT}/original.lean" > "${OUTPUT}/${mutation}.lean"
       expected=a_shared_entry_keeps_the_recorded_left_arm
       ;;
