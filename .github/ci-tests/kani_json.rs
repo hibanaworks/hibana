@@ -208,11 +208,20 @@ impl Parser<'_> {
     }
 }
 
-pub fn parse(text: &str) -> Result<Json> {
+// The controls consume one observation at a time rather than retaining the
+// expanded JSON tree for an entire admission population.
+pub fn parse_prefix(text: &str) -> Result<(Json, usize)> {
     let mut parser = Parser { text, index: 0 };
     let result = parser.value(0)?;
-    parser.whitespace();
-    if parser.index != text.len() {
+    Ok((result, parser.index))
+}
+
+pub fn parse(text: &str) -> Result<Json> {
+    let (result, end) = parse_prefix(text)?;
+    if !text[end..]
+        .bytes()
+        .all(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+    {
         return Err("trailing JSON data".into());
     }
     Ok(result)

@@ -103,6 +103,11 @@ aggregates all counts. Workers receive the original input and observation
 paths; no candidate, probe, script or source variant is removed. Their reports
 are not population certificates. Only the parent emits the complete population
 summary, after every worker succeeds, under the same descendant-memory guard.
+Observation mutations decode one attempt at a time. Filtering a prefix or a
+resolver history preserves every retained record and the observation envelope;
+it does not retain a JSON object tree for the entire probe population. Temporary
+mutation data is released before starting its checker process. All source-dependent
+negative controls still run on their original complete observations.
 The oracle build executes its fifteen fixed source-cut regressions once and
 archives their log with the binary hash. Normal population invocations do not
 repeat them. Their mutation controls retain the explicit regression entry.

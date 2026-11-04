@@ -13,32 +13,88 @@ use std::{
     process::Command,
 };
 
-fn continuation(text: &str, accepted: bool) -> Option<core::ops::Range<usize>> {
-    for (start, _) in text.match_indices("{\"choice\":") {
-        let end = start + text[start..].find('}')? + 1;
-        let record = json::parse(&text[start..end]).ok()?;
+// The generator writes a name followed by its attempts array. Decode each
+// complete record, including nested arrays, without expanding the whole file.
+fn attempts(
+    text: &str,
+) -> Result<impl Iterator<Item = Result<(core::ops::Range<usize>, Json), String>> + '_, String> {
+    let marker = "\"attempts\":[";
+    let mut cursor = Some(text.find(marker).ok_or("missing attempts array")? + marker.len());
+    Ok(std::iter::from_fn(move || {
+        let at = cursor.take()?;
+        let rest = text[at..].trim_start();
+        let start = text.len() - rest.len();
+        if let Some(tail) = rest.strip_prefix(']') {
+            return (tail.trim() != "}").then(|| Err("invalid observation suffix".into()));
+        }
+        let (record, length) = match json::parse_prefix(rest) {
+            Ok(value) => value,
+            Err(error) => return Some(Err(error)),
+        };
+        let end = start + length;
+        let suffix = text[end..].trim_start();
+        if let Some(next) = suffix.strip_prefix(',') {
+            if next.trim_start().starts_with(']') {
+                return Some(Err("trailing attempt separator".into()));
+            }
+            cursor = Some(text.len() - next.len());
+        } else if suffix.starts_with(']') {
+            cursor = Some(text.len() - suffix.len());
+        } else {
+            return Some(Err("missing attempt separator".into()));
+        }
+        Some(Ok((start..end, record)))
+    }))
+}
+
+fn retain_attempts(
+    text: &str,
+    mut keep: impl FnMut(&Json) -> bool,
+) -> Result<(String, usize), String> {
+    let mut output = String::with_capacity(text.len());
+    let mut last = None;
+    let mut retained = 0;
+    let mut removed = 0;
+    for entry in attempts(text)? {
+        let (range, record) = entry?;
+        if last.is_none() {
+            output.push_str(&text[..range.start]);
+        }
+        if keep(&record) {
+            if retained > 0 {
+                output.push(',');
+            }
+            output.push_str(&text[range.clone()]);
+            retained += 1;
+        } else {
+            removed += 1;
+        }
+        last = Some(range.end);
+    }
+    output.push_str(&text[last.ok_or("empty observation attempts")?..]);
+    Ok((output, removed))
+}
+
+fn continuation(text: &str, accepted: bool) -> Result<Option<core::ops::Range<usize>>, String> {
+    for entry in attempts(text)? {
+        let (range, record) = entry?;
         if matches!(record.get("prefix"), Some(Json::Array(prefix)) if !prefix.is_empty())
             && record.get("accepted") == Some(&Json::Bool(accepted))
         {
-            return Some(start..end);
+            return Ok(Some(range));
         }
     }
-    None
+    Ok(None)
 }
 
 // Remove one history only when the same public prefix and next call have
 // different observed answers under two histories. Keep the other history's
 // entire group, reproducing the loss caused by word-only deduplication.
 fn missing_history(text: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let Json::Object(mut fields) = json::parse(text)? else {
-        return Err("invalid history observation".into());
-    };
-    let Some(Json::Array(attempts)) = fields.get_mut("attempts") else {
-        return Err("missing history attempts".into());
-    };
     let mut seen = std::collections::BTreeMap::new();
     let mut remove = None;
-    for attempt in attempts.iter() {
+    for entry in attempts(text)? {
+        let (_, attempt) = entry?;
         let prefix = attempt.get("prefix").ok_or("missing prefix")?;
         if !matches!(prefix, Json::Array(word) if !word.is_empty()) {
             continue;
@@ -62,19 +118,22 @@ fn missing_history(text: &str) -> Result<Option<String>, Box<dyn std::error::Err
     let Some((prefix, history)) = remove else {
         return Ok(None);
     };
+    drop(seen);
     let prefix = json::parse(&prefix)?;
     let history = json::parse(&history)?;
-    let before = attempts.len();
-    attempts.retain(|attempt| {
-        attempt.get("prefix") != Some(&prefix) || attempt.get("prefixChoices") != Some(&history)
-    });
-    assert!(attempts.len() < before);
-    assert!(
-        attempts
-            .iter()
-            .any(|attempt| attempt.get("prefix") == Some(&prefix))
-    );
-    Ok(Some(source_json(&Json::Object(fields))?))
+    let mut other_history = 0;
+    let (mutated, removed) = retain_attempts(text, |attempt| {
+        if attempt.get("prefix") != Some(&prefix) {
+            true
+        } else if attempt.get("prefixChoices") == Some(&history) {
+            false
+        } else {
+            other_history += 1;
+            true
+        }
+    })?;
+    assert!(removed > 0 && other_history > 0);
+    Ok(Some(mutated))
 }
 
 // Probe kinds are the only string-valued fields in these test records.
@@ -397,7 +456,7 @@ fn admission_controls(checker: &Path, output: &Path) -> Result<(), Box<dyn std::
         for path in &paths {
             let text = fs::read_to_string(path)?;
             let range = if continued {
-                continuation(&text, accepted)
+                continuation(&text, accepted)?
             } else {
                 text.find(&needle).map(|start| start..start + needle.len())
             };
@@ -416,6 +475,7 @@ fn admission_controls(checker: &Path, output: &Path) -> Result<(), Box<dyn std::
             path,
             &text,
         )?;
+        drop(text);
         rejected(checker, &input, &observations, expected)?;
         println!("Admission checker control: {name}: pass");
     }
@@ -758,26 +818,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let malformed = output.join("controls/malformed");
     let (input, observations) = single_case(&inventory, &malformed, first, "{")?;
     rejected(&checker, &input, &observations, "invalid shape JSON")?;
-    let mut invalid_choice = json::parse(&fs::read_to_string(first)?)?;
-    let Json::Object(fields) = &mut invalid_choice else {
-        return Err("invalid observation object".into());
+    let (input, observations) = {
+        let mut text = fs::read_to_string(first)?;
+        let (range, mut record) = attempts(&text)?
+            .next()
+            .ok_or("missing resolver input control point")??;
+        let Json::Object(attempt) = &mut record else {
+            return Err("invalid probe attempt".into());
+        };
+        attempt.insert(
+            "choice".into(),
+            Json::Array(vec![Json::Number("65536".into())]),
+        );
+        text.replace_range(range, &source_json(&record)?);
+        single_case(
+            &inventory,
+            &output.join("controls/unknown-resolver-input"),
+            first,
+            &text,
+        )?
     };
-    let Some(Json::Array(attempts)) = fields.get_mut("attempts") else {
-        return Err("missing probe attempts".into());
-    };
-    let Some(Json::Object(attempt)) = attempts.first_mut() else {
-        return Err("missing resolver input control point".into());
-    };
-    attempt.insert(
-        "choice".into(),
-        Json::Array(vec![Json::Number("65536".into())]),
-    );
-    let (input, observations) = single_case(
-        &inventory,
-        &output.join("controls/unknown-resolver-input"),
-        first,
-        &source_json(&invalid_choice)?,
-    )?;
     rejected(
         &checker,
         &input,
@@ -811,7 +871,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut selected = None;
             for path in &paths {
                 let text = fs::read_to_string(path)?;
-                if let Some(range) = continuation(&text, accepted) {
+                if let Some(range) = continuation(&text, accepted)? {
                     selected = Some((path, text, range));
                     break;
                 }
@@ -824,18 +884,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "continuation-missing-prefix" => {
                     let record = json::parse(&record)?;
                     let prefix = record.get("prefix").ok_or("missing control prefix")?;
-                    let Json::Object(mut fields) = json::parse(&text)? else {
-                        return Err("invalid continuation observation".into());
-                    };
-                    let Some(Json::Array(attempts)) = fields.get_mut("attempts") else {
-                        return Err("missing continuation attempts".into());
-                    };
-                    let before = attempts.len();
-                    attempts.retain(|attempt| attempt.get("prefix") != Some(prefix));
-                    if attempts.is_empty() || attempts.len() == before {
+                    let (mutated, removed) =
+                        retain_attempts(&text, |attempt| attempt.get("prefix") != Some(prefix))?;
+                    if removed == 0 || attempts(&mutated)?.next().transpose()?.is_none() {
                         return Err("missing-prefix control did not remove one proper group".into());
                     }
-                    text = source_json(&Json::Object(fields))?;
+                    text = mutated;
                 }
                 "continuation-missing-probe" => {
                     let separator = range
@@ -859,6 +913,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let target = output.join("controls").join(name);
             let (input, observations) = single_case(&inventory, &target, path, &text)?;
+            drop(text);
             rejected(&checker, &input, &observations, expected)?;
             checked.push(name);
         }
@@ -876,6 +931,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 path,
                 &text,
             )?;
+            drop(text);
             rejected(
                 &checker,
                 &input,
@@ -903,6 +959,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_filter_preserves_unmodified_values_and_the_observation_envelope() {
+        let text = r#"{"name":17,"attempts":[{"choice":[],"prefix":[0],"parked":[[1,true]]},{"choice":[1],"prefix":[2]},{"choice":[],"prefix":[0],"parked":[]}] }"#;
+        let original = json::parse(text).unwrap();
+        for prefix in [0, 2, 3] {
+            let mut expected = json::parse(text).unwrap();
+            let Json::Object(fields) = &mut expected else {
+                panic!()
+            };
+            let Some(Json::Array(values)) = fields.get_mut("attempts") else {
+                panic!()
+            };
+            let before = values.len();
+            let excluded = Json::Array(vec![Json::Number(prefix.to_string())]);
+            values.retain(|value| value.get("prefix") != Some(&excluded));
+            let removed = before - values.len();
+            let (mutated, actual_removed) =
+                retain_attempts(text, |value| value.get("prefix") != Some(&excluded)).unwrap();
+            assert_eq!(actual_removed, removed);
+            assert_eq!(json::parse(&mutated).unwrap(), expected);
+            assert_eq!(json::parse(text).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn record_cursor_handles_nested_values_and_rejects_broken_boundaries() {
+        let text =
+            r#"{"name":0,"attempts":[{"choice":[],"extra":{"text":"},[\\\""}},{"choice":[1]}]}"#;
+        let entries = attempts(text)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        for (range, record) in entries {
+            assert_eq!(json::parse(&text[range]).unwrap(), record);
+        }
+        for text in [
+            r#"{"attempts":[{"choice":[]},]}"#,
+            r#"{"attempts":[{"choice":[]} {"choice":[]}]}"#,
+            r#"{"attempts":[{"choice":[]}]}garbage"#,
+            r#"{"attempts":[{"choice":[}] }"#,
+        ] {
+            assert!(
+                attempts(text)
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .is_err(),
+                "{text}"
+            );
+        }
+    }
 
     #[test]
     fn a_missing_history_control_keeps_the_other_answer_to_the_same_call() {
