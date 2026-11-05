@@ -109,11 +109,8 @@ use at all three choices, the continuation's direction and Endpoint delegation.
 Delegated roles initiate their own repetitions. Sixteen compile-fail variants
 instead let an outside sender restart a repetition after the resource returns.
 Each child runs through a parallel Endpoint borrow before the continuation uses
-the parent endpoint. The same cases can be run separately:
-
-```sh
-bash .github/scripts/check_protocol_shapes.sh --frontiers 0 32
-```
+the parent endpoint. These sources, scripts and borrowed-scope probes belong to
+the ordinary constructor population and have no separate execution assignment.
 
 `roll-schedule-coverage.tsv` records completed schedules in which a nested
 repetition starts its next parent visit before a parallel sibling does. Each
@@ -124,8 +121,8 @@ participant and occurrence. A source containing nested repetitions alone does
 not count as a schedule witness. A shard without such a witness records only
 the header; it does not claim this scheduling case was exercised.
 The fixed length-three case at rank 658 must produce such a witness in both
-poll orders. Its scheduled and manual depth-four checks fail if either order
-is absent from the report.
+poll orders. Its `spines-3-658` extended assignment fails if either order is
+absent from the report.
 
 Large cases run rejection probes in processes handling up to 8,192 source
 scripts each. Every process also executes every successful source script and
@@ -189,11 +186,11 @@ the trial files retain every attempted source, command and output.
 The result is minimal under subtree removal, rather than a claim about every
 equivalent protocol. Unknown tool failures retain the source for inspection.
 
-The scheduled CI job samples depths four through eight using the UTC date as
-its seed. The depth-four job also runs the fixed mixed protocols and shrinker
-control; their inputs are shared across depths. Manual runs follow the same
-rule. Artifacts retain each input, rejection, completed trace and the source
-and input hash checks.
+Extended certification samples depths four through eight with a single seed,
+using the UTC date when no seed is supplied. The fixed shared-contract sources
+and shrinker control run once in the ordinary assignments instead of being
+repeated by sampling jobs. Artifacts retain each input, rejection, completed
+trace and the source and input hash checks.
 That control runs real Endpoints, then deliberately removes a sequential
 dependency from the comparison model while keeping the probe inventory.
 It must reduce the resulting mismatch to two ordered messages.
@@ -556,7 +553,8 @@ with opposite directions, independent parallel fragments, a resolver, repetition
 and actual endpoint delegation. It also exercises an unread selected route arm
 beside an independent receive with the other arm's public contract, both with
 and without delegation. The selected frame remains unread while the independent
-receive progresses. It runs in the depth-four fuzz job.
+receive progresses. Every contract source runs once in the ordinary assignments,
+including the populations owned by sensitivity controls.
 Three sources exercise a shared resolved entry in ordinary traffic,
 inside a roll, and in an actual Endpoint loan followed by resource operations
 and return. Reassociated sequential prefixes retain their original parallel
