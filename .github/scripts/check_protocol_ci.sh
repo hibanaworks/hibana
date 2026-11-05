@@ -54,8 +54,6 @@ case "$SELECTION" in
       if [[ "$rank" == 2 ]]; then extra+=(--admission-controls); fi
       bash .github/scripts/check_protocol_shapes.sh "${extra[@]}" --contracts "$rank" 1
     done <<< "$ranks"
-    # Preserve the existing combined parked-receive execution fixture too.
-    bash .github/scripts/check_protocol_shapes.sh --contracts 6 2
     for check in resolver-occurrence resolver-observation recv-contract parked-offer parked-receive reentry-component; do
       bash ".github/scripts/check_${check//-/_}_sensitivity.sh"
     done

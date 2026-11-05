@@ -839,30 +839,46 @@ theorem shapeCanonicalInputs_length (source : Source)
           simp only [shapeCanonicalInputs, List.length_cons]
           exact congrArg Nat.succ (ih _ inputs same)
 
-theorem shapeCanonicalChoice_empty (source : Source)
-    (states : List (ShapePlan source × List SourcePoint)) (command : Nat) :
-    shapeCanonicalChoice source states command [] = [] := by
-  simp [shapeCanonicalChoice]
+def shapeInputsAlreadyCanonical (source : Source) (commands : List Nat)
+    (inputs : List (List Nat)) : Bool :=
+  commands.length == inputs.length && (commands.zip inputs).all fun (command, choice) =>
+    choice.isEmpty || shapeRecordsResolverInput source command
 
-theorem shapeCanonicalInputs_empty_vectors (source : Source)
+theorem shapeCanonicalChoice_retains_input (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (command : Nat) (choice : List Nat)
+    (retained : (choice.isEmpty || shapeRecordsResolverInput source command) = true) :
+    shapeCanonicalChoice source states command choice = choice := by
+  cases empty : choice.isEmpty with
+  | true =>
+      have same : choice = [] := List.isEmpty_iff.mp empty
+      subst choice
+      simp [shapeCanonicalChoice]
+  | false =>
+      have controller : shapeRecordsResolverInput source command = true := by
+        simpa only [empty, Bool.false_or] using retained
+      simp [shapeCanonicalChoice, empty, controller]
+
+theorem shapeCanonicalInputs_already_canonical (source : Source)
     (states : List (ShapePlan source × List SourcePoint)) (commands : List Nat) (inputs : List (List Nat))
-    (same : commands.length = inputs.length) (empty : inputs.all List.isEmpty = true) :
+    (canonical : shapeInputsAlreadyCanonical source commands inputs = true) :
     shapeCanonicalInputs source states commands inputs = inputs := by
+  obtain ⟨fits, retained⟩ := Bool.and_eq_true_iff.mp canonical
+  have same : commands.length = inputs.length := beq_iff_eq.mp fits
+  clear canonical fits
   induction commands generalizing states inputs with
   | nil => cases inputs <;> simp_all [shapeCanonicalInputs]
   | cons command commands ih =>
       cases inputs with
       | nil => simp at same
       | cons choice inputs =>
-          have parts := Bool.and_eq_true_iff.mp empty
-          have first : choice = [] := List.isEmpty_iff.mp parts.1
-          subst choice
+          have parts := Bool.and_eq_true_iff.mp retained
           simp only [List.length_cons, Nat.add_right_cancel_iff] at same
-          simp only [shapeCanonicalInputs, shapeCanonicalChoice_empty]
-          exact congrArg (List.cons []) (ih _ inputs same parts.2)
+          simp only [shapeCanonicalInputs,
+            shapeCanonicalChoice_retains_input source states command choice parts.1]
+          exact congrArg (List.cons choice) (ih _ inputs parts.2 same)
 
-#print axioms shapeCanonicalChoice_empty
-#print axioms shapeCanonicalInputs_empty_vectors
+#print axioms shapeCanonicalChoice_retains_input
+#print axioms shapeCanonicalInputs_already_canonical
 
 def shapeInputTrace : List (ShapePlan source × List SourcePoint) → List Nat →
     List (List Nat) → List (List (ShapePlan source × List SourcePoint))
@@ -1922,6 +1938,19 @@ theorem a_controller_history_is_not_erased_when_its_choice_is_already_known :
 #print axioms transfer_inputs_are_opaque_but_the_delegated_controller_input_is_retained
 #print axioms a_controller_history_is_not_erased_when_its_choice_is_already_known
 
+private def selfResolvedRoll : Source := .roll (.route (some 0)
+  (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 0, .wire 0⟩)
+  (.send ⟨⟨0, 0⟩, ⟨0, 0⟩, 1, .wire 0⟩))
+
+theorem self_controller_inputs_are_canonical_in_every_replay_state
+    (states : List (ShapePlan selfResolvedRoll × List SourcePoint)) :
+    shapeCanonicalInputs selfResolvedRoll states [0, 2, 0, 2] [[], [0], [], [0]] =
+      [[], [0], [], [0]] := by
+  apply shapeCanonicalInputs_already_canonical
+  decide
+
+#print axioms self_controller_inputs_are_canonical_in_every_replay_state
+
 private def sameContractSequence : Source := .seq
   (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 7, .wire 0⟩)
   (.send ⟨⟨0, 0⟩, ⟨0, 2⟩, 7, .wire 0⟩)
@@ -2511,16 +2540,18 @@ def main (args : List String) : IO UInt32 := do
     let candidates := shapePlans source
     unless !candidates.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let choices := shapeChoicePatterns source
-    let prepared := candidates.map ShapePlan.of
+    IO.eprintln s!"shape {input.name}: completed runs={runs} calls={calls} cuts={plannedPrefixes.length} source-witnesses={candidates.length}"
+    let plannedInputs := plannedPrefixes.map fun word => (word, shapeWordInputs source word)
+    let normalizedInputs := if plannedInputs.all (fun (word, inputs) =>
+        shapeInputsAlreadyCanonical source word inputs) then plannedInputs
+      else
+        let prepared := candidates.map ShapePlan.of
+        plannedInputs.map fun (word, inputs) =>
+          (word, if shapeInputsAlreadyCanonical source word inputs then inputs
+            else shapeCanonicalInputs source (prepared.map (·, [])) word inputs)
     let shortPrefixes := if shapeRepetitions source == 0 then
-      shapeShortPrefixes source prepared choices else []
-    let prefixes := ((plannedPrefixes.map fun word =>
-      let inputs := shapeWordInputs source word
-      -- Empty vectors already are canonical. Avoid replaying every source
-      -- witness at every cut merely to prove that no input bits change.
-      (word, if inputs.all List.isEmpty then inputs
-        else shapeCanonicalInputs source (prepared.map (·, [])) word inputs)) ++
-      shortPrefixes).eraseDups
+      shapeShortPrefixes source (candidates.map ShapePlan.of) choices else []
+    let prefixes := (normalizedInputs ++ shortPrefixes).eraseDups
     let handle ← IO.FS.Handle.mk (System.FilePath.mk outputPath / s!"{input.name}.jsonl") .read
     let header : ShapeOutputHeader ← match
         (Lean.Json.parse (← handle.getLine) >>= Lean.fromJson? : Except String ShapeOutputHeader) with

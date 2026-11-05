@@ -95,6 +95,10 @@ that no possible transition enters a fresh resolver before erasing any input.
 General Lean theorems preserve the complete state trace, final replay state and
 history length for arbitrary inputs and source plans. All source scripts and
 public operation orders remain; every next-call input pattern is still executed.
+Histories containing only empty vectors or retained controller inputs are
+already canonical. A general theorem justifies returning those histories
+without replaying the source-candidate family at every completed-script cut.
+Readiness indexes for that family are prepared only by branches that use them.
 Input-sensitive histories remain distinct, including the outcome-distinguishing
 history-removal control. Reported counts are actual Endpoint probes over these
 semantic prefix classes, not counts multiplied by unused input variations.

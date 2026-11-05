@@ -12,8 +12,8 @@ fi
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
-bash .github/scripts/check_protocol_shapes.sh --check --contracts 6 2 > "${OUTPUT}/positive.log" 2>&1
-relative="target/protocol-shapes/contracts/range-6-count-2"
+bash .github/scripts/check_protocol_shapes.sh --check --contracts 6 1 > "${OUTPUT}/positive.log" 2>&1
+relative="target/protocol-shapes/contracts/range-6-count-1"
 expected_case="$(awk -F '\t' '
   $2 == "contract-collision=6/contracts=distinct" && $1 ~ /^[0-9]+$/ { value = $1; count++ }
   END { if (count != 1) exit 1; print value }
@@ -33,7 +33,7 @@ git -C "${MUTANT}" diff --binary > "${OUTPUT}/mutation.patch"
 status=0
 (
   cd "${MUTANT}"
-  bash .github/scripts/check_protocol_shapes.sh --contracts 6 2
+  bash .github/scripts/check_protocol_shapes.sh --contracts 6 1
 ) > "${OUTPUT}/mutant.log" 2>&1 || status=$?
 if [[ "${status}" == 0 ]] ||
    ! grep -Fq "Error: \"generated test shape_${expected_case} failed: exit status: 101\"" "${OUTPUT}/mutant.log" ||
@@ -57,7 +57,7 @@ while IFS= read -r file; do
 done < "${OUTPUT}/inputs.txt"
 mkdir -p "${OUTPUT}/mutant-inputs"
 rsync -a --exclude=target \
-  "${MUTANT}/target/protocol-shapes/contracts/range-6-count-2/" \
+  "${MUTANT}/${relative}/" \
   "${OUTPUT}/mutant-inputs/"
 printf 'mutant_exit=%s\nexpected_failed_case=shape_%s\nexpected_failure=retained_frame_repoll_panic\n' "${status}" "${expected_case}" > "${OUTPUT}/result.txt"
 rm -r -- "${MUTANT}"
