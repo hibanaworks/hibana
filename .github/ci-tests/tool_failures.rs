@@ -1,6 +1,80 @@
 use std::{path::PathBuf, process::Command};
 
 #[test]
+fn protocol_oracle_cache_tracks_model_inputs_and_artifact_integrity() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let script = r#"
+set -euo pipefail
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+scratch="$(mktemp -d)"
+scratch="$(cd "$scratch" && pwd -P)"
+trap 'rm -r -- "$scratch"' EXIT
+mkdir -p "$scratch/.github/scripts/lib" "$scratch/.github/ci-tests" "$scratch/proofs/lean"
+cp "$1" "$scratch/.github/scripts/build_protocol_checker.sh"
+printf '// fixture\n' > "$scratch/.github/ci-tests/endpoint_conformance.lean"
+printf '// model\n' > "$scratch/.github/ci-tests/protocol_shapes.lean"
+printf 'fixture-toolchain\n' > "$scratch/proofs/lean/lean-toolchain"
+printf '#!/bin/sh\nexit 73\n' > "$scratch/.github/scripts/lib/lean_audit_tool.sh"
+git -C "$scratch" init --quiet
+git -C "$scratch" config user.name 'Oracle cache test'
+git -C "$scratch" config user.email 'cache-test@example.invalid'
+git -C "$scratch" add .
+git -C "$scratch" commit --quiet -m model
+original="$(git -C "$scratch" rev-parse HEAD)"
+cached="$scratch/target/protocol-checker"
+mkdir -p "$cached"
+(cd "$scratch" && git ls-files -z | xargs -0 shasum -a 256 --) > "$cached/source.sha256"
+printf '%s\n' "$original" > "$cached/revision.txt"
+platform="$(uname -sm)"
+printf '%s\n' "$platform" > "$cached/platform.txt"
+printf '#!/bin/sh\nexit 0\n' > "$cached/protocol-shapes"
+chmod +x "$cached/protocol-shapes"
+for file in guarded-reentry.log resumption-controls.tsv input-controls.tsv; do
+  printf 'validated fixture\n' > "$cached/$file"
+done
+(cd "$cached" && shasum -a 256 protocol-shapes guarded-reentry.log \
+  resumption-controls.tsv input-controls.tsv > binary.sha256)
+build="$scratch/.github/scripts/build_protocol_checker.sh"
+[[ "$(bash "$build" --check)" == "$cached/protocol-shapes" ]]
+printf 'unrelated documentation\n' > "$scratch/README.md"
+git -C "$scratch" add README.md
+git -C "$scratch" commit --quiet -m documentation
+[[ "$(git -C "$scratch" rev-parse HEAD)" != "$original" ]]
+[[ "$(bash "$build" --check)" == "$cached/protocol-shapes" ]]
+[[ "$(bash "$build")" == "$cached/protocol-shapes" ]]
+[[ "$(cat "$cached/revision.txt")" == "$original" ]]
+printf 'another platform\n' > "$cached/platform.txt"
+if bash "$build" --check > "$scratch/rejected.log" 2>&1; then exit 1; fi
+printf '%s\n' "$platform" > "$cached/platform.txt"
+for file in protocol-shapes resumption-controls.tsv; do
+  cp "$cached/$file" "$scratch/original-artifact"
+  printf 'corrupted\n' >> "$cached/$file"
+  if bash "$build" --check > "$scratch/rejected.log" 2>&1; then exit 1; fi
+  cp "$scratch/original-artifact" "$cached/$file"
+done
+cp "$scratch/.github/ci-tests/protocol_shapes.lean" "$scratch/original-model"
+printf '// changed model\n' >> "$scratch/.github/ci-tests/protocol_shapes.lean"
+if bash "$build" --check > "$scratch/rejected.log" 2>&1; then exit 1; fi
+status=0
+bash "$build" > "$scratch/rebuild.log" 2>&1 || status=$?
+[[ "$status" == 73 ]]
+cp "$scratch/original-model" "$scratch/.github/ci-tests/protocol_shapes.lean"
+[[ "$(bash "$build" --check)" == "$cached/protocol-shapes" ]]
+"#;
+    let output = Command::new("bash")
+        .args(["-c", script, "protocol-oracle-cache-test"])
+        .arg(root.join(".github/scripts/build_protocol_checker.sh"))
+        .output()
+        .expect("run oracle cache validation");
+    assert!(
+        output.status.success(),
+        "oracle cache validation failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn compile_pressure_process_table_bypasses_exec_environment_limits() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let guard = root.join(".github/scripts/lib/compile_pressure_guard.sh");

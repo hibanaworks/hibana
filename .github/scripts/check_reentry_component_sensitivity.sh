@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-OUTPUT="${ROOT_DIR}/target/reentry-component-sensitivity"
+mkdir -p "${ROOT_DIR}/target/reentry-component-sensitivity"
+OUTPUT="$(mktemp -d "${ROOT_DIR}/target/reentry-component-sensitivity/run.XXXXXXXX")"
+printf 'Sensitivity evidence: %s\n' "${OUTPUT}"
 MUTANT="${OUTPUT}/source"
 INPUT="${OUTPUT}/input"
-if [[ -e "${MUTANT}" ]]; then
-  echo "Previous sensitivity source remains: ${MUTANT}" >&2
-  exit 1
-fi
-mkdir -p "${OUTPUT}"
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"

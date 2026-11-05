@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-OUTPUT="${ROOT_DIR}/target/send-poll-sensitivity"
-mkdir -p "${OUTPUT}"
+mkdir -p "${ROOT_DIR}/target/send-poll-sensitivity"
+OUTPUT="$(mktemp -d "${ROOT_DIR}/target/send-poll-sensitivity/run.XXXXXXXX")"
+printf 'Sensitivity evidence: %s\n' "${OUTPUT}"
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
@@ -10,10 +11,6 @@ cargo +"${TOOLCHAIN:-stable}" test --locked --test tap_send_poll > "${OUTPUT}/po
 : > "${OUTPUT}/results.tsv"
 for defect in omit completion-only; do
   mutant="${OUTPUT}/${defect}"
-  if [[ -e "${mutant}" ]]; then
-    echo "Previous sensitivity workspace remains: ${mutant}" >&2
-    exit 1
-  fi
   git clone --quiet --shared --no-checkout "${ROOT_DIR}" "${mutant}"
   git ls-files --cached --others --exclude-standard -z |
     perl -0ne 'print "$_\0" for grep { -f $_ } split /\0/' |

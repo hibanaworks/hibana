@@ -2589,6 +2589,9 @@ def main (args : List String) : IO UInt32 := do
         missing := missing.erase key
         let attempts := shapeExpandRows observed.prefix observed.prefixChoices questions observed.answers.toList
         attemptGroups := (observed.prefix, attempts) :: attemptGroups
+      if ended && !missing.isEmpty then
+        throw (IO.userError s!"shape {input.name}: incomplete probe inventory; missing prefix or input history")
+      if attemptGroups.isEmpty then break
       attemptGroups := attemptGroups.reverse
       let mut groups : Array ShapeQueryGroup := #[]
       for (word, attempts) in attemptGroups do
@@ -2687,8 +2690,6 @@ def main (args : List String) : IO UInt32 := do
                 if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
           | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
         unless remaining.isEmpty do throw (IO.userError "extra operation query answers")
-    unless missing.isEmpty do
-      throw (IO.userError s!"shape {input.name}: incomplete probe inventory; missing prefix or input history")
     unless parkedRuntimeOnly == 0 && parkedModelOnly == 0 do
       IO.println s!"Parked previews/source mismatch: runtime-only={parkedRuntimeOnly} model-only={parkedModelOnly}"
     unless runtimeOnly == 0 && modelOnly == 0 do

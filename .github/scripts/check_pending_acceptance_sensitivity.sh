@@ -2,8 +2,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$root"
-out="$root/target/pending-acceptance-sensitivity"
-mkdir -p "$out"
+mkdir -p "$root/target/pending-acceptance-sensitivity"
+out="$(mktemp -d "$root/target/pending-acceptance-sensitivity/run.XXXXXXXX")"
+printf 'Sensitivity evidence: %s\n' "$out"
 source=proofs/lean/Hibana/SourceResumptionProgress.lean
 regression=proofs/lean/Hibana/PendingAcceptance.lean
 shasum -a 256 "$source" "$regression" > "$out/source.sha256"
@@ -13,7 +14,6 @@ bash .github/scripts/lib/lean_audit_tool.sh build-serial "$root/proofs/lean" \
   > "$out/positive.log" 2>&1
 for defect in acceptance untracked-body; do
   copy="$out/$defect"
-  test ! -e "$copy"
   mkdir -p "$copy/proofs"
   cp -R proofs/lean "$copy/proofs/lean"
   if [[ "$defect" == acceptance ]]; then

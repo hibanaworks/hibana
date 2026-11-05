@@ -3,14 +3,11 @@ set -euo pipefail
 # Baseline and mutant captures belong to their respective source roots.
 unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-OUTPUT="${ROOT_DIR}/target/resolver-occurrence-sensitivity"
+mkdir -p "${ROOT_DIR}/target/resolver-occurrence-sensitivity"
+OUTPUT="$(mktemp -d "${ROOT_DIR}/target/resolver-occurrence-sensitivity/run.XXXXXXXX")"
+printf 'Sensitivity evidence: %s\n' "${OUTPUT}"
 MUTANT="${OUTPUT}/source"
 CHANGED="src/global/typestate/cursor/scope_route/send_preview.rs"
-mkdir -p "${OUTPUT}"
-if [[ -e "${MUTANT}" ]]; then
-  echo "Previous sensitivity workspace remains: ${MUTANT}" >&2
-  exit 1
-fi
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"

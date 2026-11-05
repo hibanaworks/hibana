@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-OUTPUT="${ROOT_DIR}/target/scope-reentry-sensitivity"
+mkdir -p "${ROOT_DIR}/target/scope-reentry-sensitivity"
+OUTPUT="$(mktemp -d "${ROOT_DIR}/target/scope-reentry-sensitivity/run.XXXXXXXX")"
+printf 'Sensitivity evidence: %s\n' "${OUTPUT}"
 MUTANT="${OUTPUT}/source"
-mkdir -p "${OUTPUT}"
-if [[ -e "${MUTANT}" ]]; then
-  echo "Previous sensitivity workspace remains: ${MUTANT}" >&2
-  exit 1
-fi
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"

@@ -27,15 +27,13 @@ git rev-parse HEAD > "$work/revision.txt"
 uname -sm > "$work/platform.txt"
 check() {
   cmp "$work/source.sha256" "$out/source.sha256"
-  cmp "$work/revision.txt" "$out/revision.txt"
   cmp "$work/platform.txt" "$out/platform.txt"
   (cd "$out" && shasum -a 256 --check binary.sha256 >&2)
 }
 if [[ "$build" == false ]]; then
   check
-elif [[ -f "$out/source.sha256" && -f "$out/revision.txt" && -f "$out/platform.txt" ]] &&
+elif [[ -f "$out/source.sha256" && -f "$out/platform.txt" ]] &&
     cmp -s "$work/source.sha256" "$out/source.sha256" &&
-    cmp -s "$work/revision.txt" "$out/revision.txt" &&
     cmp -s "$work/platform.txt" "$out/platform.txt"; then
   check
 else

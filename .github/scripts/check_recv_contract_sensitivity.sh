@@ -2,14 +2,11 @@
 set -euo pipefail
 unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-OUTPUT="${ROOT_DIR}/target/recv-contract-sensitivity"
+mkdir -p "${ROOT_DIR}/target/recv-contract-sensitivity"
+OUTPUT="$(mktemp -d "${ROOT_DIR}/target/recv-contract-sensitivity/run.XXXXXXXX")"
+printf 'Sensitivity evidence: %s\n' "${OUTPUT}"
 MUTANT="${OUTPUT}/source"
 CHANGED="src/endpoint/kernel/recv.rs"
-mkdir -p "${OUTPUT}"
-if [[ -e "${MUTANT}" ]]; then
-  echo "Previous sensitivity workspace remains: ${MUTANT}" >&2
-  exit 1
-fi
 : > "${OUTPUT}/result.txt"
 cd "${ROOT_DIR}"
 git rev-parse HEAD > "${OUTPUT}/revision.txt"

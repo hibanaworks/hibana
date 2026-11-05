@@ -3,8 +3,9 @@ set -euo pipefail
 unset HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT
 cd "$(dirname "$0")/../.."
 root="$PWD"
-output="$root/target/resolver-observation-sensitivity"
-mkdir -p "$output"
+mkdir -p "$root/target/resolver-observation-sensitivity"
+output="$(mktemp -d "$root/target/resolver-observation-sensitivity/run.XXXXXXXX")"
+printf 'Sensitivity evidence: %s\n' "$output"
 git rev-parse HEAD > "$output/revision.txt"
 for path in select send provenance; do
   case "$path" in
@@ -15,7 +16,6 @@ for path in select send provenance; do
   bash .github/scripts/check_protocol_shapes.sh --check --contracts "$catalog" 1 \
     > "$output/$path-positive.log" 2>&1
   mutant="$output/$path"
-  test ! -e "$mutant"
   git clone --quiet --shared --no-checkout "$root" "$mutant"
   git ls-files --cached --others --exclude-standard -z |
     perl -0ne 'print "$_\0" for grep { -f $_ } split /\0/' |

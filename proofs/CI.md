@@ -99,6 +99,9 @@ Histories containing only empty vectors or retained controller inputs are
 already canonical. A general theorem justifies returning those histories
 without replaying the source-candidate family at every completed-script cut.
 Readiness indexes for that family are prepared only by branches that use them.
+The shared oracle is keyed by its complete model/build inputs and platform,
+with binary/control checksums checked on reuse. The recorded revision remains
+its original build provenance; an unrelated commit does not rebuild the model.
 Input-sensitive histories remain distinct, including the outcome-distinguishing
 history-removal control. Reported counts are actual Endpoint probes over these
 semantic prefix classes, not counts multiplied by unused input variations.
