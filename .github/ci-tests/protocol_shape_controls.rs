@@ -13,127 +13,103 @@ use std::{
     process::Command,
 };
 
-// The generator writes a name followed by its attempts array. Decode each
-// complete record, including nested arrays, without expanding the whole file.
-fn attempts(
-    text: &str,
-) -> Result<impl Iterator<Item = Result<(core::ops::Range<usize>, Json), String>> + '_, String> {
-    let marker = "\"attempts\":[";
-    let mut cursor = Some(text.find(marker).ok_or("missing attempts array")? + marker.len());
-    Ok(std::iter::from_fn(move || {
-        let at = cursor.take()?;
-        let rest = text[at..].trim_start();
-        let start = text.len() - rest.len();
-        if let Some(tail) = rest.strip_prefix(']') {
-            return (tail.trim() != "}").then(|| Err("invalid observation suffix".into()));
-        }
-        let (record, length) = match json::parse_prefix(rest) {
-            Ok(value) => value,
-            Err(error) => return Some(Err(error)),
-        };
-        let end = start + length;
-        let suffix = text[end..].trim_start();
-        if let Some(next) = suffix.strip_prefix(',') {
-            if next.trim_start().starts_with(']') {
-                return Some(Err("trailing attempt separator".into()));
-            }
-            cursor = Some(text.len() - next.len());
-        } else if suffix.starts_with(']') {
-            cursor = Some(text.len() - suffix.len());
-        } else {
-            return Some(Err("missing attempt separator".into()));
-        }
-        Some(Ok((start..end, record)))
-    }))
-}
+type Error = Box<dyn std::error::Error>;
 
-fn retain_attempts(
-    text: &str,
-    mut keep: impl FnMut(&Json) -> bool,
-) -> Result<(String, usize), String> {
-    let mut output = String::with_capacity(text.len());
-    let mut last = None;
-    let mut retained = 0;
-    let mut removed = 0;
-    for entry in attempts(text)? {
-        let (range, record) = entry?;
-        if last.is_none() {
-            output.push_str(&text[..range.start]);
+// Only a header or one history group is decoded at a time. Mutations preserve
+// all other records byte-for-byte and replace the target inode, never a shared
+// immutable baseline linked into another control directory.
+fn rewrite_records(
+    path: &Path,
+    mut change: impl FnMut(usize, &str) -> Result<Vec<String>, Error>,
+) -> Result<(), Error> {
+    let temporary = path.with_extension("new");
+    let mut writer = BufWriter::new(fs::File::create(&temporary)?);
+    for (index, line) in BufReader::new(fs::File::open(path)?).lines().enumerate() {
+        for record in change(index, &line?)? {
+            writeln!(writer, "{record}")?;
         }
-        if keep(&record) {
-            if retained > 0 {
-                output.push(',');
-            }
-            output.push_str(&text[range.clone()]);
-            retained += 1;
-        } else {
-            removed += 1;
-        }
-        last = Some(range.end);
     }
-    output.push_str(&text[last.ok_or("empty observation attempts")?..]);
-    Ok((output, removed))
+    writer.flush()?;
+    drop(writer);
+    fs::rename(temporary, path)?;
+    Ok(())
 }
 
-fn continuation(text: &str, accepted: bool) -> Result<Option<core::ops::Range<usize>>, String> {
-    for entry in attempts(text)? {
-        let (range, record) = entry?;
-        if matches!(record.get("prefix"), Some(Json::Array(prefix)) if !prefix.is_empty())
-            && record.get("accepted") == Some(&Json::Bool(accepted))
-        {
-            return Ok(Some(range));
+fn answers(group: &Json) -> Result<&Vec<Json>, Error> {
+    match group.get("answers") {
+        Some(Json::Array(rows)) => Ok(rows),
+        _ => Err("missing observation answer matrix".into()),
+    }
+}
+
+fn admission(row: &Json) -> Result<bool, Error> {
+    match row {
+        Json::Array(fields) if fields.len() == 2 => match &fields[0] {
+            Json::Bool(accepted) => Ok(*accepted),
+            _ => Err("invalid admission answer".into()),
+        },
+        _ => Err("invalid observation answer".into()),
+    }
+}
+
+fn continuation(group: &Json) -> Result<bool, Error> {
+    match group.get("prefix") {
+        Some(Json::Array(word)) => Ok(!word.is_empty()),
+        _ => Err("missing observation prefix".into()),
+    }
+}
+
+fn outcome_witness(
+    path: &Path,
+    continued: bool,
+    accepted: bool,
+) -> Result<Option<(usize, usize)>, Error> {
+    for (index, line) in BufReader::new(fs::File::open(path)?)
+        .lines()
+        .enumerate()
+        .skip(1)
+    {
+        let group = json::parse(&line?)?;
+        if continued && !continuation(&group)? {
+            continue;
+        }
+        for (row, answer) in answers(&group)?.iter().enumerate() {
+            if admission(answer)? == accepted {
+                return Ok(Some((index, row)));
+            }
         }
     }
     Ok(None)
 }
 
-// Remove one history only when the same public prefix and next call have
-// different observed answers under two histories. Keep the other history's
-// entire group, reproducing the loss caused by word-only deduplication.
-fn missing_history(text: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+// One source word can have several recorded resolver histories. Compare full
+// admission rows, then omit only an outcome-distinguishing history group.
+fn missing_history(path: &Path) -> Result<Option<usize>, Error> {
     let mut seen = std::collections::BTreeMap::new();
-    let mut remove = None;
-    for entry in attempts(text)? {
-        let (_, attempt) = entry?;
-        let prefix = attempt.get("prefix").ok_or("missing prefix")?;
-        if !matches!(prefix, Json::Array(word) if !word.is_empty()) {
+    for (index, line) in BufReader::new(fs::File::open(path)?)
+        .lines()
+        .enumerate()
+        .skip(1)
+    {
+        let group = json::parse(&line?)?;
+        if !continuation(&group)? {
             continue;
         }
-        let history = source_json(attempt.get("prefixChoices").ok_or("missing history")?)?;
-        let accepted = source_json(attempt.get("accepted").ok_or("missing admission")?)?;
-        let key = ["prefix", "choice", "event", "receive"]
-            .into_iter()
-            .map(|field| source_json(attempt.get(field).ok_or("missing probe key")?))
-            .collect::<Result<Vec<_>, _>>()?
-            .join(",");
-        if let Some((previous, answer)) = seen.get(&key)
-            && previous != &history
-            && answer != &accepted
-        {
-            remove = Some((source_json(prefix)?, history));
-            break;
-        }
-        seen.insert(key, (history, accepted));
-    }
-    let Some((prefix, history)) = remove else {
-        return Ok(None);
-    };
-    drop(seen);
-    let prefix = json::parse(&prefix)?;
-    let history = json::parse(&history)?;
-    let mut other_history = 0;
-    let (mutated, removed) = retain_attempts(text, |attempt| {
-        if attempt.get("prefix") != Some(&prefix) {
-            true
-        } else if attempt.get("prefixChoices") == Some(&history) {
-            false
+        let word = source_json(group.get("prefix").ok_or("missing prefix")?)?;
+        let history = source_json(group.get("prefixChoices").ok_or("missing history")?)?;
+        let row = answers(&group)?
+            .iter()
+            .map(admission)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some((previous, answer)) = seen.get(&word) {
+            if previous != &history && answer != &row {
+                return Ok(Some(index));
+            }
         } else {
-            other_history += 1;
-            true
+            seen.insert(word, (history, row));
         }
-    })?;
-    assert!(removed > 0 && other_history > 0);
-    Ok(Some(mutated))
+    }
+    Ok(None)
 }
 
 // Probe kinds are the only string-valued fields in these test records.
@@ -171,7 +147,6 @@ fn single_case(
     inputs: &Json,
     target: &Path,
     observation: &Path,
-    text: &str,
 ) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     let Json::Array(cases) = inputs else {
         return Err("invalid source inventory".into());
@@ -199,9 +174,9 @@ fn single_case(
     fs::create_dir_all(&observations)?;
     let input = target.join("input.json");
     fs::write(&input, format!("[{encoded}]"))?;
-    fs::write(
+    fs::hard_link(
+        observation,
         observations.join(observation.file_name().ok_or("missing observation file")?),
-        text,
     )?;
     let source_root = observation
         .parent()
@@ -304,12 +279,7 @@ fn completed_controls(
         let target = output
             .join("controls")
             .join(format!("completed-{mutation}"));
-        let (input, observations) = single_case(
-            inventory,
-            &target,
-            observation,
-            &fs::read_to_string(observation)?,
-        )?;
+        let (input, observations) = single_case(inventory, &target, observation)?;
         let filename = format!(
             "{}.jsonl",
             observation
@@ -451,31 +421,38 @@ fn admission_controls(checker: &Path, output: &Path) -> Result<(), Box<dyn std::
             "runtime-only=1 model-only=0",
         ),
     ] {
-        let needle = format!("\"accepted\":{accepted}");
         let mut selected = None;
         for path in &paths {
-            let text = fs::read_to_string(path)?;
-            let range = if continued {
-                continuation(&text, accepted)?
-            } else {
-                text.find(&needle).map(|start| start..start + needle.len())
-            };
-            if let Some(range) = range {
-                selected = Some((path, text, range));
+            if let Some(witness) = outcome_witness(path, continued, accepted)? {
+                selected = Some((path, witness));
                 break;
             }
         }
-        let (path, mut text, range) = selected.ok_or("missing admission control point")?;
-        let changed =
-            text[range.clone()].replacen(&needle, &format!("\"accepted\":{}", !accepted), 1);
-        text.replace_range(range, &changed);
+        let (path, (record, row)) = selected.ok_or("missing admission control point")?;
         let (input, observations) = single_case(
             &inventory,
             &output.join("admission-controls").join(name),
             path,
-            &text,
         )?;
-        drop(text);
+        rewrite_records(
+            &observations.join(path.file_name().unwrap()),
+            |index, line| {
+                if index != record {
+                    return Ok(vec![line.into()]);
+                }
+                let Json::Object(mut group) = json::parse(line)? else {
+                    return Err("invalid group".into());
+                };
+                let Some(Json::Array(rows)) = group.get_mut("answers") else {
+                    return Err("missing answers".into());
+                };
+                let Json::Array(fields) = &mut rows[row] else {
+                    return Err("invalid answer".into());
+                };
+                fields[0] = Json::Bool(!accepted);
+                Ok(vec![source_json(&Json::Object(group))?])
+            },
+        )?;
         rejected(checker, &input, &observations, expected)?;
         println!("Admission checker control: {name}: pass");
     }
@@ -578,12 +555,7 @@ fn parallel_coverage_control(
                 return Err("parallel control has no omitted schedule".into());
             }
             let target = output.join("controls").join(mutation);
-            let (input, observations) = single_case(
-                inventory,
-                &target,
-                observation,
-                &fs::read_to_string(observation)?,
-            )?;
+            let (input, observations) = single_case(inventory, &target, observation)?;
             let mut script_output =
                 BufWriter::new(fs::File::create(target.join("scripts").join(&filename))?);
             let mut completed_output = BufWriter::new(fs::File::create(
@@ -688,12 +660,7 @@ fn causal_control(
                 let label = source_json(probe.get("label").ok_or("missing causal target")?)?;
                 probe.insert("before".into(), json::parse(&label)?);
                 let target = output.join("controls/causal-self-dependency");
-                let (input, observations) = single_case(
-                    inventory,
-                    &target,
-                    observation,
-                    &fs::read_to_string(observation)?,
-                )?;
+                let (input, observations) = single_case(inventory, &target, observation)?;
                 let path = target
                     .join("scope-observations")
                     .join(filename)
@@ -806,8 +773,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     parallel_coverage_control(&checker, &inventory, &paths, &output)?;
     causal_control(&checker, &inventory, &paths, &output)?;
     let missing = output.join("controls/missing-case");
-    let (input, observations) =
-        single_case(&inventory, &missing, first, &fs::read_to_string(first)?)?;
+    let (input, observations) = single_case(&inventory, &missing, first)?;
     fs::remove_file(observations.join(first.file_name().unwrap()))?;
     rejected(
         &checker,
@@ -816,122 +782,135 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "missing, duplicate or unknown shape observation",
     )?;
     let malformed = output.join("controls/malformed");
-    let (input, observations) = single_case(&inventory, &malformed, first, "{")?;
+    let (input, observations) = single_case(&inventory, &malformed, first)?;
+    rewrite_records(
+        &observations.join(first.file_name().unwrap()),
+        |index, line| Ok(vec![if index == 0 { "{".into() } else { line.into() }]),
+    )?;
     rejected(&checker, &input, &observations, "invalid shape JSON")?;
-    let (input, observations) = {
-        let mut text = fs::read_to_string(first)?;
-        let (range, mut record) = attempts(&text)?
-            .next()
-            .ok_or("missing resolver input control point")??;
-        let Json::Object(attempt) = &mut record else {
-            return Err("invalid probe attempt".into());
-        };
-        attempt.insert(
-            "choice".into(),
-            Json::Array(vec![Json::Number("65536".into())]),
-        );
-        text.replace_range(range, &source_json(&record)?);
-        single_case(
-            &inventory,
-            &output.join("controls/unknown-resolver-input"),
-            first,
-            &text,
-        )?
-    };
+    let (input, observations) = single_case(
+        &inventory,
+        &output.join("controls/unknown-resolver-input"),
+        first,
+    )?;
+    rewrite_records(
+        &observations.join(first.file_name().unwrap()),
+        |index, line| {
+            if index != 0 {
+                return Ok(vec![line.into()]);
+            }
+            let Json::Object(mut header) = json::parse(line)? else {
+                return Err("invalid header".into());
+            };
+            header.insert(
+                "choices".into(),
+                Json::Array(vec![Json::Array(vec![Json::Number("65536".into())])]),
+            );
+            Ok(vec![source_json(&Json::Object(header))?])
+        },
+    )?;
     rejected(
         &checker,
         &input,
         &observations,
         "incomplete probe inventory",
     )?;
-    {
-        let mut checked = Vec::new();
-        for (name, accepted, expected) in [
-            (
-                "continuation-missing-probe",
-                false,
-                "incomplete probe inventory",
-            ),
-            (
-                "continuation-missing-prefix",
-                false,
-                "incomplete probe inventory",
-            ),
-            (
-                "continuation-duplicate-probe",
-                false,
-                "incomplete probe inventory",
-            ),
-            (
-                "continuation-missing-resolver-inputs",
-                false,
-                "invalid replayed resolver inputs",
-            ),
-        ] {
-            let mut selected = None;
-            for path in &paths {
-                let text = fs::read_to_string(path)?;
-                if let Some(range) = continuation(&text, accepted)? {
-                    selected = Some((path, text, range));
-                    break;
-                }
+    let mut checked = Vec::new();
+    for (name, expected) in [
+        ("continuation-missing-probe", "incomplete probe inventory"),
+        ("continuation-missing-prefix", "incomplete probe inventory"),
+        ("continuation-duplicate-probe", "incomplete probe inventory"),
+        (
+            "continuation-duplicate-prefix",
+            "incomplete probe inventory",
+        ),
+        (
+            "continuation-missing-resolver-inputs",
+            "invalid replayed resolver inputs",
+        ),
+    ] {
+        let mut selected = None;
+        for path in &paths {
+            if let Some(witness) = outcome_witness(path, true, false)? {
+                selected = Some((path, witness));
+                break;
             }
-            let Some((path, mut text, range)) = selected else {
-                return Err("missing continuation mutation point".into());
-            };
-            let record = text[range.clone()].to_owned();
-            match name {
-                "continuation-missing-prefix" => {
-                    let record = json::parse(&record)?;
-                    let prefix = record.get("prefix").ok_or("missing control prefix")?;
-                    let (mutated, removed) =
-                        retain_attempts(&text, |attempt| attempt.get("prefix") != Some(prefix))?;
-                    if removed == 0 || attempts(&mutated)?.next().transpose()?.is_none() {
-                        return Err("missing-prefix control did not remove one proper group".into());
-                    }
-                    text = mutated;
-                }
-                "continuation-missing-probe" => {
-                    let separator = range
-                        .start
-                        .checked_sub(1)
-                        .ok_or("missing continuation separator")?;
-                    if text.as_bytes().get(separator) != Some(&b',') {
-                        return Err("continuation record has no preceding separator".into());
-                    }
-                    text.replace_range(separator..range.end, "");
-                }
-                "continuation-duplicate-probe" => text.insert_str(range.end, &format!(",{record}")),
-                "continuation-missing-resolver-inputs" => {
-                    let Json::Object(mut fields) = json::parse(&record)? else {
-                        return Err("invalid continuation record".into());
-                    };
-                    fields.insert("prefixChoices".into(), Json::Array(Vec::new()));
-                    text.replace_range(range, &source_json(&Json::Object(fields))?);
-                }
-                _ => return Err("unknown continuation control".into()),
-            }
-            let target = output.join("controls").join(name);
-            let (input, observations) = single_case(&inventory, &target, path, &text)?;
-            drop(text);
-            rejected(&checker, &input, &observations, expected)?;
-            checked.push(name);
         }
-        println!(
-            "Generated continuation checker controls: {}: pass",
-            checked.join(", ")
-        );
+        let (path, (record, row)) = selected.ok_or("missing continuation mutation point")?;
+        let selected = BufReader::new(fs::File::open(path)?)
+            .lines()
+            .nth(record)
+            .ok_or("missing selected prefix")??;
+        let selected = json::parse(&selected)?;
+        let word = selected
+            .get("prefix")
+            .ok_or("missing selected prefix word")?;
+        let target = output.join("controls").join(name);
+        let (input, observations) = single_case(&inventory, &target, path)?;
+        rewrite_records(
+            &observations.join(path.file_name().unwrap()),
+            |index, line| {
+                if name == "continuation-missing-prefix"
+                    && index != 0
+                    && json::parse(line)?.get("prefix") == Some(word)
+                {
+                    return Ok(vec![]);
+                }
+                if index != record {
+                    return Ok(vec![line.into()]);
+                }
+                let Json::Object(mut group) = json::parse(line)? else {
+                    return Err("invalid group".into());
+                };
+                match name {
+                    "continuation-missing-prefix" => {
+                        return Err("selected prefix was not removed".into());
+                    }
+                    "continuation-duplicate-prefix" => return Ok(vec![line.into(), line.into()]),
+                    "continuation-missing-resolver-inputs" => {
+                        group.insert("prefixChoices".into(), Json::Array(vec![]));
+                    }
+                    "continuation-missing-probe" | "continuation-duplicate-probe" => {
+                        let Some(Json::Array(rows)) = group.get_mut("answers") else {
+                            return Err("missing answers".into());
+                        };
+                        if name == "continuation-missing-probe" {
+                            rows.remove(row);
+                        } else {
+                            let extra = json::parse(&source_json(&rows[row])?)?;
+                            rows.insert(row, extra);
+                        }
+                    }
+                    _ => return Err("unknown continuation mutation".into()),
+                }
+                Ok(vec![source_json(&Json::Object(group))?])
+            },
+        )?;
+        rejected(&checker, &input, &observations, expected)?;
+        checked.push(name);
     }
+    println!(
+        "Generated continuation checker controls: {}: pass",
+        checked.join(", ")
+    );
     let mut history_control = false;
     for path in &paths {
-        if let Some(text) = missing_history(&fs::read_to_string(path)?)? {
+        if let Some(record) = missing_history(path)? {
             let (input, observations) = single_case(
                 &inventory,
                 &output.join("controls/continuation-missing-history"),
                 path,
-                &text,
             )?;
-            drop(text);
+            rewrite_records(
+                &observations.join(path.file_name().unwrap()),
+                |index, line| {
+                    Ok(if index == record {
+                        vec![]
+                    } else {
+                        vec![line.into()]
+                    })
+                },
+            )?;
             rejected(
                 &checker,
                 &input,
@@ -961,67 +940,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn record_filter_preserves_unmodified_values_and_the_observation_envelope() {
-        let text = r#"{"name":17,"attempts":[{"choice":[],"prefix":[0],"parked":[[1,true]]},{"choice":[1],"prefix":[2]},{"choice":[],"prefix":[0],"parked":[]}] }"#;
-        let original = json::parse(text).unwrap();
-        for prefix in [0, 2, 3] {
-            let mut expected = json::parse(text).unwrap();
-            let Json::Object(fields) = &mut expected else {
-                panic!()
-            };
-            let Some(Json::Array(values)) = fields.get_mut("attempts") else {
-                panic!()
-            };
-            let before = values.len();
-            let excluded = Json::Array(vec![Json::Number(prefix.to_string())]);
-            values.retain(|value| value.get("prefix") != Some(&excluded));
-            let removed = before - values.len();
-            let (mutated, actual_removed) =
-                retain_attempts(text, |value| value.get("prefix") != Some(&excluded)).unwrap();
-            assert_eq!(actual_removed, removed);
-            assert_eq!(json::parse(&mutated).unwrap(), expected);
-            assert_eq!(json::parse(text).unwrap(), original);
-        }
-    }
-
-    #[test]
-    fn record_cursor_handles_nested_values_and_rejects_broken_boundaries() {
-        let text =
-            r#"{"name":0,"attempts":[{"choice":[],"extra":{"text":"},[\\\""}},{"choice":[1]}]}"#;
-        let entries = attempts(text)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(entries.len(), 2);
-        for (range, record) in entries {
-            assert_eq!(json::parse(&text[range]).unwrap(), record);
-        }
-        for text in [
-            r#"{"attempts":[{"choice":[]},]}"#,
-            r#"{"attempts":[{"choice":[]} {"choice":[]}]}"#,
-            r#"{"attempts":[{"choice":[]}]}garbage"#,
-            r#"{"attempts":[{"choice":[}] }"#,
-        ] {
-            assert!(
-                attempts(text)
-                    .unwrap()
-                    .collect::<Result<Vec<_>, _>>()
-                    .is_err(),
-                "{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_missing_history_control_keeps_the_other_answer_to_the_same_call() {
-        let text = r#"{"attempts":[{"prefix":[0],"prefixChoices":[[]],"choice":[],"event":1,"receive":false,"accepted":true},{"prefix":[0],"prefixChoices":[[0]],"choice":[],"event":1,"receive":false,"accepted":false}]}"#;
-        let mutated = missing_history(text).unwrap().unwrap();
-        let record = json::parse(&mutated).unwrap();
-        let Some(Json::Array(attempts)) = record.get("attempts") else {
-            panic!()
-        };
-        assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].get("accepted"), Some(&Json::Bool(true)));
-        assert!(missing_history(&mutated).unwrap().is_none());
+    fn a_mutation_preserves_the_shared_baseline_and_every_other_record() {
+        let root =
+            env::temp_dir().join(format!("hibana-observation-groups-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let original = root.join("baseline.jsonl");
+        let changed = root.join("changed.jsonl");
+        let text = concat!(
+            "{\"name\":0,\"choices\":[[]],\"events\":[0]}\n",
+            "{\"prefix\":[],\"prefixChoices\":[],\"answers\":[[true,[]],[false,[]]]}\n",
+            "{\"prefix\":[0],\"prefixChoices\":[[]],\"answers\":[[false,[]],[true,[[1,true]]]]}\n",
+            "{\"prefix\":[0],\"prefixChoices\":[[0]],\"answers\":[[true,[]],[true,[]]]}\n",
+        );
+        fs::write(&original, text).unwrap();
+        fs::hard_link(&original, &changed).unwrap();
+        assert_eq!(
+            outcome_witness(&original, true, false).unwrap(),
+            Some((2, 0))
+        );
+        let record = missing_history(&original).unwrap().unwrap();
+        assert_eq!(record, 3);
+        rewrite_records(&changed, |index, line| {
+            Ok(if index == record {
+                vec![]
+            } else {
+                vec![line.into()]
+            })
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&original).unwrap(), text);
+        let remaining = fs::read_to_string(&changed).unwrap();
+        assert_eq!(
+            remaining.lines().collect::<Vec<_>>(),
+            text.lines().take(3).collect::<Vec<_>>()
+        );
+        assert!(missing_history(&changed).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -32,24 +32,19 @@ structure ShapeAttempt where
   parked : List (Nat × Bool)
   deriving Lean.FromJson
 
-structure ShapeOutput where
+-- One immutable query matrix per source; every history retains every answer.
+-- JSONL stores shared prefix/input data once and permits bounded-memory reads.
+structure ShapeOutputHeader where
   name : Nat
-  attempts : Array ShapeAttempt
+  choices : List (List Nat)
+  events : List Nat
   deriving Lean.FromJson
 
-def shapeSharePrefix (previous current : ShapeAttempt) : ShapeAttempt :=
-  { current with
-    «prefix» := if previous.prefix = current.prefix then previous.prefix else current.prefix
-    prefixChoices := if previous.prefixChoices = current.prefixChoices then
-      previous.prefixChoices else current.prefixChoices }
-
-theorem shapeSharePrefix_preserves_every_field (previous current : ShapeAttempt) :
-    shapeSharePrefix previous current = current := by
-  by_cases word : previous.prefix = current.prefix <;>
-    by_cases choices : previous.prefixChoices = current.prefixChoices <;>
-    simp [shapeSharePrefix, word, choices]
-
-#print axioms shapeSharePrefix_preserves_every_field
+structure ShapeOutputGroup where
+  «prefix» : List Nat
+  prefixChoices : List (List Nat)
+  answers : Array (Bool × List (Nat × Bool))
+  deriving Lean.FromJson
 
 def parseShape (input : ShapeInput) : Except String Source := do
   let mut sources : Array Source := #[]
@@ -1164,6 +1159,14 @@ theorem shapeGroupAnswers_as_candidate_queries (source : Source)
   rw [shapeQueryRows_fold]
   simp only [Bool.false_or, shapePreparedGroupStates_matches_independent_replay]
 
+theorem shapeGroupAnswers_query_batches (source : Source)
+    (plans : List (SourceOccurrenceCut source)) (first second : List ShapeQueryGroup) :
+    shapeGroupAnswers source plans (first ++ second) =
+      shapeGroupAnswers source plans first ++ shapeGroupAnswers source plans second := by
+  simp only [shapeGroupAnswers_as_candidate_queries, List.map_append]
+
+#print axioms shapeGroupAnswers_query_batches
+
 theorem shapeGroupAnswers_append (source : Source)
     (first second : List (SourceOccurrenceCut source)) (groups : List ShapeQueryGroup) :
     shapeGroupAnswers source (first ++ second) groups =
@@ -1697,15 +1700,8 @@ def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
       found := found ++ level
     return found
 
--- Reject omitted/duplicate probes independently of the observed outcome.
-def shapeProbeKeys (source : Source)
-    (prefixes : List (List Nat × List (List Nat))) (choices : List (List Nat)) :
-    List (List Nat × List Nat × List (List Nat) × Nat × Bool) :=
-  choices.flatMap fun choice =>
-    prefixes.flatMap fun (word, inputs) =>
-      (source.messageEntries 0).flatMap fun (event, _) =>
-        [(choice, word, inputs, event, false), (choice, word, inputs, event, true)]
-
+-- Every group carries this whole matrix, in source-event/direction order.
+-- Group identity retains the recorded history; word-only deduplication is invalid.
 theorem probe_identity_preserves_the_recorded_input_history
     (choice word : List Nat) (a b : List (List Nat)) (event : Nat) (receive : Bool) :
     (choice, word, a, event, receive) = (choice, word, b, event, receive) ↔ a = b := by
@@ -1816,108 +1812,50 @@ def shapeRead [Lean.FromJson α] (path : System.FilePath) : IO α := do
   | .ok value => pure value
   | .error error => throw (IO.userError s!"invalid shape JSON in {path}: {error}")
 
--- Decode each observation before reading the next one. Building the entire
--- generic JSON tree first retains a second copy of every prefix and choice.
--- Individual fields keep the standard FromJson decoders and JSON grammar.
-open Std.Internal.Parsec Std.Internal.Parsec.String in
-private def shapeJsonValue [Lean.FromJson α] : Parser α := do
-  match Lean.fromJson? (← Lean.Json.Parser.anyCore) with
-  | .ok value => pure value
-  | .error error => fail error
+def shapeExpandRows (word : List Nat) (inputs : List (List Nat)) :
+    List ShapeRequest → List (Bool × List (Nat × Bool)) → List ShapeAttempt
+  | (choice, event, receive) :: questions, (accepted, parked) :: answers =>
+      { choice, «prefix» := word, prefixChoices := inputs, event, receive, accepted, parked } ::
+        shapeExpandRows word inputs questions answers
+  | _, _ => []
 
-open Std.Internal.Parsec Std.Internal.Parsec.String in
-private partial def shapeAttemptArray (values : Array ShapeAttempt) : Parser (Array ShapeAttempt) := do
-  let value ← shapeJsonValue
-  let value := match values.back? with
-    | some previous => shapeSharePrefix previous value
-    | none => value
-  let values := values.push value
-  let separator ← any
-  ws
-  if separator == ']' then pure values
-  else if separator == ',' then shapeAttemptArray values
-  else fail "unexpected character in observation array"
+theorem shapeExpandRows_preserves_every_answer (word : List Nat) (inputs : List (List Nat))
+    (questions : List ShapeRequest) (answers : List (Bool × List (Nat × Bool)))
+    (same : questions.length = answers.length) :
+    ((shapeExpandRows word inputs questions answers).map fun attempt =>
+      (attempt.accepted, attempt.parked)) = answers := by
+  induction questions generalizing answers with
+  | nil => cases answers <;> simp_all [shapeExpandRows]
+  | cons question questions ih =>
+      cases answers with
+      | nil => simp at same
+      | cons answer answers =>
+          obtain ⟨choice, event, receive⟩ := question
+          obtain ⟨accepted, parked⟩ := answer
+          simp only [List.length_cons, Nat.add_right_cancel_iff] at same
+          simp only [shapeExpandRows, List.map_cons]
+          exact congrArg (List.cons (accepted, parked)) (ih answers same)
 
-open Std.Internal.Parsec Std.Internal.Parsec.String in
-private def shapeAttempts : Parser (Array ShapeAttempt) := do
-  skipChar '['
-  ws
-  if (← peek!) == ']' then
-    skip
-    ws
-    pure #[]
-  else shapeAttemptArray #[]
+theorem shapeExpandRows_preserves_every_question (word : List Nat) (inputs : List (List Nat))
+    (questions : List ShapeRequest) (answers : List (Bool × List (Nat × Bool)))
+    (same : questions.length = answers.length) :
+    ((shapeExpandRows word inputs questions answers).map fun attempt =>
+      (attempt.choice, attempt.event, attempt.receive)) = questions := by
+  induction questions generalizing answers with
+  | nil => cases answers <;> simp_all [shapeExpandRows]
+  | cons question questions ih =>
+      cases answers with
+      | nil => simp at same
+      | cons answer answers =>
+          obtain ⟨choice, event, receive⟩ := question
+          obtain ⟨accepted, parked⟩ := answer
+          simp only [List.length_cons, Nat.add_right_cancel_iff] at same
+          simp only [shapeExpandRows, List.map_cons]
+          exact congrArg (List.cons (choice, event, receive)) (ih answers same)
 
-open Std.Internal.Parsec Std.Internal.Parsec.String in
-private partial def shapeOutputFields (name : Option Nat)
-    (attempts : Option (Array ShapeAttempt)) : Parser ShapeOutput := do
-  skipChar '"'
-  let field ← Lean.Json.Parser.str
-  ws
-  skipChar ':'
-  ws
-  let (name, attempts) ← if field == "name" then
-      pure (some (← shapeJsonValue), attempts)
-    else if field == "attempts" then
-      pure (name, some (← shapeAttempts))
-    else do
-      let _ ← Lean.Json.Parser.anyCore
-      pure (name, attempts)
-  let separator ← any
-  ws
-  if separator == '}' then
-    match name, attempts with
-    | some name, some attempts => pure ⟨name, attempts⟩
-    | _, _ => fail "missing observation fields"
-  else if separator == ',' then shapeOutputFields name attempts
-  else fail "unexpected character in observation object"
+#print axioms shapeExpandRows_preserves_every_answer
+#print axioms shapeExpandRows_preserves_every_question
 
-open Std.Internal.Parsec Std.Internal.Parsec.String in
-private def shapeOutputParser : Parser ShapeOutput := do
-  ws
-  skipChar '{'
-  ws
-  let output ← shapeOutputFields none none
-  eof
-  pure output
-
-def shapeReadOutput (path : System.FilePath) : IO ShapeOutput := do
-  let raw ← IO.FS.readFile path
-  match Std.Internal.Parsec.String.Parser.run shapeOutputParser raw with
-  | .ok output => pure output
-  | .error error => throw (IO.userError s!"invalid shape JSON in {path}: {error}")
-
-def shapeGroupStep (attempt : ShapeAttempt)
-    (groups : List (List Nat × List ShapeAttempt)) : List (List Nat × List ShapeAttempt) :=
-  match groups with
-  | [] => [(attempt.prefix, [attempt])]
-  | (word, attempts) :: rest =>
-      if attempt.prefix == word && attempts.head?.all (·.prefixChoices == attempt.prefixChoices) then (word, attempt :: attempts) :: rest
-      else (attempt.prefix, [attempt]) :: groups
-
-def shapeAttemptGroups (attempts : List ShapeAttempt) : List (List Nat × List ShapeAttempt) :=
-  attempts.foldr shapeGroupStep []
-
-theorem shapeGroupStep_keeps_every_attempt (attempt : ShapeAttempt)
-    (groups : List (List Nat × List ShapeAttempt)) :
-    (shapeGroupStep attempt groups).flatMap Prod.snd = attempt :: groups.flatMap Prod.snd := by
-  cases groups with
-  | nil => rfl
-  | cons group rest =>
-      rcases group with ⟨word, attempts⟩
-      simp only [shapeGroupStep]
-      split <;> simp
-
-theorem shapeAttemptGroups_keeps_order_and_multiplicity (attempts : List ShapeAttempt) :
-    (shapeAttemptGroups attempts).flatMap Prod.snd = attempts := by
-  induction attempts with
-  | nil => rfl
-  | cons attempt rest ih =>
-      change (shapeGroupStep attempt (shapeAttemptGroups rest)).flatMap Prod.snd = attempt :: rest
-      rw [shapeGroupStep_keeps_every_attempt, ih]
-
-#print axioms shapeGroupStep_keeps_every_attempt
-#print axioms shapeAttemptGroups_keeps_order_and_multiplicity
 
 def shapeScriptCount : Source → Nat
   | .send _ => 1
@@ -2286,7 +2224,7 @@ def main (args : List String) : IO UInt32 := do
     | _ => throw (IO.userError "usage: protocol-shapes INPUT.json OBSERVATION_DIRECTORY [--mutant-root-seq-as-par]")
   let inputs : Array ShapeInput ← shapeRead inputPath
   unless !inputs.isEmpty do throw (IO.userError "empty shape inventory")
-  let expectedNames := inputs.toList.map (fun input => s!"{input.name}.json")
+  let expectedNames := inputs.toList.map (fun input => s!"{input.name}.jsonl")
   let actualNames := (← System.FilePath.readDir outputPath).toList.map (·.fileName)
   unless expectedNames.mergeSort (· ≤ ·) == actualNames.mergeSort (· ≤ ·) do
     throw (IO.userError "missing, duplicate or unknown shape observation")
@@ -2375,129 +2313,143 @@ def main (args : List String) : IO UInt32 := do
       shapeShortPrefixes source (candidates.map ShapePlan.of) choices else []
     let prefixes := ((plannedPrefixes.map fun word => (word, shapeWordInputs source word)) ++
       shortPrefixes).eraseDups
-    let output ← shapeReadOutput (System.FilePath.mk outputPath / s!"{input.name}.json")
-    unless input.name == output.name do
-      throw (IO.userError s!"shape {input.name}: incomplete probe inventory; wrong observation name")
-    let mut missing : Std.HashMap
-        (List Nat × List Nat × List (List Nat) × Nat × Bool) Nat := {}
-    for key in shapeProbeKeys source prefixes choices do
-      missing := missing.insert key ((missing.get? key).getD 0 + 1)
-    for attempt in output.attempts do
-      unless attempt.prefix.length == attempt.prefixChoices.length &&
-          attempt.prefixChoices.all (fun choice => choice == choice.eraseDups.mergeSort (· ≤ ·) &&
-            choice.all (· < input.resolvers)) do
-        throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
-      let key := (attempt.choice, attempt.prefix, attempt.prefixChoices, attempt.event, attempt.receive)
-      match missing.get? key with
-      | none => throw (IO.userError s!"shape {input.name}: incomplete probe inventory; unknown or duplicate probe")
-      | some count =>
-          if count == 1 then missing := missing.erase key
-          else missing := missing.insert key (count - 1)
-    unless missing.isEmpty do
-      throw (IO.userError s!"shape {input.name}: incomplete probe inventory")
-    IO.eprintln s!"shape {input.name}: inventory checked, comparing {output.attempts.size} probes against {candidates.length} source witnesses"
-    let attemptGroups := shapeAttemptGroups output.attempts.toList
-    let mut groups : Array ShapeQueryGroup := #[]
-    for (word, inputs) in prefixes do
-      groups := groups.push (word, some inputs, [none])
-    for (word, attempts) in attemptGroups do
-      let some first := attempts.head?
-        | throw (IO.userError "empty prefix group")
-      unless attempts.all (fun attempt => attempt.prefixChoices == first.prefixChoices) &&
-          first.prefixChoices.all (fun choice =>
-            choice == choice.eraseDups.mergeSort (· ≤ ·) &&
+    let handle ← IO.FS.Handle.mk (System.FilePath.mk outputPath / s!"{input.name}.jsonl") .read
+    let header : ShapeOutputHeader ← match
+        (Lean.Json.parse (← handle.getLine) >>= Lean.fromJson? : Except String ShapeOutputHeader) with
+      | .ok value => pure value
+      | .error error => throw (IO.userError s!"invalid shape JSON: {error}")
+    unless header.name == input.name && header.choices == choices &&
+        header.events == (source.messageEntries 0).map Prod.fst do
+      throw (IO.userError s!"shape {input.name}: incomplete probe inventory; wrong query matrix")
+    let questions := choices.flatMap fun choice => header.events.flatMap fun event =>
+      [(choice, event, false), (choice, event, true)]
+    unless !questions.isEmpty do throw (IO.userError "empty operation query matrix")
+    let mut missing : Std.HashSet (List Nat × List (List Nat)) := {}
+    for key in prefixes do missing := missing.insert key
+    let mut ended := false
+    while !ended do
+      let mut attemptGroups : List (List Nat × List ShapeAttempt) := []
+      -- This partitions work, not inputs: EOF and the exact independent
+      -- prefix inventory are mandatory, including histories sharing a word.
+      for _ in List.range (max 1 (65536 / questions.length)) do
+        let line ← handle.getLine
+        if line.isEmpty then
+          ended := true
+          break
+        let observed : ShapeOutputGroup ← match
+            (Lean.Json.parse line >>= Lean.fromJson? : Except String ShapeOutputGroup) with
+          | .ok value => pure value
+          | .error error => throw (IO.userError s!"invalid shape JSON: {error}")
+        unless observed.prefix.length == observed.prefixChoices.length &&
+            observed.prefixChoices.all (fun choice => choice == choice.eraseDups.mergeSort (· ≤ ·) &&
               choice.all (· < input.resolvers)) do
-        throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
-      let mut requests : Array (Option ShapeRequest) := #[none]
-      for attempt in attempts do
-        unless attempt.prefix == word do throw (IO.userError "inconsistent prefix group")
-        requests := requests.push (some (attempt.choice, attempt.event, attempt.receive))
-        match attempt.parked with
-        | [] => pure ()
-        | [(label, _)] =>
-            unless label < 256 do
-              throw (IO.userError s!"shape {input.name}: invalid parked preview label")
-            if attempt.receive && (shapeMessage? source attempt.event).any
+          throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
+        let key := (observed.prefix, observed.prefixChoices)
+        unless missing.contains key && observed.answers.size == questions.length do
+          throw (IO.userError s!"shape {input.name}: incomplete probe inventory; unknown, duplicate or missing probe group")
+        missing := missing.erase key
+        let attempts := shapeExpandRows observed.prefix observed.prefixChoices questions observed.answers.toList
+        attemptGroups := (observed.prefix, attempts) :: attemptGroups
+      attemptGroups := attemptGroups.reverse
+      let mut groups : Array ShapeQueryGroup := #[]
+      for (word, attempts) in attemptGroups do
+        let some first := attempts.head?
+          | throw (IO.userError "empty prefix group")
+        unless attempts.all (fun attempt => attempt.prefixChoices == first.prefixChoices) &&
+            first.prefixChoices.all (fun choice =>
+              choice == choice.eraseDups.mergeSort (· ≤ ·) &&
+                choice.all (· < input.resolvers)) do
+          throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
+        let mut requests : Array (Option ShapeRequest) := #[none]
+        for attempt in attempts do
+          unless attempt.prefix == word do throw (IO.userError "inconsistent prefix group")
+          requests := requests.push (some (attempt.choice, attempt.event, attempt.receive))
+          match attempt.parked with
+          | [] => pure ()
+          | [(label, _)] =>
+              unless label < 256 do
+                throw (IO.userError s!"shape {input.name}: invalid parked preview label")
+              if attempt.receive && (shapeMessage? source attempt.event).any
+                  (fun message => message.sender == message.receiver) then
+                requests := requests.push (some (attempt.choice, attempt.event, false))
+          | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
+        groups := groups.push (word, some first.prefixChoices, requests.toList)
+      let answers := (shapeParallelGroupAnswers source (Nat.log2 (candidates.length / 4096))
+        candidates groups.toList).get
+      let observedAnswers := answers
+      unless observedAnswers.length == attemptGroups.length do
+        throw (IO.userError "incomplete source query answers")
+      -- The defect control changes only the outer dependency. Prefix validity
+      -- and parked local receives still use the original accepted source.
+      let comparisonAnswers := if weakenRoot then
+        let altered := match source with | .seq a b => .par a b | _ => source
+        let plans := shapePlans altered
+        (shapeParallelGroupAnswers altered (Nat.log2 (plans.length / 4096))
+          plans groups.toList).get
+      else observedAnswers
+      unless comparisonAnswers.length == attemptGroups.length do
+        throw (IO.userError "incomplete comparison query answers")
+      for ((_, attempts), (original, comparison)) in
+          attemptGroups.zip (observedAnswers.zip comparisonAnswers) do
+        let (valid, original) ← match original with
+          | valid :: rest => pure (valid, rest)
+          | [] => throw (IO.userError "missing source-prefix answer")
+        unless valid do
+          throw (IO.userError s!"shape {input.name}: replayed inputs have no coherent source execution")
+        let comparison ← match comparison with
+          | _ :: rest => pure rest
+          | [] => throw (IO.userError "missing comparison-prefix answer")
+        unless original.length == comparison.length do
+          throw (IO.userError "query answer lengths differ")
+        let mut remaining := original.zip comparison
+        for attempt in attempts do
+          let (answer, rest) ← match remaining with
+            | answer :: rest => pure (answer, rest)
+            | [] => throw (IO.userError "missing operation query answer")
+          remaining := rest
+          let permitted := answer.2
+          let localPreview ← if !attempt.parked.isEmpty && attempt.receive &&
+              (shapeMessage? source attempt.event).any
                 (fun message => message.sender == message.receiver) then
-              requests := requests.push (some (attempt.choice, attempt.event, false))
-        | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
-      groups := groups.push (word, some first.prefixChoices, requests.toList)
-    let answers := (shapeParallelGroupAnswers source (Nat.log2 (candidates.length / 4096))
-      candidates groups.toList).get
-    let (prefixAnswers, observedAnswers) := answers.splitAt prefixes.length
-    unless prefixAnswers.length == prefixes.length && observedAnswers.length == attemptGroups.length do
-      throw (IO.userError "incomplete source query answers")
-    unless prefixAnswers.all (· == [true]) do
-      throw (IO.userError s!"shape {input.name}: source prefix has no accepted occurrence execution")
-    -- The defect control changes only the outer dependency. Prefix validity
-    -- and parked local receives still use the original accepted source.
-    let comparisonAnswers := if weakenRoot then
-      let altered := match source with | .seq a b => .par a b | _ => source
-      let plans := shapePlans altered
-      (shapeParallelGroupAnswers altered (Nat.log2 (plans.length / 4096))
-        plans (groups.toList.drop prefixes.length)).get
-    else observedAnswers
-    unless comparisonAnswers.length == attemptGroups.length do
-      throw (IO.userError "incomplete comparison query answers")
-    for ((_, attempts), (original, comparison)) in
-        attemptGroups.zip (observedAnswers.zip comparisonAnswers) do
-      let (valid, original) ← match original with
-        | valid :: rest => pure (valid, rest)
-        | [] => throw (IO.userError "missing source-prefix answer")
-      unless valid do
-        throw (IO.userError s!"shape {input.name}: replayed inputs have no coherent source execution")
-      let comparison ← match comparison with
-        | _ :: rest => pure rest
-        | [] => throw (IO.userError "missing comparison-prefix answer")
-      unless original.length == comparison.length do
-        throw (IO.userError "query answer lengths differ")
-      let mut remaining := original.zip comparison
-      for attempt in attempts do
-        let (answer, rest) ← match remaining with
-          | answer :: rest => pure (answer, rest)
-          | [] => throw (IO.userError "missing operation query answer")
-        remaining := rest
-        let permitted := answer.2
-        let localPreview ← if !attempt.parked.isEmpty && attempt.receive &&
-            (shapeMessage? source attempt.event).any
-              (fun message => message.sender == message.receiver) then
-          match remaining with
-          | answer :: rest =>
-              remaining := rest
-              pure answer.1
-          | [] => throw (IO.userError "missing parked local query answer")
-        else pure false
-        checked := checked + 1
-        if !attempt.prefix.isEmpty then continuations := continuations + 1
-        if permitted != attempt.accepted then
-          if runtimeOnly + modelOnly < 10 then
-            IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
-          if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
-        match attempt.parked with
-        | [] => pure ()
-        | [(previewLabel, accepted)] =>
-            unless previewLabel < 256 do
-              throw (IO.userError s!"shape {input.name}: invalid parked preview label")
-            -- A preview adds no source step. Matching local recv consumes the
-            -- same self-role operation as send; other local recvs still need
-            -- their own materialized preview. Wire operations keep their usual
-            -- direction and the independently replayed source prefix.
-            let expected := match shapeMessage? source attempt.event with
-              | some message =>
-                  if attempt.receive && message.sender == message.receiver then
-                    message.label == previewLabel &&
-                      localPreview
-                  else permitted
-              | none => false
-            parkedChecked := parkedChecked + 1
-            if expected != accepted then
-              if parkedRuntimeOnly + parkedModelOnly < 10 then
-                IO.println s!"shape {input.name} parked={previewLabel} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={expected} runtime={accepted}"
-              if accepted then parkedRuntimeOnly := parkedRuntimeOnly + 1
-              else parkedModelOnly := parkedModelOnly + 1
-              if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
-        | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
-      unless remaining.isEmpty do throw (IO.userError "extra operation query answers")
+            match remaining with
+            | answer :: rest =>
+                remaining := rest
+                pure answer.1
+            | [] => throw (IO.userError "missing parked local query answer")
+          else pure false
+          checked := checked + 1
+          if !attempt.prefix.isEmpty then continuations := continuations + 1
+          if permitted != attempt.accepted then
+            if runtimeOnly + modelOnly < 10 then
+              IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
+            if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+          match attempt.parked with
+          | [] => pure ()
+          | [(previewLabel, accepted)] =>
+              unless previewLabel < 256 do
+                throw (IO.userError s!"shape {input.name}: invalid parked preview label")
+              -- A preview adds no source step. Matching local recv consumes the
+              -- same self-role operation as send; other local recvs still need
+              -- their own materialized preview. Wire operations keep their usual
+              -- direction and the independently replayed source prefix.
+              let expected := match shapeMessage? source attempt.event with
+                | some message =>
+                    if attempt.receive && message.sender == message.receiver then
+                      message.label == previewLabel &&
+                        localPreview
+                    else permitted
+                | none => false
+              parkedChecked := parkedChecked + 1
+              if expected != accepted then
+                if parkedRuntimeOnly + parkedModelOnly < 10 then
+                  IO.println s!"shape {input.name} parked={previewLabel} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={expected} runtime={accepted}"
+                if accepted then parkedRuntimeOnly := parkedRuntimeOnly + 1
+                else parkedModelOnly := parkedModelOnly + 1
+                if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+          | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
+        unless remaining.isEmpty do throw (IO.userError "extra operation query answers")
+    unless missing.isEmpty do
+      throw (IO.userError s!"shape {input.name}: incomplete probe inventory; missing prefix or input history")
     unless parkedRuntimeOnly == 0 && parkedModelOnly == 0 do
       IO.println s!"Parked previews/source mismatch: runtime-only={parkedRuntimeOnly} model-only={parkedModelOnly}"
     unless runtimeOnly == 0 && modelOnly == 0 do

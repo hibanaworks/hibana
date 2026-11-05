@@ -63,8 +63,19 @@ same modules. Local `run_ci_gates.sh` still checks both parts; `--rust` names
 only the Rust part that CI assigns separately.
 The build cache is an optimization of the same checker, not another oracle.
 
-The replay checker decodes observations incrementally and shares immutable
-source preparation and repeated prefixes. Each cached replay carries a Lean
+Admission observations use one JSONL query header per source and one record
+per exact (prefix, recorded resolver history). Each record contains an answer
+for every header query in order, including each parked-preview result. The
+checker derives the complete query matrix and prefix inventory independently
+from the source; wrong matrices, missing/duplicate histories, short/extra answer
+rows, malformed data and unfinished files fail closed. No outcome is deduplicated.
+Observed answer rows and their model answers are held only in bounded query
+batches; the independently derived prefix inventory remains resident.
+General Lean theorems preserve every expanded question/answer and show that
+query batching retains the original source comparator's results. The process
+runner moves the first partition's immutable observations instead of making
+two full-size copies; all subsequent partitions must match it byte-for-byte.
+The replay checker shares immutable source preparation and repeated prefixes. Each cached replay carries a Lean
 equality to fresh replay; general theorems preserve every query and the whole
 candidate family. Query inputs are prepared once, and an empty candidate state
 reuses the previous answer row instead of constructing another all-false row.
@@ -107,11 +118,13 @@ aggregates all counts. Workers receive the original input and observation
 paths; no candidate, probe, script or source variant is removed. Their reports
 are not population certificates. Only the parent emits the complete population
 summary, after every worker succeeds, under the same descendant-memory guard.
-Observation mutations decode one attempt at a time. Filtering a prefix or a
-resolver history preserves every retained record and the observation envelope;
-it does not retain a JSON object tree for the entire probe population. Temporary
-mutation data is released before starting its checker process. All source-dependent
-negative controls still run on their original complete observations.
+Observation mutations stream one history group at a time. They alter a single
+answer or remove/duplicate a group while preserving every other record, including
+other histories of the same word. Immutable baselines are linked into each
+control directory; mutations replace their own file and never modify the shared
+baseline. A real-file regression verifies this isolation. Temporary mutation
+data is released before starting the checker. All source-dependent negative
+controls still use the complete original source and observation population.
 The oracle build executes its fifteen fixed source-cut regressions once and
 archives their log with the binary hash. Normal population invocations do not
 repeat them. Their mutation controls retain the explicit regression entry.

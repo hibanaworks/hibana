@@ -161,8 +161,8 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
         .join(format!("{}.jsonl", case.name));
     let initial = output
         .join("observations")
-        .join(format!("{}.json", case.name));
-    let first_initial = parts.join("initial.json");
+        .join(format!("{}.jsonl", case.name));
+    let first_initial = parts.join("initial.jsonl");
     let assembled = parts.join("assembled.jsonl");
     for file in [&observation, &initial] {
         fs::create_dir_all(file.parent().ok_or("observation has no parent directory")?)?;
@@ -191,7 +191,7 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
             for file in [
                 directory
                     .join("observations")
-                    .join(format!("{}.json", case.name)),
+                    .join(format!("{}.jsonl", case.name)),
                 directory
                     .join("scope-observations")
                     .join(format!("{}.jsonl", case.name)),
@@ -220,9 +220,9 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
         for (range, directory) in batch {
             let initial_part = directory
                 .join("observations")
-                .join(format!("{}.json", case.name));
+                .join(format!("{}.jsonl", case.name));
             if range.start == 0 {
-                fs::copy(&initial_part, &first_initial)?;
+                fs::rename(&initial_part, &first_initial)?;
             } else if !same_bytes(&initial_part, &first_initial)? {
                 return Err(
                     "initial or continuation observations changed between partitions".into(),
@@ -261,7 +261,7 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
     }
     writer.flush()?;
     drop(writer);
-    fs::copy(&first_initial, initial)?;
+    fs::rename(&first_initial, initial)?;
     fs::rename(assembled, observation)?;
     fs::remove_dir_all(
         first_initial

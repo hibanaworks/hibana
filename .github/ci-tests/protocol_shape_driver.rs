@@ -839,9 +839,11 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
     let directory = observation_root().join("observations");
     std::fs::create_dir_all(&directory).unwrap();
     let mut observations = std::io::BufWriter::new(
-        std::fs::File::create(directory.join(format!("{case}.json"))).unwrap(),
+        std::fs::File::create(directory.join(format!("{case}.jsonl"))).unwrap(),
     );
-    write!(observations, r#"{{"name":{case},"attempts":["#).unwrap();
+    let events = messages.iter().map(|message| message.event).collect::<Vec<_>>();
+    writeln!(observations, r#"{{"name":{case},"choices":{choices:?},"events":{events:?}}}"#).unwrap();
+    write!(observations, r#"{{"prefix":[],"prefixChoices":[],"answers":["#).unwrap();
     let mut separator = "";
     let mut prefixes = std::collections::BTreeMap::new();
     for choice in choices {
@@ -874,8 +876,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     |label| format!("[[{label},{}]]", parked == Outcome::Accepted),
                 );
                 write!(observations,
-                    r#"{separator}{{"choice":{choice:?},"prefix":[],"prefixChoices":[],"event":{},"receive":{receive},"accepted":{},"parked":{parked}}}"#,
-                    message.event,
+                    r#"{separator}[{},{parked}]"#,
                     actual == Outcome::Accepted
                 ).unwrap();
                 separator = ",";
@@ -893,6 +894,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             }
         }
     }
+    writeln!(observations, "]}}").unwrap();
     let mut seen = std::collections::BTreeSet::new();
     for line in traces.lines() {
         assert!(seen.insert(line), "duplicate generated trace");
@@ -965,6 +967,8 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             checked_prefixes.insert((key.clone(), history.clone())),
             "duplicate prefix replay"
         );
+        write!(observations, r#"{{"prefix":{key:?},"prefixChoices":{history:?},"answers":["#).unwrap();
+        separator = "";
         for choice in choices {
             for message in messages {
                 for receive in [false, true] {
@@ -1008,8 +1012,8 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                         |label| format!("[[{label},{}]]", parked == Outcome::Accepted),
                     );
                     write!(observations,
-                        r#"{separator}{{"choice":{choice:?},"prefix":{key:?},"prefixChoices":{history:?},"event":{},"receive":{receive},"accepted":{},"parked":{parked}}}"#,
-                        message.event, actual == Outcome::Accepted
+                        r#"{separator}[{},{parked}]"#,
+                        actual == Outcome::Accepted
                     ).unwrap();
                     separator = ",";
                     if prefix_visits == 1 && key.len() < 4 && actual == Outcome::Accepted {
@@ -1025,7 +1029,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 }
             }
         }
+        writeln!(observations, "]}}").unwrap();
     }
-    write!(observations, "]}}").unwrap();
     observations.flush().unwrap();
 }
