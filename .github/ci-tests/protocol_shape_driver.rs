@@ -331,7 +331,8 @@ async fn replay(
     let resolver_calls = std::cell::Cell::new(0usize);
     let resolver_audits = std::cell::Cell::new(0usize);
     let recorded_decisions = std::cell::Cell::new(Vec::new());
-    let resolver_input = (decisions, &resolver_calls);
+    let active_view = std::cell::Cell::new(u8::MAX);
+    let resolver_input = (decisions, &resolver_calls, &active_view, programs.resolver_roles);
     let capture = |event: hibana::runtime::tap::TapEvent| {
         if event.id() == hibana::runtime::tap::RESOLVER_AUDIT {
             resolver_audits.set(resolver_audits.get() + 1);
@@ -380,6 +381,8 @@ async fn replay(
                                 rv.set_resolver(
                                     $program.as_ref().unwrap(),
                                     ResolverRef::<$id>::decision_state(&resolver_input, |input| {
+                                        assert_eq!(input.2.get(), input.3[$id],
+                                            "a resolver callback must use its controller logical view");
                                         input.1.set(input.1.get() + 1);
                                         Ok(input.0.choose($id))
                                     }),
@@ -430,6 +433,7 @@ async fn replay(
     let mut parked_label = None;
     let scopes = (0..resolver_count).collect::<Vec<_>>();
     for (index, command) in commands.iter().enumerate() {
+        active_view.set(if command.receive { command.message.to } else { command.message.from });
         decisions.prepare(&scopes, index, index + 1 == commands.len());
         if park_before_last && index + 1 == commands.len() {
             macro_rules! park {
@@ -823,6 +827,19 @@ async fn replay_allows_retained_work_when_an_unused_resource_moves()
     Ok(())
 }
 
+// Inputs are available only through a controller's callback. Another logical
+// view cannot observe them, even when its actor also holds a controller view.
+// Keep every controller input, including after a choice is already known.
+fn retained_input(controllers: &[u8], command: Command, choice: &[u16]) -> Vec<u16> {
+    if choice.is_empty() { return Vec::new(); }
+    let view = if command.receive { command.message.to } else { command.message.from };
+    if controllers.contains(&view) {
+        choice.to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
 async fn qualify(programs: Programs, scenario: Scenario<'_>) {
     use std::io::Write;
     let Scenario {
@@ -836,6 +853,12 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         prefix_visits,
         completed_plan_words,
     } = scenario;
+    for (id, role) in programs.resolver_roles.iter().enumerate() {
+        let first = messages.iter().find(|message|
+            message.decisions.iter().any(|&(resolver, _)| usize::from(resolver) == id));
+        assert_eq!(first.map(|message| message.from), Some(*role),
+            "every resolver controller must be its first source message's logical sender");
+    }
     let directory = observation_root().join("observations");
     std::fs::create_dir_all(&directory).unwrap();
     let mut observations = std::io::BufWriter::new(
@@ -884,7 +907,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     prefixes
                         .entry((
                             vec![2 * u16::from(message.event) + u16::from(receive)],
-                            vec![choice.to_vec()],
+                            vec![retained_input(programs.resolver_roles, command, choice)],
                         ))
                         .or_insert_with(|| vec![command]);
                 }
@@ -940,11 +963,10 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                 for &(id, right) in command.message.decisions {
                     inputs[usize::from(id)] = right;
                 }
-                history.push(
-                    (0..resolver_count)
-                        .filter(|&id| inputs[usize::from(id)])
-                        .collect::<Vec<_>>(),
-                );
+                let choice = (0..resolver_count)
+                    .filter(|&id| inputs[usize::from(id)])
+                    .collect::<Vec<_>>();
+                history.push(retained_input(programs.resolver_roles, *command, &choice));
                 prefixes
                     .entry((key.clone(), history.clone()))
                     .or_insert_with(|| commands[..=index].to_vec());
@@ -1020,7 +1042,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                         let mut next = key.clone();
                         next.push(2 * u16::from(message.event) + u16::from(receive));
                         let mut next_history = history.clone();
-                        next_history.push(choice.to_vec());
+                        next_history.push(retained_input(programs.resolver_roles, *commands.last().unwrap(), choice));
                         let next = (next, next_history);
                         if !checked_prefixes.contains(&next) {
                             prefixes.entry(next).or_insert(commands);

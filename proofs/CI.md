@@ -79,7 +79,29 @@ The replay checker shares immutable source preparation and repeated prefixes. Ea
 equality to fresh replay; general theorems preserve every query and the whole
 candidate family. Query inputs are prepared once, and an empty candidate state
 reuses the previous answer row instead of constructing another all-false row.
-Neither optimization removes source candidates, scripts or admission probes.
+Neither caching nor query batching removes source candidates or scripts.
+Every semantic prefix class retains the complete next-call query matrix.
+Input histories are enumerated modulo input opacity, rather than multiplying
+arbitrary unused bits at every operation. The logical sender at a resolved
+source scope's entry controls its resolver. All controller views keep every
+input pattern, even after a choice becomes known. The native driver checks every callback's controller
+logical view, including after delegation; a physical actor's other view does
+not grant resolver authority. It also independently checks every declared
+controller against the first source message that belongs to its resolved scope.
+
+For other views, earlier input vectors are normalized to the empty vector.
+The source checker independently derives that view classification and validates
+that no possible transition enters a fresh resolver before erasing any input.
+General Lean theorems preserve the complete state trace, final replay state and
+history length for arbitrary inputs and source plans. All source scripts and
+public operation orders remain; every next-call input pattern is still executed.
+Input-sensitive histories remain distinct, including the outcome-distinguishing
+history-removal control. Reported counts are actual Endpoint probes over these
+semantic prefix classes, not counts multiplied by unused input variations.
+This relies on resolver input being opaque to the kernel except through its
+registered callback, as in the driver. It is not a refinement proof of arbitrary
+Rust code or arbitrary side effects of application callbacks.
+
 Source-occurrence lookup is prepared once per witness, and the resumption
 table receives shared source-domain and unfolding-scope values explicitly.
 The order predicate retains subtree counts in closures rather than recounting

@@ -156,12 +156,17 @@ theorem an_entered_resolver_has_an_operation_in_its_original_source_scope
 
 -- Inputs choose only scopes entered by this call. Future visits stay free;
 -- a scope already entered keeps the selection in this same source plan.
+def shapeResolverUnchangedFrom (originals : List (Scope × Nat))
+    (occurrences : List (Nat × Message)) (scope : Scope) (id : Nat)
+    (before after : List SourcePoint) : Bool :=
+  shapeResolverEnteredFrom originals occurrences scope id before ||
+    !shapeResolverEnteredFrom originals occurrences scope id after
+
 def shapeEntryChoicesFrom (originals resolvers : List (Scope × Nat))
     (occurrences : List (Nat × Message)) (selections : List Selection)
     (before after : List SourcePoint) (choice : List Nat) : Bool :=
   resolvers.all fun (scope, id) =>
-    shapeResolverEnteredFrom originals occurrences scope id before ||
-    !shapeResolverEnteredFrom originals occurrences scope id after ||
+    shapeResolverUnchangedFrom originals occurrences scope id before after ||
     selections.all fun selection =>
       selection.scope != scope || selection.arm ==
         if choice.contains id then .right else .left
@@ -182,6 +187,7 @@ theorem a_freshly_entered_resolver_uses_its_recorded_input
     (selection.arm == if choice.contains id then .right else .left) = true := by
   unfold shapeEntryChoices shapeEntryChoicesFrom at checked
   have scopeChecked := List.all_eq_true.mp checked (scope, id) present
+  simp only [shapeResolverUnchangedFrom] at scopeChecked
   change (shapeResolverEntered plan scope id before ||
     !shapeResolverEntered plan scope id after || _) = true at scopeChecked
   simp only [fresh, entered, Bool.not_true, Bool.false_or] at scopeChecked
@@ -725,6 +731,181 @@ def shapeInputStep (states : List (ShapePlan source × List SourcePoint))
   states.flatMap fun (plan, points) =>
     ((shapeAdvance plan points (command / 2) (command % 2 == 1)).filter fun after =>
       plan.entryChoices points after choice).map (plan, ·)
+
+-- Input-opaque calls retain no arbitrary callback bits in their history.
+-- Only the logical sender at a resolved source scope's entry controls it.
+-- The model additionally validates that
+-- erasure enters no resolver in any possible occurrence execution.
+def shapeRecordsResolverInput (source : Source) (command : Nat) : Bool :=
+  match shapeMessage? source (command / 2) with
+  | none => true
+  | some requested =>
+      let view := if command % 2 == 1 then requested.receiver else requested.sender
+      (shapeResolvers source 0).any fun (scope, _) =>
+        match shapeMessage? source scope.start with
+        | some first => first.sender == view
+        | none => true
+
+def shapeNoFreshResolver (plan : ShapePlan source)
+    (before after : List SourcePoint) : Bool :=
+  (shapeResolvers plan.plan.expanded 0).all fun (scope, id) =>
+    shapeResolverUnchangedFrom (shapeResolvers source 0) (plan.plan.unfolding.occurrences 0)
+      scope id before after
+
+theorem shapeEntryChoices_without_fresh_resolver (plan : ShapePlan source)
+    (before after : List SourcePoint) (choice : List Nat)
+    (safe : shapeNoFreshResolver plan before after = true) :
+    plan.entryChoices before after choice = true := by
+  rw [plan.entryChoices_eq]
+  unfold shapeEntryChoices shapeEntryChoicesFrom
+  apply List.all_eq_true.mpr
+  intro entry present
+  obtain ⟨scope, id⟩ := entry
+  have allowed :=  List.all_eq_true.mp safe (scope, id) present
+  have combined := congrArg (fun b => b || plan.plan.path.selections.all fun selection =>
+      selection.scope != scope || selection.arm ==
+        if choice.contains id then .right else .left) allowed
+  simpa only [Bool.true_or] using combined
+
+def shapeInputIrrelevant (states : List (ShapePlan source × List SourcePoint))
+    (command : Nat) : Bool :=
+  states.all fun (plan, before) =>
+    (shapeAdvance plan before (command / 2) (command % 2 == 1)).all fun after =>
+      shapeNoFreshResolver plan before after
+
+theorem shapeInputStep_ignores_unread_input
+    (states : List (ShapePlan source × List SourcePoint)) (command : Nat) (choice : List Nat)
+    (safe : shapeInputIrrelevant states command = true) :
+    shapeInputStep states command choice = shapeInputStep states command [] := by
+  induction states with
+  | nil => rfl
+  | cons state states ih =>
+      obtain ⟨plan, before⟩ := state
+      have safeRow := (Bool.and_eq_true_iff.mp safe).1
+      have safeTail := (Bool.and_eq_true_iff.mp safe).2
+      have unfiltered (input : List Nat) :
+          (shapeAdvance plan before (command / 2) (command % 2 == 1)).filter
+            (fun after => plan.entryChoices before after input) =
+            shapeAdvance plan before (command / 2) (command % 2 == 1) := by
+        apply List.filter_eq_self.mpr
+        intro after present
+        exact shapeEntryChoices_without_fresh_resolver plan before after input
+          (List.all_eq_true.mp safeRow after present)
+      simp only [shapeInputStep, List.flatMap_cons, unfiltered]
+      exact congrArg (List.append ((shapeAdvance plan before (command / 2)
+        (command % 2 == 1)).map (plan, ·))) (ih safeTail)
+
+def shapeCanonicalChoice (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (command : Nat) (choice : List Nat) :
+    List Nat :=
+  if choice.isEmpty then []
+  else if !shapeRecordsResolverInput source command && shapeInputIrrelevant states command then []
+  else choice
+
+theorem shapeCanonicalChoice_preserves_transition (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (command : Nat) (choice : List Nat) :
+    shapeInputStep states command (shapeCanonicalChoice source states command choice) =
+      shapeInputStep states command choice := by
+  unfold shapeCanonicalChoice
+  split
+  · rename_i empty
+    have same : choice = [] := List.isEmpty_iff.mp empty
+    subst choice
+    rfl
+  · split
+    · rename_i erased
+      exact (shapeInputStep_ignores_unread_input states command choice
+        (Bool.and_eq_true_iff.mp erased).2).symm
+    · rfl
+
+def shapeCanonicalInputs (source : Source) :
+    List (ShapePlan source × List SourcePoint) → List Nat → List (List Nat) → List (List Nat)
+  | states, command :: commands, choice :: choices =>
+      let retained := shapeCanonicalChoice source states command choice
+      retained :: shapeCanonicalInputs source (shapeInputStep states command retained) commands choices
+  | _, _, _ => []
+
+theorem shapeCanonicalInputs_length (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (commands : List Nat) (inputs : List (List Nat))
+    (same : commands.length = inputs.length) :
+    (shapeCanonicalInputs source states commands inputs).length = inputs.length := by
+  induction commands generalizing states inputs with
+  | nil => cases inputs <;> simp_all [shapeCanonicalInputs]
+  | cons command commands ih =>
+      cases inputs with
+      | nil => simp at same
+      | cons choice inputs =>
+          simp only [List.length_cons, Nat.add_right_cancel_iff] at same
+          simp only [shapeCanonicalInputs, List.length_cons]
+          exact congrArg Nat.succ (ih _ inputs same)
+
+theorem shapeCanonicalChoice_empty (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (command : Nat) :
+    shapeCanonicalChoice source states command [] = [] := by
+  simp [shapeCanonicalChoice]
+
+theorem shapeCanonicalInputs_empty_vectors (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (commands : List Nat) (inputs : List (List Nat))
+    (same : commands.length = inputs.length) (empty : inputs.all List.isEmpty = true) :
+    shapeCanonicalInputs source states commands inputs = inputs := by
+  induction commands generalizing states inputs with
+  | nil => cases inputs <;> simp_all [shapeCanonicalInputs]
+  | cons command commands ih =>
+      cases inputs with
+      | nil => simp at same
+      | cons choice inputs =>
+          have parts := Bool.and_eq_true_iff.mp empty
+          have first : choice = [] := List.isEmpty_iff.mp parts.1
+          subst choice
+          simp only [List.length_cons, Nat.add_right_cancel_iff] at same
+          simp only [shapeCanonicalInputs, shapeCanonicalChoice_empty]
+          exact congrArg (List.cons []) (ih _ inputs same parts.2)
+
+#print axioms shapeCanonicalChoice_empty
+#print axioms shapeCanonicalInputs_empty_vectors
+
+def shapeInputTrace : List (ShapePlan source × List SourcePoint) → List Nat →
+    List (List Nat) → List (List (ShapePlan source × List SourcePoint))
+  | states, command :: commands, choice :: choices =>
+      states :: shapeInputTrace (shapeInputStep states command choice) commands choices
+  | states, _, _ => [states]
+
+theorem shapeCanonicalInputs_preserves_every_state (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (commands : List Nat) (inputs : List (List Nat)) :
+    shapeInputTrace states commands (shapeCanonicalInputs source states commands inputs) =
+      shapeInputTrace states commands inputs := by
+  induction commands generalizing states inputs with
+  | nil => rfl
+  | cons command commands ih =>
+      cases inputs with
+      | nil => rfl
+      | cons choice inputs =>
+          simp only [shapeCanonicalInputs, shapeInputTrace,
+            shapeCanonicalChoice_preserves_transition]
+          exact congrArg (List.cons states) (ih _ inputs)
+
+theorem shapeCanonicalInputs_preserves_replay (source : Source)
+    (states : List (ShapePlan source × List SourcePoint)) (commands : List Nat) (inputs : List (List Nat)) :
+    (commands.zip (shapeCanonicalInputs source states commands inputs)).foldl
+        (fun states (command, choice) => shapeInputStep states command choice) states =
+      (commands.zip inputs).foldl
+        (fun states (command, choice) => shapeInputStep states command choice) states := by
+  induction commands generalizing states inputs with
+  | nil => rfl
+  | cons command commands ih =>
+      cases inputs with
+      | nil => rfl
+      | cons choice inputs =>
+          simp only [shapeCanonicalInputs, List.zip_cons_cons, List.foldl_cons,
+            shapeCanonicalChoice_preserves_transition]
+          exact ih _ inputs
+
+#print axioms shapeEntryChoices_without_fresh_resolver
+#print axioms shapeInputStep_ignores_unread_input
+#print axioms shapeCanonicalChoice_preserves_transition
+#print axioms shapeCanonicalInputs_length
+#print axioms shapeCanonicalInputs_preserves_every_state
+#print axioms shapeCanonicalInputs_preserves_replay
 
 -- Resolver inputs belong to a call, not to the source alias used to name it.
 -- Keep one coherent source-plan witness through all the recorded calls.
@@ -1695,7 +1876,9 @@ def shapeShortPrefixes (source : Source) (plans : List (ShapePlan source))
           for receive in [false, true] do
             for choice in choices do
               if shapePermits states choice event receive then
-                next := (word ++ [2 * event + if receive then 1 else 0], inputs ++ [choice]) :: next
+                let command := 2 * event + if receive then 1 else 0
+                let retained := shapeCanonicalChoice source states command choice
+                next := (word ++ [command], inputs ++ [retained]) :: next
       level := next.eraseDups
       found := found ++ level
     return found
@@ -1719,6 +1902,25 @@ def shapeWordInputs (source : Source) (word : List Nat) : List (List Nat) :=
         if scope.split ≤ command / 2 then (id :: without).mergeSort (· ≤ ·) else without
       else inputs) state.1
     (inputs, state.2 ++ [inputs])) ([], [])).2
+
+private def opaqueControlBeforeDelegatedChoice : Source := .seq
+  (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 0, .endpoint ⟨0, 3⟩⟩)
+  (.route (some 0)
+    (.send ⟨⟨0, 3⟩, ⟨0, 2⟩, 1, .wire 0⟩)
+    (.send ⟨⟨0, 3⟩, ⟨0, 2⟩, 1, .wire 0⟩))
+
+theorem transfer_inputs_are_opaque_but_the_delegated_controller_input_is_retained :
+    let source := opaqueControlBeforeDelegatedChoice
+    let initial := ((shapePlans source).map ShapePlan.of).map (·, [])
+    shapeCanonicalInputs source initial [0, 1, 2] [[0], [0], [0]] = [[], [], [0]] := by decide
+
+theorem a_controller_history_is_not_erased_when_its_choice_is_already_known :
+    let source := opaqueControlBeforeDelegatedChoice
+    let initial := ((shapePlans source).map ShapePlan.of).map (·, [])
+    shapeCanonicalInputs source initial [0, 1, 2, 5] [[0], [0], [0], []] = [[], [], [0], []] := by decide
+
+#print axioms transfer_inputs_are_opaque_but_the_delegated_controller_input_is_retained
+#print axioms a_controller_history_is_not_erased_when_its_choice_is_already_known
 
 private def sameContractSequence : Source := .seq
   (.send ⟨⟨0, 0⟩, ⟨0, 1⟩, 7, .wire 0⟩)
@@ -2309,9 +2511,15 @@ def main (args : List String) : IO UInt32 := do
     let candidates := shapePlans source
     unless !candidates.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let choices := shapeChoicePatterns source
+    let prepared := candidates.map ShapePlan.of
     let shortPrefixes := if shapeRepetitions source == 0 then
-      shapeShortPrefixes source (candidates.map ShapePlan.of) choices else []
-    let prefixes := ((plannedPrefixes.map fun word => (word, shapeWordInputs source word)) ++
+      shapeShortPrefixes source prepared choices else []
+    let prefixes := ((plannedPrefixes.map fun word =>
+      let inputs := shapeWordInputs source word
+      -- Empty vectors already are canonical. Avoid replaying every source
+      -- witness at every cut merely to prove that no input bits change.
+      (word, if inputs.all List.isEmpty then inputs
+        else shapeCanonicalInputs source (prepared.map (·, [])) word inputs)) ++
       shortPrefixes).eraseDups
     let handle ← IO.FS.Handle.mk (System.FilePath.mk outputPath / s!"{input.name}.jsonl") .read
     let header : ShapeOutputHeader ← match

@@ -2428,7 +2428,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         source_coverage.counts(),
     )?;
     println!(
-        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} {description} catalog_max_syntax_depth={catalog_max_depth} emitted_max_syntax_depth={emitted_max_depth} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
+        "generated shapes={} initial_probes={probes} continuation_shapes={continuation_shapes} trace_prefix_probes={trace_prefix_probes} finite_short_prefix_depth=4 callback_input_history=opaque-normalized complete_traces={trace_count} trace_operations={operations} concurrent_traces={concurrent_traces} delegated_concurrent_runs={delegated_concurrent_runs} scoped_executions={scoped_executions} {description} catalog_max_syntax_depth={catalog_max_depth} emitted_max_syntax_depth={emitted_max_depth} catalog_shapes={} unclassified_rejections={rejected} total_shapes={}",
         inputs.len(),
         cases.len(),
         total_cases

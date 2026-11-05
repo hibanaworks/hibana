@@ -36,8 +36,8 @@ for mutation in forget-inputs choose-future; do
       # predicate; adapt that proof so the control fails at the concrete
       # future-choice claim rather than at a stale proof expression.
       perl -0pe '
-        s/!shapeResolverEnteredFrom originals occurrences scope id after \|\|\s+//g == 1
-          or die "missing prepared scope-entry check\n";
+        s/shapeResolverEnteredFrom originals occurrences scope id before \|\|\n    !shapeResolverEnteredFrom originals occurrences scope id after/shapeResolverEnteredFrom originals occurrences scope id before/ == 1
+          or die "missing shared scope-entry check\n";
         s/change \(shapeResolverEntered plan scope id before \|\|\n    !shapeResolverEntered plan scope id after \|\| _\) = true at scopeChecked/change (shapeResolverEntered plan scope id before || _) = true at scopeChecked/g == 1
           or die "missing fresh-entry proof\n";
         s/\[fresh, entered, Bool\.not_true, Bool\.false_or\]/[fresh, Bool.false_or]/g == 1
