@@ -25,6 +25,32 @@ env:
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
+  consumer-regressions:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.14'
+      - name: Install Rust and the real guest target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable wasm32-wasip1
+      - name: Drive the actual long ChoreoFix protocols with this core
+        run: bash .github/scripts/lib/resource_guard.sh bash .github/scripts/check_choreofix.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: choreofix-core-regressions
+          path: |
+            target/choreofix-regressions/**/evidence/**
+            target/choreofix-regressions/**/input-revisions.txt
+            target/choreofix-regressions/*/*-metadata.json
+            target/choreofix-regressions/*/*.log
+            target/choreofix-regressions/*/exit-status.txt
+          if-no-files-found: error
+
   quality:
     runs-on: macos-15
     steps:
@@ -128,7 +154,7 @@ jobs:
   required:
     name: core-checks
     if: always()
-    needs: [quality, runtime-work, protocol-checker, protocol-fuzz]
+    needs: [consumer-regressions, quality, runtime-work, protocol-checker, protocol-fuzz]
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Require every mandatory population and budget check
@@ -136,4 +162,4 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: >-
           printf '%s\n' "$RESULTS" |
-          jq -e 'keys == ["protocol-checker", "protocol-fuzz", "quality", "runtime-work"] and all(.[]; .result == "success")'
+          jq -e 'keys == ["consumer-regressions", "protocol-checker", "protocol-fuzz", "quality", "runtime-work"] and all(.[]; .result == "success")'

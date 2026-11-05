@@ -13,6 +13,23 @@ possible protocol, payload, visit count or transport failure.
 | Detection of known defects | Native Endpoint regressions and the resolver, parked preview, reentry, receive, prefix and shrinking sensitivity controls |
 | Critical memory boundaries | Strict-provenance Miri for runtime ownership, borrowed Transport handles, initial issuance, real resource Endpoint joins and fault/cancellation ownership |
 | Physical and portable cost constraints | Host and embedded no_std builds, forbidden long const evaluation, existing layout/allocation tests and portable work-count budgets on macOS and ARM Linux |
+| Actual long consumer programs | Required macOS ChoreoFix integration: build the pinned 6E, codebase and 16E real globals and localsides, including all projections of the 1,586-event review source; drive 1H concurrent delegated commits and 16E two-resource processing with the real WASI guest. Every compiled host selects this candidate core and keeps forbidden long const evaluation. |
+
+`check_choreofix.sh` uses immutable public consumer, EPF, WASI and guest sources
+as regression inputs. Its candidate-core override is confined to the private
+test fixture; operational consumer manifests keep their qualified public pins.
+The consumer's production global/localside Rust is not rewritten. A small
+additional test binary reuses the pinned consumer qualifier's source freezing,
+build receipts and result checks, then explicitly runs its existing real WASI
+test functions. The two functions cover one 1H three-commit schedule and all
+three original 16E failure depths. This is four scripted mechanism cases,
+not live AI, all 48 task ports or scored
+comparison data. An absent test, failed compile, missing receipt, source change
+or unsuccessful dependency fails the required aggregate. Full consumer
+qualification remains a separate obligation. The complete 6E execution,
+dynamic EPF reconstruction and its record mutations belong to consumer/EPF
+qualification; their unbounded search is not duplicated in the ordinary core
+capacity regression. Stopped 6E audit attempts remain unqualified evidence.
 
 `protocol-shape-partitions ci-matrix` is the sole CI assignment source for
 generated conformance. It assigns the complete budget-2 population across all

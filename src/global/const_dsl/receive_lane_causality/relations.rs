@@ -249,14 +249,14 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     self.next_visit(left, facts, rows, body);
                 } else {
                     let mut right = [[0; W]; 256];
-                    let mut word = first_word;
-                    while word < last_word {
-                        let mut members = participants;
-                        while let Some(actor) = members.pop_first() {
-                            let actor = actor as usize;
+                    let mut members = participants;
+                    while let Some(actor) = members.pop_first() {
+                        let actor = actor as usize;
+                        let mut word = first_word;
+                        while word < last_word {
                             right[actor][word] = facts[actor][word];
+                            word += 1;
                         }
-                        word += 1;
                     }
                     self.next_visit(left, facts, rows, body);
                     self.next_visit(
@@ -269,11 +269,11 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                         rows,
                         body,
                     );
-                    word = first_word;
-                    while word < last_word {
-                        let mut members = participants;
-                        while let Some(actor) = members.pop_first() {
-                            let actor = actor as usize;
+                    let mut members = participants;
+                    while let Some(actor) = members.pop_first() {
+                        let actor = actor as usize;
+                        let mut word = first_word;
+                        while word < last_word {
                             let a = facts[actor][word];
                             let b = right[actor][word];
                             facts[actor][word] = if matches!(kind, ScopeKind::Parallel) {
@@ -281,8 +281,8 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                             } else {
                                 a & b
                             };
+                            word += 1;
                         }
-                        word += 1;
                     }
                 }
                 range.start = end;
@@ -342,15 +342,15 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     let mut next = [[0; W]; 256];
                     let first_seed = self.seeds.before(range.start);
                     let last_seed = self.seeds.before(end);
-                    let mut word = first_seed / 64;
-                    while word < last_seed.div_ceil(64) {
-                        let mask = interval(first_seed, last_seed, word);
-                        let mut members = participants;
-                        while let Some(actor) = members.pop_first() {
-                            let actor = actor as usize;
+                    let mut members = participants;
+                    while let Some(actor) = members.pop_first() {
+                        let actor = actor as usize;
+                        let mut word = first_seed / 64;
+                        while word < last_seed.div_ceil(64) {
+                            let mask = interval(first_seed, last_seed, word);
                             next[actor][word] = facts[actor][word] & mask;
+                            word += 1;
                         }
-                        word += 1;
                     }
                     self.next_visit(left, &mut next, &mut result.repeated, body);
                     let mut event = range.start;
@@ -364,26 +364,26 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     let seed_start = self.seeds.before(range.start);
                     let seed_split = self.seeds.before(split);
                     let seed_end = self.seeds.before(end);
-                    let mut word = 0;
-                    while word < self.words {
-                        let (left_mask, right_mask) = if matches!(kind, ScopeKind::Route) {
-                            (
-                                interval(seed_start, seed_split, word),
-                                interval(seed_split, seed_end, word),
-                            )
-                        } else {
-                            (0, 0)
-                        };
-                        let mut members = participants;
-                        while let Some(actor) = members.pop_first() {
-                            let actor = actor as usize;
+                    let mut members = participants;
+                    while let Some(actor) = members.pop_first() {
+                        let actor = actor as usize;
+                        let mut word = 0;
+                        while word < self.words {
+                            let (left_mask, right_mask) = if matches!(kind, ScopeKind::Route) {
+                                (
+                                    interval(seed_start, seed_split, word),
+                                    interval(seed_split, seed_end, word),
+                                )
+                            } else {
+                                (0, 0)
+                            };
                             right[actor][word] = facts[actor][word];
                             // An event in the other arm cannot coexist with
                             // this arm's send: its implication is true.
                             facts[actor][word] |= right_mask;
                             right[actor][word] |= left_mask;
+                            word += 1;
                         }
-                        word += 1;
                     }
                     self.visit(left, facts, result);
                     self.visit(
@@ -395,13 +395,13 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                         &mut right,
                         result,
                     );
-                    word = 0;
-                    while word < self.words {
-                        let left_mask = interval(seed_start, seed_split, word);
-                        let right_mask = interval(seed_split, seed_end, word);
-                        let mut members = participants;
-                        while let Some(actor) = members.pop_first() {
-                            let actor = actor as usize;
+                    let mut members = participants;
+                    while let Some(actor) = members.pop_first() {
+                        let actor = actor as usize;
+                        let mut word = 0;
+                        while word < self.words {
+                            let left_mask = interval(seed_start, seed_split, word);
+                            let right_mask = interval(seed_split, seed_end, word);
                             let a = facts[actor][word];
                             let b = right[actor][word];
                             facts[actor][word] = if matches!(kind, ScopeKind::Parallel) {
@@ -409,8 +409,8 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                             } else {
                                 (a & b) | (a & left_mask) | (b & right_mask)
                             };
+                            word += 1;
                         }
-                        word += 1;
                     }
                 }
                 range.start = end;

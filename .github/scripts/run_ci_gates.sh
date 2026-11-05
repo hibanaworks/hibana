@@ -37,5 +37,6 @@ RUSTDOCFLAGS=-Dwarnings cargo +"$TOOLCHAIN" doc --locked -p hibana --no-deps --d
 bash .github/scripts/check_no_std_build.sh
 if [[ "$selection" == all ]]; then
   bash .github/scripts/check_lean_proofs.sh --models
+  bash .github/scripts/check_choreofix.sh
 fi
 bash .github/scripts/check_miri.sh --contract
