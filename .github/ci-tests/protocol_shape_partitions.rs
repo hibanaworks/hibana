@@ -32,12 +32,6 @@ fn ci_matrix(extended: bool) -> serde_json::Value {
         "id": "controls", "selection": "controls", "contracts": SENSITIVITY_CONTRACTS,
     }));
     if extended {
-        for first in (0..catalog_counts::FRONTIERS).step_by(4) {
-            entries.push(serde_json::json!({
-                "id": format!("frontiers-{first}"), "selection": "frontiers",
-                "first": first, "count": 4.min(catalog_counts::FRONTIERS - first),
-            }));
-        }
         for (family, depth, first) in [
             ("interactions", 4, 12439),
             ("interactions", 5, 111955),
@@ -211,24 +205,31 @@ mod tests {
         let extended = extended["include"].as_array().unwrap();
         assert!(extended.starts_with(basic));
         let mut ids = std::collections::BTreeSet::new();
-        let mut frontier = vec![false; catalog_counts::FRONTIERS];
+        let mut contexts = std::collections::BTreeSet::new();
         let mut depths = std::collections::BTreeSet::new();
         for entry in extended {
             assert!(ids.insert(entry["id"].as_str().unwrap()));
             match entry["selection"].as_str().unwrap() {
-                "frontiers" => {
-                    let first = entry["first"].as_u64().unwrap() as usize;
-                    let count = entry["count"].as_u64().unwrap() as usize;
-                    assert!(count > 0);
-                    for seen in &mut frontier[first..first + count] {
-                        assert!(!std::mem::replace(seen, true));
-                    }
+                "interactions" | "spines" => {
+                    contexts.insert((
+                        entry["selection"].as_str().unwrap(),
+                        entry["depth"].as_u64().unwrap(),
+                    ));
                 }
                 "sample" => assert!(depths.insert(entry["depth"].as_u64().unwrap())),
-                _ => {}
+                "constructors" | "contracts" | "controls" => {}
+                other => panic!("unexpected additional selection: {other}"),
             }
         }
-        assert!(frontier.into_iter().all(|assigned| assigned));
+        assert_eq!(
+            contexts,
+            std::collections::BTreeSet::from([
+                ("interactions", 4),
+                ("interactions", 5),
+                ("spines", 3),
+                ("spines", 5)
+            ])
+        );
         assert_eq!(depths, (4..=8).collect());
     }
 

@@ -210,6 +210,36 @@ No second source model, admission rule or Endpoint execution path is introduced.
 
 ## Extended certification
 
+Ordinary production qualification and qualification of a changed verification
+tool are different claims. Preserve the producer revision and scope of each
+successful result. A Git revision change alone does not invalidate evidence:
+reuse requires the tested production inputs, specification, finite input domain,
+compiler, features and execution conditions to remain the same. Record their
+content identities and the original commands and results. Never turn a stopped
+or incomplete run into a successful result.
+
+Logging, output-directory isolation and removal of duplicate invocations do not
+require repeating unchanged Rust, Miri, capacity or conformance obligations.
+A changed driver, normalizer or checker requires validation of that change;
+old results do not certify the new tool. When the production and previously
+checked obligations are unaffected, keep that tool's outstanding qualification
+separate instead of restarting production qualification. Changes to the model's
+meaning or the declared public-input domain require rechecking affected
+conformance obligations. Unrelated successful obligations remain valid.
+
+Deep source exploration increases the tested domain; it does not establish
+refinement of arbitrary Rust executions. Retain known-defect minimal regressions
+in the ordinary contract, but do not make every deep sample, all Kani harnesses
+and full Miri a fresh prerequisite for every unchanged-production consumer
+update. Perform affected extended checks when their guarantees change, and the
+complete extended contract when freezing the final paper or release artifact.
+
+A development source qualified locally may be published for consumer work
+without waiting for a duplicate public CI run. Its record must identify reused
+production evidence and any still-incomplete tool or extended qualification.
+This is neither a successful public `core-contract` result nor extended
+certification; those result names retain their complete-job requirements.
+
 The separate `extended-certification` workflow runs on `ci-certify-*` tags, and
 explicit manual requests. It does not rerun unchanged Kani/proof populations
 on a nightly timer; seeded syntax samples remain part of every certification
@@ -217,7 +247,7 @@ and can be requested with a new seed. A certification
 tag selects an immutable source revision; it is not a release or a passed result.
 Branch pushes run the ordinary workflow. Certification tags invoke that same
 workflow exactly once, rather than also triggering a duplicate ordinary run.
-A final candidate is published through its certification tag. Only after all
+A final paper/release candidate is published through its certification tag. Only after all
 certification jobs succeed, the same run fast-forwards main to that exact SHA
 and deletes branch tips already contained in it. Both operations are atomic;
 each deletion requires the observed branch tip to remain unchanged. Divergent
@@ -228,8 +258,13 @@ Manual certification requests verify their selected source without publishing it
 Root runs share one concurrency group across
 branches and tags; a newer run cancels the previous source run. The reusable
 core-checks child has a run-specific group so that it cannot cancel its own caller.
-It adds the complete frontier catalog, the existing
-deep interaction/spine regressions and seeded depth-4-through-8 syntax samples.
+It adds the existing deep interaction/spine regressions and seeded
+depth-4-through-8 syntax samples. The 32 frontier protocols already belong to
+the ordinary constructor population. Their exhaustive scripts also include
+the former separate frontier selection's complete scripts and borrowed-scope
+probes, including its compile-fail counterexamples. They are not run again as
+eight additional jobs. A generator regression checks these equalities for all
+32 sources; removing the duplicate selection changes no ordinary case.
 Sampling is not described as exhaustive. These use the same assignment and
 execution path as mandatory conformance.
 
@@ -303,7 +338,7 @@ Lean gate. Certification does not repeat the complete native/Clippy/documentatio
 job inside its additional proof job. They do not verify arbitrary user Transports,
 OS driver FFI or every possible unsafe execution.
 
-The full extended result remains required when fixing a publication/release
+The full extended result remains required when fixing a paper/release
 artifact. It is not placed on every development push's critical path. A required
 CI success must never be reported as successful extended certification. After a
 core change, run the required contract locally on fixed source as well; perform

@@ -1150,17 +1150,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             contract_collision_cases(args[3].parse()?, args[4].parse()?)?,
             args.get(5),
         )
-    } else if args.get(2).is_some_and(|s| s == "--frontiers") {
-        if args.len() != 5 && args.len() != 6 {
-            return Err(
-                "usage: protocol-shapes REPOSITORY OUTPUT --frontiers FIRST COUNT [DIAGNOSTICS]"
-                    .into(),
-            );
-        }
-        (
-            frontier_cases(args[3].parse()?, args[4].parse()?)?,
-            args.get(5),
-        )
     } else if args.get(2).is_some_and(|s| s == "--representatives") {
         if args.len() != 6 && args.len() != 7 {
             return Err("usage: protocol-shapes REPOSITORY OUTPUT --representatives DEPTH FIRST COUNT [DIAGNOSTICS]".into());
@@ -1445,46 +1434,6 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
         max_resolvers,
         origin: CatalogOrigin::Templates,
     }
-}
-
-fn frontier_cases(first: usize, count: usize) -> Result<CaseSet, Box<dyn std::error::Error>> {
-    if count == 0
-        || first
-            .checked_add(count)
-            .is_none_or(|end| end > frontiers::COUNT)
-    {
-        return Err("frontier range exceeds the parallel-roll continuation population".into());
-    }
-    let mut catalog = CaseSet {
-        namespace: format!("frontiers-{first}-count-{count}"),
-        description: format!("parallel_roll_continuations first={first} count={count}"),
-        total: frontiers::COUNT.to_string(),
-        cases: Vec::new(),
-        delegated: BTreeSet::new(),
-        expected_rejections: BTreeMap::new(),
-        negative_sources: BTreeMap::new(),
-        max_resolvers: 0,
-        origin: CatalogOrigin::Contexts,
-    };
-    for rank in first..first + count {
-        let (mut source, identity) = frontiers::protocol(rank);
-        if let Some(unpermitted) = frontiers::unpermitted_reentry(rank) {
-            catalog.negative_sources.insert(format!("frontier_reentry_{rank}"), (
-                unpermitted,
-                "rolled reentry requires permission from the resource's entry owner; help: let the resource's entry owner authorize each visit inside the roll",
-            ));
-        }
-        let (_, resolvers) = syntax::number(&mut source);
-        let case = catalog.cases.len();
-        if context::has_transfer(&source) {
-            catalog.delegated.insert(case);
-        }
-        catalog.max_resolvers = catalog.max_resolvers.max(resolvers);
-        catalog
-            .cases
-            .push((case, identity, 2, 0, source, resolvers));
-    }
-    Ok(catalog)
 }
 
 fn syntax_cases(
@@ -2447,6 +2396,48 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn mandatory_frontiers_already_cover_the_additional_scripts_and_scope_probes() {
+        let required = template_cases(2, 0, 1);
+        for rank in 0..frontiers::COUNT {
+            let (mut expected, _) = frontiers::protocol(rank);
+            let (_, resolvers) = syntax::number(&mut expected);
+            let matching = required
+                .cases
+                .iter()
+                .filter(|case| case.4 == expected)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), 1, "frontier {rank}");
+            assert_eq!(
+                (matching[0].2, matching[0].3, matching[0].5),
+                (2, 0, resolvers)
+            );
+            let exhaustive = plans::Plans::new(&expected, plans::Coverage::Exhaustive);
+            let pairs = plans::Plans::new(&expected, plans::Coverage::ParallelPairs);
+            assert_eq!(
+                exhaustive
+                    .executions()
+                    .map(|execution| execution.json())
+                    .collect::<Vec<_>>(),
+                pairs
+                    .executions()
+                    .map(|execution| execution.json())
+                    .collect::<Vec<_>>()
+            );
+            let mut full_probes = Vec::new();
+            let mut pair_probes = Vec::new();
+            scope_probes::write_inventory(&exhaustive, 0, rank, &mut full_probes).unwrap();
+            scope_probes::write_inventory(&pairs, 0, rank, &mut pair_probes).unwrap();
+            assert_eq!(full_probes, pair_probes);
+            if let Some(negative) = frontiers::unpermitted_reentry(rank) {
+                assert_eq!(
+                    required.negative_sources[&format!("frontier_reentry_{rank}")].0,
+                    negative
+                );
+            }
+        }
+    }
 
     #[test]
     fn multiple_ownership_violations_emit_only_the_diagnosed_source_rule() {

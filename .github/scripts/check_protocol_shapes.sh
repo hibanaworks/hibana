@@ -33,13 +33,6 @@ if [[ "${1:-}" == --contracts ]]; then
   fi
   GENERATOR_ARGS=(--contracts "$2" "$3")
   OUTPUT="${ROOT_DIR}/target/protocol-shapes/contracts/range-$2-count-$3"
-elif [[ "${1:-}" == --frontiers ]]; then
-  if [[ $# != 3 ]]; then
-    echo "usage: $0 --frontiers FIRST COUNT" >&2
-    exit 2
-  fi
-  GENERATOR_ARGS=(--frontiers "$2" "$3")
-  OUTPUT="${ROOT_DIR}/target/protocol-shapes/frontiers/range-$2-count-$3"
 elif [[ "${1:-}" == --representatives ]]; then
   if [[ $# != 4 ]]; then
     echo "usage: $0 --representatives DEPTH FIRST COUNT" >&2

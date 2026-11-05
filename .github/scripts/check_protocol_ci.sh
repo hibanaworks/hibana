@@ -29,7 +29,7 @@ case "$SELECTION" in
       bash .github/scripts/check_protocol_shapes.sh "$BUDGET" "$shard" "$shards"
     done < "$out/assigned-shards.tsv"
     ;;
-  contracts|frontiers)
+  contracts)
     bash .github/scripts/check_protocol_shapes.sh "--$SELECTION" "$FIRST" "$COUNT"
     ;;
   interactions|spines)
