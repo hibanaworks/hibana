@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/v0.10.0/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
+  <img src="https://raw.githubusercontent.com/hibanaworks/hibana/main/.github/assets/hibana-header.svg" width="600" alt="HIBANA — Choreographic Programming in Rust" />
 
   <p>
     <a href="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml"><img src="https://github.com/hibanaworks/hibana/actions/workflows/quality-gates.yml/badge.svg" alt="Quality gates" /></a>
