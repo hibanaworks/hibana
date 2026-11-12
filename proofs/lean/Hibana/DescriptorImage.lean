@@ -1459,7 +1459,7 @@ def RustDescriptorImage.roleViewLaneIndexOffset (image : RustDescriptorImage) : 
 
 def RustDescriptorImage.roleLaneSuccessorOffset (image : RustDescriptorImage) : Nat :=
   image.roleViewLaneIndexOffset +
-    (if image.routeScopeCount = 0 then 0 else image.eventCount * productionRoleU16Stride)
+    image.eventCount * productionRoleU16Stride
 
 def RustDescriptorImage.roleOfferAlternativeHeadOffset (image : RustDescriptorImage) : Nat :=
   image.roleLaneSuccessorOffset + image.eventCount * productionRoleU16Stride
@@ -1472,9 +1472,14 @@ def RustDescriptorImage.roleOfferAlternativeOuterOffset (image : RustDescriptorI
   image.roleOfferAlternativeScopeOffset +
     (if image.routeScopeCount = 0 then 0 else image.eventCount * productionRoleU16Stride)
 
-def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+def RustDescriptorImage.roleRollOfferHeadOffset (image : RustDescriptorImage) : Nat :=
   image.roleOfferAlternativeOuterOffset +
     (if image.routeScopeCount = 0 then 0 else image.eventCount * productionRoleU16Stride)
+
+def RustDescriptorImage.roleBlobLen (image : RustDescriptorImage) : Nat :=
+  image.roleRollOfferHeadOffset +
+    (if image.rollScopeCount = 0 then 0
+     else image.eventCount * productionRoleU16Stride)
 
 def RustDescriptorImage.decodeAtomRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedProgramAtom := do

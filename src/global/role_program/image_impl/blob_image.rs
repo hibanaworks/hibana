@@ -514,7 +514,7 @@ impl<const N: usize> RoleImageBytes<N> {
             slot += 1;
         }
         out.write_route_index(columns);
-        out.write_route_topology(scopes, operations, columns);
+        out.write_route_topology(source, operations, columns);
         let offset = columns.blob_len();
         if offset > super::super::ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
             panic!("role image");

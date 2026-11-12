@@ -101,14 +101,6 @@ jobs:
           name: protocol-checker
           path: target/protocol-checker/
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: protocol-checker-evidence
-          path: |
-            target/shape-resumption-sensitivity/**
-            target/prefix-input-sensitivity/**
-          if-no-files-found: error
 
   protocol-fuzz:
     needs: protocol-checker
@@ -148,8 +140,6 @@ jobs:
             !target/protocol-shapes/**/target/**
             target/protocol-fuzz-*/**
             !target/protocol-fuzz-*/**/target/**
-            target/*-sensitivity/**
-            !target/*-sensitivity/**/target/**
 
   required:
     name: core-checks

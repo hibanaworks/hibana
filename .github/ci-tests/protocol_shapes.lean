@@ -30,6 +30,7 @@ structure ShapeAttempt where
   receive : Bool
   accepted : Bool
   parked : List (Nat × Bool)
+  cuts : Option Nat × Option Nat := (none, none)
   deriving Lean.FromJson
 
 -- One immutable query matrix per source; every history retains every answer.
@@ -44,7 +45,18 @@ structure ShapeOutputGroup where
   «prefix» : List Nat
   prefixChoices : List (List Nat)
   answers : Array (Bool × List (Nat × Bool))
+  cuts : Array (Option Nat × Option Nat)
   deriving Lean.FromJson
+
+structure ShapeCallContext where
+  state : ProtocolCutEvidence.StateRecord
+  preview : Option ProtocolCutEvidence.StateRecord
+  commits : List (List Nat)
+  payloadAvailable : Bool
+  «prefix» : List Nat
+  prefixChoices : List (List Nat)
+  input : List Nat
+  deriving Lean.FromJson, Lean.ToJson
 
 def parseShape (input : ShapeInput) : Except String Source := do
   let mut sources : Array Source := #[]
@@ -2043,6 +2055,68 @@ def shapeRead [Lean.FromJson α] (path : System.FilePath) : IO α := do
   | .ok value => pure value
   | .error error => throw (IO.userError s!"invalid shape JSON in {path}: {error}")
 
+-- Decode passive Rust cuts through the same source model as the ordinary
+-- checker. The returned rows describe immutable wire contracts; transport
+-- availability is checked separately against each actual capture prefix.
+def shapeCheckPublicCuts (name : Nat) (catalog images states questions output : System.FilePath) :
+    IO Unit := do
+  let inputs : Array ShapeInput ← shapeRead catalog
+  let some input := resolveUnique? (inputs.toList.filter (·.name == name))
+    | throw (IO.userError "public cuts have no unique source input")
+  let source ← match parseShape input with
+    | .ok value => pure value
+    | .error error => throw (IO.userError error)
+  let some choreo := ProtocolCutEvidence.sourceChoreography? source
+    | throw (IO.userError "public cuts cannot recover the compiled source")
+  unless choreo.ownershipSource? == some source do
+    throw (IO.userError "public cuts changed the source identity")
+  let readExact {α : Type} [Lean.FromJson α] [Lean.ToJson α] (path : System.FilePath) : IO α := do
+    match Lean.Json.parse (← IO.FS.readFile path) >>= ProtocolCutEvidence.decode with
+    | .ok value => pure value
+    | .error error => throw (IO.userError s!"{path}: {error}")
+  let images : List RustDescriptorImage ← readExact images
+  unless !images.isEmpty && (images.map (·.role)).eraseDups.length == images.length do
+    throw (IO.userError "public cuts have empty or duplicate resident images")
+  let stateFile ← IO.FS.Handle.mk states .read
+  let mut stateRows : Array ProtocolCutEvidence.StateRecord := #[]
+  repeat
+    let line ← stateFile.getLine
+    if line.isEmpty then break
+    match Lean.Json.parse line >>= ProtocolCutEvidence.decode with
+    | .ok value => stateRows := stateRows.push value
+    | .error error => throw (IO.userError s!"{states}: {error}")
+  let queries : Array ProtocolCutEvidence.Query ← readExact questions
+  unless !stateRows.isEmpty && !queries.isEmpty do
+    throw (IO.userError "public cuts have an empty state or query inventory")
+  let patterns := shapeChoicePatterns source
+  unless queries.all (fun query => patterns.contains query.input) do
+    throw (IO.userError "public cut has an unplanned resolver input")
+  let answers ← match ProtocolCutEvidence.evaluate choreo images stateRows queries with
+    | .ok value => pure value
+    | .error error => throw (IO.userError error)
+  let mut readiness : Array (Nat × Bool) := #[]
+  let mut fifoCache : Std.HashMap (Nat × List (List Nat)) (List (List Nat)) := {}
+  for (query, (_, candidates)) in queries.zip answers do
+    let some state := stateRows[query.state]? | throw (IO.userError "query has no actual cut")
+    let some image := resolveUnique? (images.filter (·.role == state.progress.actor))
+      | throw (IO.userError "query has no unique resident image")
+    let key := (query.session, query.commits)
+    let frames ← match fifoCache.get? key with
+      | some frames => pure frames
+      | none => match ProtocolCutEvidence.fixtureFrames images query.session query.commits with
+        | .ok frames => pure frames
+        | .error error => throw (IO.userError error)
+    fifoCache := fifoCache.insert key frames
+    let ready ← match ProtocolCutEvidence.fixtureReady image state.cut.target.view frames query.receive candidates with
+      | .ok ready => pure ready
+      | .error error => throw (IO.userError error)
+    readiness := readiness.push (query.id, ready)
+  if ← output.pathExists then throw (IO.userError "public-cut output already exists")
+  IO.FS.writeFile output (Lean.Json.mkObj [
+    ("source", Lean.toJson name), ("answers", Lean.toJson answers),
+    ("readiness", Lean.toJson readiness)]).compress
+  IO.println s!"Checked source {name}: {stateRows.size} actual cuts, {queries.size} public queries"
+
 def shapeExpandRows (word : List Nat) (inputs : List (List Nat)) :
     List ShapeRequest → List (Bool × List (Nat × Bool)) → List ShapeAttempt
   | (choice, event, receive) :: questions, (accepted, parked) :: answers =>
@@ -2440,19 +2514,19 @@ def shapeCheckGuardedReentry : IO Unit := do
   IO.println "Guarded reentry regressions: all fifteen source cuts passed"
 
 def main (args : List String) : IO UInt32 := do
+  if let ["--public-cuts", name, catalog, images, states, questions, output] := args then
+    let some name := name.toNat? | throw (IO.userError "invalid public-cut source name")
+    shapeCheckPublicCuts name catalog images states questions output
+    return 0
   if args == ["--check-guarded-reentry"] then
     shapeCheckGuardedReentry
     return 0
-  let (inputPath, outputPath, weakenRoot, selected) ← match args with
-    | [input, output] => pure (input, output, false, none)
-    | [input, output, "--mutant-root-seq-as-par"] => pure (input, output, true, none)
+  let (inputPath, outputPath, selected) ← match args with
+    | [input, output] => pure (input, output, none)
     | ["--source", name, input, output] =>
       let some name := name.toNat? | throw (IO.userError "invalid source worker name")
-      pure (input, output, false, some name)
-    | ["--source", name, input, output, "--mutant-root-seq-as-par"] =>
-      let some name := name.toNat? | throw (IO.userError "invalid source worker name")
-      pure (input, output, true, some name)
-    | _ => throw (IO.userError "usage: protocol-shapes INPUT.json OBSERVATION_DIRECTORY [--mutant-root-seq-as-par]")
+      pure (input, output, some name)
+    | _ => throw (IO.userError "usage: protocol-shapes INPUT.json OBSERVATION_DIRECTORY")
   let inputs : Array ShapeInput ← shapeRead inputPath
   unless !inputs.isEmpty do throw (IO.userError "empty shape inventory")
   let expectedNames := inputs.toList.map (fun input => s!"{input.name}.jsonl")
@@ -2477,10 +2551,9 @@ def main (args : List String) : IO UInt32 := do
     let mut completedCalls := 0
     let mut completedSources := 0
     for input in inputs do
-      let flags := if weakenRoot then #["--mutant-root-seq-as-par"] else #[]
       let child ← IO.Process.spawn {
         cmd := executable.toString
-        args := #["--source", toString input.name, inputPath, outputPath] ++ flags
+        args := #["--source", toString input.name, inputPath, outputPath]
         stdin := .null
         stdout := .piped
         stderr := .inherit
@@ -2530,6 +2603,82 @@ def main (args : List String) : IO UInt32 := do
       | .error error => throw (IO.userError s!"shape {input.name}: {error}")
     let some _ := normalize source
       | throw (IO.userError s!"shape {input.name}: source ownership rejected")
+    let root := System.FilePath.mk outputPath / ".."
+    let mut images : List RustDescriptorImage := []
+    for entry in ← (root / "operation-images").readDir do
+      if entry.fileName.startsWith s!"{name}-" && entry.fileName.endsWith ".json" then
+        let value ← match Lean.Json.parse (← IO.FS.readFile entry.path) >>= ProtocolCutEvidence.decode with
+          | .ok value => pure value
+          | .error error => throw (IO.userError error)
+        images := images ++ [value]
+    unless !images.isEmpty && (images.map (·.role)).eraseDups.length == images.length do
+      throw (IO.userError "whole calls have empty or duplicate resident images")
+    let stateFile ← IO.FS.Handle.mk (root / "whole-operation-states" / s!"{name}.jsonl") .read
+    let mut contexts : Array ShapeCallContext := #[]
+    let mut statePool : Array ProtocolCutEvidence.StateRecord := #[]
+    let mut stateKeys : Array String := #[]
+    let mut contextStates : Array Nat := #[]
+    let mut stateIndex : Std.HashMap String Nat := {}
+    let mut previewPool : Std.HashMap String ProtocolCutEvidence.StateRecord := {}
+    repeat
+      let line ← stateFile.getLine
+      if line.isEmpty then break
+      let value ← match (Lean.Json.parse line >>= ProtocolCutEvidence.decode : Except String ShapeCallContext) with
+        | .ok value => pure value
+        | .error error => throw (IO.userError s!"invalid whole-call evidence: {error}")
+      unless value.state.id == contexts.size do
+        throw (IO.userError "missing, duplicated or reordered operation state")
+      let preview ← match value.preview with
+        | none => pure none
+        | some preview =>
+            unless preview.id == value.state.id do
+              throw (IO.userError "preview belongs to a different whole-call context")
+            let key := preview.contentKey
+            match previewPool.get? key with
+            | some shared => pure (some shared)
+            | none =>
+                let shared := { preview with id := 0 }
+                previewPool := previewPool.insert key shared
+                pure (some shared)
+      -- Query preparation already shares this complete, lossless state key.
+      -- Share its decoded storage too, rather than retaining one copy for
+      -- every resolver history/contract. Every original context and ID stays
+      -- in the inventory, with all prefix, input, payload and FIFO evidence.
+      let key := value.state.contentKey
+      let pooled ← match stateIndex.get? key with
+        | some pooled => pure pooled
+        | none =>
+            let pooled := statePool.size
+            statePool := statePool.push { value.state with id := pooled }
+            stateKeys := stateKeys.push key
+            stateIndex := stateIndex.insert key pooled
+            pure pooled
+      let some state := statePool[pooled]? | throw (IO.userError "missing interned operation state")
+      contexts := contexts.push { value with state, preview }
+      contextStates := contextStates.push pooled
+    unless !contexts.isEmpty do throw (IO.userError "missing whole-call evidence")
+    IO.eprintln s!"shape {input.name}: whole-call contexts={contexts.size} distinct passive states={statePool.size}"
+    let some choreo := ProtocolCutEvidence.sourceChoreography? source
+      | throw (IO.userError "whole calls have no source choreography")
+    let stateQueries ← match ProtocolCutEvidence.prepare choreo images statePool with
+      | .ok value => pure value
+      | .error error => throw (IO.userError s!"generated Endpoint/source conformance failed: {error}")
+    let previewQueries ← match ProtocolCutEvidence.prepare choreo images statePool true with
+      | .ok value => pure value
+      | .error error => throw (IO.userError s!"generated preview/source conformance failed: {error}")
+    let mut frames := #[]
+    let mut fifoCache : Std.HashMap (List (List Nat)) (List (List Nat)) := {}
+    for context in contexts do
+      let queued ← match fifoCache.get? context.commits with
+        | some queued => pure queued
+        | none => match ProtocolCutEvidence.fixtureFrames images 1 context.commits with
+          | .ok value => pure value
+          | .error error => throw (IO.userError error)
+      fifoCache := fifoCache.insert context.commits queued
+      frames := frames.push queued
+    let mut queryCache : Std.HashMap (String × Nat × Bool × List Nat) (List Nat) := {}
+    let mut previewCache : Std.HashMap (String × Nat × Bool × List Nat) (List Nat) := {}
+    let mut usedContexts : Std.HashSet Nat := {}
     unless ((shapeResolvers source 0).map Prod.snd).mergeSort (· ≤ ·) == List.range input.resolvers do
       throw (IO.userError s!"shape {input.name}: missing or duplicate resolver assignments")
     -- Check complete execution records before the larger admission inventory.
@@ -2541,14 +2690,16 @@ def main (args : List String) : IO UInt32 := do
     unless !candidates.isEmpty do throw (IO.userError s!"shape {input.name}: no accepted source plan")
     let choices := shapeChoicePatterns source
     IO.eprintln s!"shape {input.name}: completed runs={runs} calls={calls} cuts={plannedPrefixes.length} source-witnesses={candidates.length}"
-    let plannedInputs := plannedPrefixes.map fun word => (word, shapeWordInputs source word)
-    let normalizedInputs := if plannedInputs.all (fun (word, inputs) =>
-        shapeInputsAlreadyCanonical source word inputs) then plannedInputs
-      else
-        let prepared := candidates.map ShapePlan.of
-        plannedInputs.map fun (word, inputs) =>
-          (word, if shapeInputsAlreadyCanonical source word inputs then inputs
-            else shapeCanonicalInputs source (prepared.map (·, [])) word inputs)
+    -- A public call can invoke only its logical view's controllers. This is
+    -- the driver's opaque-input contract, independent of the current visit.
+    -- Keep every controller input, even after its choice is already known.
+    -- Each resulting history still needs a checked source execution below.
+    let normalizedInputs := plannedPrefixes.map fun word =>
+      (word, (word.zip (shapeWordInputs source word)).map fun (command, input) =>
+        if shapeRecordsResolverInput source command then input else [])
+    unless normalizedInputs.all (fun (word, inputs) =>
+        shapeInputsAlreadyCanonical source word inputs) do
+      throw (IO.userError "source scripts have noncanonical opaque inputs")
     let shortPrefixes := if shapeRepetitions source == 0 then
       shapeShortPrefixes source (candidates.map ShapePlan.of) choices else []
     let prefixes := (normalizedInputs ++ shortPrefixes).eraseDups
@@ -2584,10 +2735,12 @@ def main (args : List String) : IO UInt32 := do
               choice.all (· < input.resolvers)) do
           throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
         let key := (observed.prefix, observed.prefixChoices)
-        unless missing.contains key && observed.answers.size == questions.length do
+        unless missing.contains key && observed.answers.size == questions.length &&
+            observed.cuts.size == questions.length do
           throw (IO.userError s!"shape {input.name}: incomplete probe inventory; unknown, duplicate or missing probe group")
         missing := missing.erase key
-        let attempts := shapeExpandRows observed.prefix observed.prefixChoices questions observed.answers.toList
+        let attempts := ((shapeExpandRows observed.prefix observed.prefixChoices questions observed.answers.toList).zip
+          observed.cuts.toList).map fun (attempt, cuts) => { attempt with cuts }
         attemptGroups := (observed.prefix, attempts) :: attemptGroups
       if ended && !missing.isEmpty then
         throw (IO.userError s!"shape {input.name}: incomplete probe inventory; missing prefix or input history")
@@ -2602,94 +2755,130 @@ def main (args : List String) : IO UInt32 := do
               choice == choice.eraseDups.mergeSort (· ≤ ·) &&
                 choice.all (· < input.resolvers)) do
           throw (IO.userError s!"shape {input.name}: invalid replayed resolver inputs")
-        let mut requests : Array (Option ShapeRequest) := #[none]
         for attempt in attempts do
           unless attempt.prefix == word do throw (IO.userError "inconsistent prefix group")
-          requests := requests.push (some (attempt.choice, attempt.event, attempt.receive))
-          match attempt.parked with
-          | [] => pure ()
-          | [(label, _)] =>
-              unless label < 256 do
-                throw (IO.userError s!"shape {input.name}: invalid parked preview label")
-              if attempt.receive && (shapeMessage? source attempt.event).any
-                  (fun message => message.sender == message.receiver) then
-                requests := requests.push (some (attempt.choice, attempt.event, false))
-          | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
-        groups := groups.push (word, some first.prefixChoices, requests.toList)
-      let answers := (shapeParallelGroupAnswers source (Nat.log2 (candidates.length / 4096))
-        candidates groups.toList).get
-      let observedAnswers := answers
-      unless observedAnswers.length == attemptGroups.length do
+        -- A source word establishes existence of its prefix, not the concrete
+        -- next visit. Next-call permission uses the actual cut below.
+        groups := groups.push (word, some first.prefixChoices, [none])
+      -- The proved whole-family equality makes each Boolean query an
+      -- existential search. Stop at its first checked witness instead of
+      -- continuing to evaluate the rest of the unchanged candidate family.
+      let answers := groups.toList.map fun group => group.2.2.map fun request =>
+        candidates.any fun candidate =>
+          shapeStateQuery (shapePreparedGroupStates (ShapePlan.of candidate) group) request
+      unless answers.length == attemptGroups.length do
         throw (IO.userError "incomplete source query answers")
-      -- The defect control changes only the outer dependency. Prefix validity
-      -- and parked local receives still use the original accepted source.
-      let comparisonAnswers := if weakenRoot then
-        let altered := match source with | .seq a b => .par a b | _ => source
-        let plans := shapePlans altered
-        (shapeParallelGroupAnswers altered (Nat.log2 (plans.length / 4096))
-          plans groups.toList).get
-      else observedAnswers
-      unless comparisonAnswers.length == attemptGroups.length do
-        throw (IO.userError "incomplete comparison query answers")
-      for ((_, attempts), (original, comparison)) in
-          attemptGroups.zip (observedAnswers.zip comparisonAnswers) do
-        let (valid, original) ← match original with
-          | valid :: rest => pure (valid, rest)
-          | [] => throw (IO.userError "missing source-prefix answer")
-        unless valid do
+      for ((_, attempts), validity) in attemptGroups.zip answers do
+        unless validity == [true] do
           throw (IO.userError s!"shape {input.name}: replayed inputs have no coherent source execution")
-        let comparison ← match comparison with
-          | _ :: rest => pure rest
-          | [] => throw (IO.userError "missing comparison-prefix answer")
-        unless original.length == comparison.length do
-          throw (IO.userError "query answer lengths differ")
-        let mut remaining := original.zip comparison
         for attempt in attempts do
-          let (answer, rest) ← match remaining with
-            | answer :: rest => pure (answer, rest)
-            | [] => throw (IO.userError "missing operation query answer")
-          remaining := rest
-          let permitted := answer.2
-          let localPreview ← if !attempt.parked.isEmpty && attempt.receive &&
-              (shapeMessage? source attempt.event).any
-                (fun message => message.sender == message.receiver) then
-            match remaining with
-            | answer :: rest =>
-                remaining := rest
-                pure answer.1
-            | [] => throw (IO.userError "missing parked local query answer")
-          else pure false
           checked := checked + 1
           if !attempt.prefix.isEmpty then continuations := continuations + 1
-          if permitted != attempt.accepted then
-            if runtimeOnly + modelOnly < 10 then
-              IO.println s!"shape {input.name} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={permitted} runtime={attempt.accepted}"
-            if attempt.accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
-          match attempt.parked with
-          | [] => pure ()
-          | [(previewLabel, accepted)] =>
-              unless previewLabel < 256 do
-                throw (IO.userError s!"shape {input.name}: invalid parked preview label")
-              -- A preview adds no source step. Matching local recv consumes the
-              -- same self-role operation as send; other local recvs still need
-              -- their own materialized preview. Wire operations keep their usual
-              -- direction and the independently replayed source prefix.
-              let expected := match shapeMessage? source attempt.event with
-                | some message =>
-                    if attempt.receive && message.sender == message.receiver then
-                      message.label == previewLabel &&
-                        localPreview
-                    else permitted
-                | none => false
-              parkedChecked := parkedChecked + 1
-              if expected != accepted then
-                if parkedRuntimeOnly + parkedModelOnly < 10 then
-                  IO.println s!"shape {input.name} parked={previewLabel} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={expected} runtime={accepted}"
-                if accepted then parkedRuntimeOnly := parkedRuntimeOnly + 1
-                else parkedModelOnly := parkedModelOnly + 1
-                if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
-          | _ => throw (IO.userError s!"shape {input.name}: duplicate parked preview observation")
-        unless remaining.isEmpty do throw (IO.userError "extra operation query answers")
+          let parked ← match attempt.parked with
+            | [] =>
+                unless attempt.cuts.2.isNone do throw (IO.userError "unexpected parked call cut")
+                pure []
+            | [(label, accepted)] =>
+                unless label < 256 && attempt.cuts.2.isSome do
+                  throw (IO.userError "invalid parked call cut or label")
+                parkedChecked := parkedChecked + 1
+                pure [(true, attempt.cuts.2, accepted)]
+            | _ => throw (IO.userError "duplicate parked preview observation")
+          for (parked, contextId, accepted) in [(false, attempt.cuts.1, attempt.accepted)] ++ parked do
+            let permitted ← match contextId with
+              | none => pure false -- No affine handle exists to construct this call.
+              | some id =>
+                  let some context := contexts[id]? | throw (IO.userError "missing whole-call cut")
+                  unless context.prefix == attempt.prefix && context.prefixChoices == attempt.prefixChoices &&
+                      context.input == attempt.choice && context.commits.length == attempt.prefix.length do
+                    throw (IO.userError "whole-call cut disagrees with replayed inputs")
+                  let some message := shapeMessage? source attempt.event | throw (IO.userError "missing query contract")
+                  let view := if attempt.receive then message.receiver.role else message.sender.role
+                  unless context.state.cut.target.view == view do
+                    throw (IO.userError "whole-call cut has the wrong logical view")
+                  let some pooled := contextStates[id]? | throw (IO.userError "missing whole-call state binding")
+                  let some query := stateQueries[pooled]? | throw (IO.userError "missing prepared source cut")
+                  let some stateKey := stateKeys[pooled]? | throw (IO.userError "missing whole-call state key")
+                  let key := (stateKey, attempt.event, attempt.receive, attempt.choice)
+                  let candidates ← match queryCache.get? key with
+                    | some candidates => pure candidates
+                    | none =>
+                        let some candidates := query attempt.event attempt.receive attempt.choice
+                          | throw (IO.userError "invalid source-cut query")
+                        pure candidates
+                  queryCache := queryCache.insert key candidates
+                  let some image := resolveUnique? (images.filter (·.role == context.state.progress.actor))
+                    | throw (IO.userError "whole-call cut has no unique resident image")
+                  if parked then
+                    let some preview := context.preview
+                      | throw (IO.userError "successful offer has no pre-Drop evidence")
+                    let target := context.state.cut.target
+                    let some view := resolveUnique? (preview.progress.views.filter (·.role == target.view))
+                      | throw (IO.userError "preview has no unique target view")
+                    unless target.whole && view.operation == .routeBranch do
+                      throw (IO.userError "whole offer did not borrow its target operation")
+                    let releasedProgress := { preview.progress with views := preview.progress.views.map fun current =>
+                      if current.role == target.view then
+                        { current with operation :=
+                          (transitionPublicOperation current.operation .finishRouteBranch).phase }
+                      else current }
+                    unless releasedProgress == context.state.progress &&
+                        preview.borrowReentry == context.state.borrowReentry &&
+                        preview.retainedRolls == context.state.retainedRolls &&
+                        preview.creditedRolls == context.state.creditedRolls &&
+                        preview.cut.target == context.state.cut.target &&
+                        preview.cut.matches image && preview.cut.previewsMatch image do
+                      throw (IO.userError "preview Drop changed progress, custody or the borrow target")
+                    let some slot := resolveUnique? (preview.cut.slots.filter
+                        (fun slot => slot.key == (target.view, target.lane)))
+                      | throw (IO.userError "parked offer has no unique operation slot")
+                    unless slot.phase == .routeBranch do
+                      throw (IO.userError "successful offer was not observed while its branch was borrowed")
+                    let released := { preview.cut with slots := preview.cut.slots.map fun current =>
+                      if current.key == slot.key then
+                        { current with
+                          phase := (transitionPublicOperation current.phase .finishRouteBranch).phase
+                          offeredEvent := if current.offeredChoice.isNone then none else current.offeredEvent }
+                      else current }
+                    unless released == context.state.cut do
+                      throw (IO.userError "post-Drop cut does not match the observed preview release")
+                    let some origin := slot.offeredEvent
+                      | throw (IO.userError "successful offer has no source occurrence")
+                    let some row := resolveUnique? ((List.range image.eventCount).filter
+                        (fun row => image.eventEffIndex? row == some origin &&
+                          image.eventView? row == some target.view))
+                      | throw (IO.userError "parked offer has no unique source row")
+                    let some action := image.eventAction? row
+                      | throw (IO.userError "parked offer has no source operation")
+                    let receive := match action with | .recv .. => true | _ => false
+                    let previewKey := (stateKey, origin, receive, attempt.choice)
+                    let offered ← match previewCache.get? previewKey with
+                      | some candidates => pure candidates
+                      | none =>
+                          let some previewQuery := previewQueries[pooled]?
+                            | throw (IO.userError "missing prepared preview cut")
+                          let some candidates := previewQuery origin receive attempt.choice
+                            | throw (IO.userError "invalid parked-offer source query")
+                          pure candidates
+                    previewCache := previewCache.insert previewKey offered
+                    unless offered.contains row &&
+                        attempt.parked == [(action.label, accepted)] do
+                      throw (IO.userError s!"shape {input.name}: offer published an ineligible source occurrence {origin}")
+                  else if context.preview.isSome then
+                    throw (IO.userError "a direct call contains unclaimed preview evidence")
+                  let some queued := frames[id]? | throw (IO.userError "missing whole-call FIFO")
+                  usedContexts := usedContexts.insert id
+                  if !context.payloadAvailable then pure false else
+                  match ProtocolCutEvidence.fixtureReady image view queued attempt.receive candidates with
+                  | .ok value => pure value
+                  | .error error => throw (IO.userError error)
+            if permitted != accepted then
+              if runtimeOnly + modelOnly < 10 then
+                IO.println s!"shape {input.name} parked={parked} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={permitted} runtime={accepted}"
+              if accepted then runtimeOnly := runtimeOnly + 1 else modelOnly := modelOnly + 1
+              if parked then
+                if accepted then parkedRuntimeOnly := parkedRuntimeOnly + 1 else parkedModelOnly := parkedModelOnly + 1
+    unless usedContexts.size == contexts.size do throw (IO.userError "unreferenced whole-call evidence")
     unless parkedRuntimeOnly == 0 && parkedModelOnly == 0 do
       IO.println s!"Parked previews/source mismatch: runtime-only={parkedRuntimeOnly} model-only={parkedModelOnly}"
     unless runtimeOnly == 0 && modelOnly == 0 do

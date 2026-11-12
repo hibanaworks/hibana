@@ -319,15 +319,11 @@ where
             {
                 return;
             }
-            let Ok(enabled) = self.event_enabled(
-                index,
-                row.commit_meta(),
-                &mut |candidate, view| match view {
-                    EventArmView::Committed => self.selected_arm_for_scope(candidate),
-                    EventArmView::Preview if candidate == scope => Some(arm),
-                    EventArmView::Preview => previews(candidate),
-                },
-            ) else {
+            let Some(enabled) = self.enabled_candidate(row, &mut |candidate, view| match view {
+                EventArmView::Committed => self.selected_arm_for_scope(candidate),
+                EventArmView::Preview if candidate == scope => Some(arm),
+                EventArmView::Preview => previews(candidate),
+            }) else {
                 return;
             };
             let (metadata, kind) = match row.direction() {
@@ -569,7 +565,7 @@ where
             .map_err(|_| RecvError::PhaseInvariant)?;
         let _ = self.commit_prepared_delta(delta, None);
         if emit_poll_selection {
-            self.emit_route_arm_selection(scope_id, resolved.route_token, selection.offer_lane);
+            self.emit_route_arm_selection(scope_id, resolved.route_token);
         }
         Ok(true)
     }
@@ -578,14 +574,14 @@ where
         &self,
         scope_id: ScopeId,
         token: RouteArmToken,
-        lane: u8,
     ) {
-        let port = self.port_for_lane(lane as usize);
         let causal = TapEvent::make_causal_key(self.progress.cursor.role(), token.as_tap_seq());
         let arg0 = self.context.sid.raw();
         let event =
             events::route_arm_selection_with_causal(causal, arg0, scope_id, token.arm().as_u8());
-        emit(port.tap(), event);
+        // A choice belongs to the shared actor progress. Its offer lane may
+        // belong to another delegated view, not this operation's I/O ports.
+        emit(self.context.session.rendezvous().tap(), event);
     }
 
     pub(in crate::endpoint::kernel) fn prepare_route_arm_selection_from_resolver(
@@ -597,7 +593,6 @@ where
             .cursor
             .route_scope_resolver(scope_id)
             .ok_or(RecvError::PhaseInvariant)?;
-        let offer_lane = self.offer_lane_for_scope(scope_id);
         let cluster = self.context.session.cluster();
         let rv_id = self.context.public_rv;
         self.context
@@ -612,7 +607,7 @@ where
         let resolution = match resolver_result {
             Ok(resolution) => resolution,
             Err(ClusterError::ResolverReject { resolver_id }) => {
-                self.emit_dynamic_resolver_reject_audit(offer_lane, scope_id, resolver_id);
+                self.emit_dynamic_resolver_reject_audit(scope_id, resolver_id);
                 return Ok(RouteResolveStep::Reject(resolver_id));
             }
             Err(
@@ -625,12 +620,7 @@ where
                 | ClusterError::DynamicResolverInvariant { .. },
             ) => return Err(RecvError::PhaseInvariant),
         };
-        self.emit_dynamic_resolver_success_audit(
-            offer_lane,
-            scope_id,
-            resolver.resolver_id(),
-            resolution,
-        );
+        self.emit_dynamic_resolver_success_audit(scope_id, resolver.resolver_id(), resolution);
         let arm = Arm::from_raw(resolution.index());
         Ok(RouteResolveStep::Resolved(arm))
     }

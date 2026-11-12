@@ -209,6 +209,33 @@ async fn inner_reentry_does_not_restart_completed_containing_resolver()
             .unwrap();
         let mut controller = rv.enter(SessionId::new(51), &p0).unwrap();
         let mut observer = rv.enter(SessionId::new(51), &p1).unwrap();
+        // Complete two accepted child visits before the containing route's
+        // other arm has ever executed (the generated population's script 4).
+        a.set(true);
+        drop(controller.offer().await.unwrap());
+        // The next containing visit will reject; a child preview must not
+        // reset that future input to the current visit's accepted decision.
+        a.set(false);
+        controller.send::<AcceptA>(&()).await.unwrap();
+        observer
+            .offer()
+            .await
+            .unwrap()
+            .recv::<AcceptA>()
+            .await
+            .unwrap();
+        b.set(true);
+        for _ in 0..2 {
+            drop(controller.offer().await.unwrap());
+            controller.send::<AcceptB>(&()).await.unwrap();
+            observer
+                .offer()
+                .await
+                .unwrap()
+                .recv::<AcceptB>()
+                .await
+                .unwrap();
+        }
         for _ in 0..3 {
             a.set(false);
             controller.send::<ReviseA>(&()).await.unwrap();

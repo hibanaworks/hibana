@@ -141,6 +141,7 @@ where
                 self.operation.public_recv_state = super::recv::RecvState::new();
                 match result {
                     Ok(payload) => Poll::Ready(Ok(payload)),
+                    Err(RecvError::Unavailable) => Poll::Ready(Err(RecvError::Unavailable)),
                     Err(err) => {
                         self.poison_for_recv_error(&err);
                         Poll::Ready(Err(err))
@@ -272,6 +273,9 @@ where
                             }
                         }
                         Poll::Ready(Ok(outcome))
+                    }
+                    Err(SendError::Unavailable) if !branch_send => {
+                        Poll::Ready(Err(SendError::Unavailable))
                     }
                     Err(err) => {
                         if branch_send

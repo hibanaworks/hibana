@@ -35,7 +35,7 @@ pub(crate) mod kernel;
 mod ops;
 mod owner;
 mod parallel;
-#[cfg(all(test, hibana_repo_tests))]
+#[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
 pub(crate) mod proof_snapshot;
 mod public_types;
 #[cfg(all(test, hibana_repo_tests, hibana_profile))]
@@ -47,6 +47,20 @@ pub(crate) mod session;
 pub(crate) mod target;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
+// Generated inputs exercise the same public operations while reading the
+// existing passive borrow/slot observations. No production observer API.
+#[cfg(all(test, hibana_generated_protocols))]
+mod generated_protocol_shapes {
+    use std::{
+        borrow::ToOwned,
+        boxed::Box,
+        format, panic,
+        string::{String, ToString},
+        vec,
+        vec::Vec,
+    };
+    include!(env!("HIBANA_GENERATED_PROTOCOL_SHAPES"));
+}
 mod transfer;
 
 pub use self::error::EndpointError;

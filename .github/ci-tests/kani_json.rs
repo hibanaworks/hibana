@@ -1,5 +1,5 @@
 //! Small strict JSON decoder for private CI inventory metadata. No dependencies.
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, format, string::String, vec::Vec};
 
 #[derive(Debug, PartialEq)]
 pub enum Json {

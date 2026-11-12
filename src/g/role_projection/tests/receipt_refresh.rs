@@ -245,7 +245,7 @@ fn write_observations(
     {
         source.push_str(&std::format!(
             "def {name} : Hibana.ActorProgressObservation := {}\n\n",
-            super::commit::observation_source(snapshot),
+            crate::endpoint::proof_snapshot::observation_source(snapshot),
         ));
     }
     for (name, label, before, after, (header, payload)) in [
@@ -262,8 +262,8 @@ fn write_observations(
              event := {event}, view := 0, before := {}, after := {} }}\n\n\
              def {name}Wire : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, \
              sender := {}, receiver := {}, frameLabel := {}, payload := {payload:?} }}\n\n",
-            super::commit::observation_source(before),
-            super::commit::observation_source(after),
+            crate::endpoint::proof_snapshot::observation_source(before),
+            crate::endpoint::proof_snapshot::observation_source(after),
             header.session().raw(),
             header.lane(),
             header.source_role(),

@@ -284,8 +284,8 @@ fn write_observations(
              ({{ {name} with after := {{ {name}.after with liveViews := {name}.after.liveViews + 1 }} }} : \
              Hibana.ActorReentryCommitObservation).check parallelReentryImage{actor} parallelReentryChoreo = false := by\n  decide\n\n",
             descriptor_source(RoleDescriptorRef::from_resident(image)),
-            super::commit::observation_source(before),
-            super::commit::observation_source(after),
+            crate::endpoint::proof_snapshot::observation_source(before),
+            crate::endpoint::proof_snapshot::observation_source(after),
         ));
         source.push_str(&std::format!(
             r#"
@@ -389,7 +389,7 @@ theorem parallelReentryReceiverPublishesItsActualActor :
         "\ndef parallelInitial : Hibana.ActorProgressObservation := {}\n\n\
          def parallelFirstWire : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, sender := {}, \
          receiver := {}, frameLabel := {}, payload := {:?} }}\n\n",
-        super::commit::observation_source(initial), wires[0].0.session().raw(), wires[0].0.lane(),
+        crate::endpoint::proof_snapshot::observation_source(initial), wires[0].0.session().raw(), wires[0].0.lane(),
         wires[0].0.source_role(), wires[0].0.target_role(), wires[0].0.label().raw(), wires[0].1,
     ));
     source.push_str(r#"

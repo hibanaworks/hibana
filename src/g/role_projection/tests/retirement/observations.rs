@@ -141,8 +141,8 @@ theorem {name}LossBoundary :
   · exact retired
 
 "#,
-            before = super::super::commit::observation_source(before),
-            after = super::super::commit::observation_source(after),
+            before = crate::endpoint::proof_snapshot::observation_source(before),
+            after = crate::endpoint::proof_snapshot::observation_source(after),
             actor = before.actor, run = view.run, nonce = view.nonce,
         ));
         let (event, before_cut, boundary) = match origin {

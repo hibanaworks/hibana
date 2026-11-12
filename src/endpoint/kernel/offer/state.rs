@@ -57,7 +57,7 @@ impl<'a> OfferStagedIngress<'a> {
     }
 
     #[inline]
-    fn transport_observation(
+    pub(super) fn transport_observation(
         &self,
         session_raw: u32,
         target_role: u8,

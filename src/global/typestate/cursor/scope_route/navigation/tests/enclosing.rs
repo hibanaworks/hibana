@@ -25,23 +25,6 @@ fn scanned_completion(
     result.and_then(|scope| cursor.route_scope_end_by_id(scope))
 }
 
-fn scanned_controller(cursor: &EventCursor, idx: usize) -> Option<ScopeId> {
-    let mut result = None;
-    for slot in 0..cursor.machine().route_scope_slot_count() {
-        if let Some(region) = cursor.machine().route_scope_rows_by_slot(slot)
-            && region.start() <= idx
-            && idx < region.end()
-            && cursor.contains_route_controller(region.scope())
-        {
-            result = Some(match result {
-                Some(current) => cursor.deeper_route_scope(current, region.scope()),
-                None => region.scope(),
-            });
-        }
-    }
-    result
-}
-
 fn compare_enclosing_queries(rows: &'static RoleImageRef) {
     let len = rows.local_step_count();
     let count = rows.footprint().route_scope_count;
@@ -64,11 +47,13 @@ fn compare_enclosing_queries(rows: &'static RoleImageRef) {
                 }
             }
             assert_eq!(actual, expected, "ancestry order at {idx}");
-            assert_eq!(
-                cursor.send_preview_controller_scope_at_for_decision(idx),
-                scanned_controller(cursor, idx),
-                "controller at {idx}"
-            );
+            for depth in 0..=count {
+                assert_eq!(
+                    cursor.send_preview_scope_at_depth_for_decision(idx, depth),
+                    expected.get(depth).map(|(scope, _)| *scope),
+                    "route ancestry at index={idx}, depth={depth}",
+                );
+            }
         }
     });
     for completed in 0..1usize << len {

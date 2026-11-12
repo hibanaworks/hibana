@@ -15,19 +15,6 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         if !self.region.contains(event.eff_index().dense_ordinal()) {
             return Poll::Ready(Err(SendError::PhaseInvariant));
         }
-        match self.preflight_roll_entry_views(Some(event)) {
-            Ok(_) => (),
-            Err(EventAdmissionError::OtherViewPending) => return Poll::Pending,
-            Err(EventAdmissionError::Invariant) => {
-                return Poll::Ready(Err(SendError::PhaseInvariant));
-            }
-            Err(
-                EventAdmissionError::PredecessorPending
-                | EventAdmissionError::PayloadPredecessorPending,
-            ) => {
-                return Poll::Ready(Err(SendError::OutOfOrder));
-            }
-        }
         let index = self
             .progress
             .cursor
@@ -60,6 +47,8 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     })
             }
         };
+        // The common admission includes roll-entry custody. No callback or
+        // progress mutation precedes it, so do not repeat that preflight.
         let enabled = match self.event_enabled(
             index,
             EventCommitMeta::new(

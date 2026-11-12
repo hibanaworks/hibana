@@ -12,7 +12,6 @@ use crate::global::role_program::{DENSE_LANE_ABSENT, DenseLaneOrdinal, PackedLan
 use crate::global::typestate::{EventCursor, LocalConflict, PackedEventConflict};
 
 mod reentry_clear;
-pub(super) use reentry_clear::ReentryScopeLiveness;
 mod route_arm_history;
 use route_arm_history::RouteArmHistoryView;
 #[cfg(kani)]

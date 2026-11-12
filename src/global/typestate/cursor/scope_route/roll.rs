@@ -173,6 +173,7 @@ impl EventCursor {
         // can block this scope. An excluded arm has no participating events,
         // so skip its whole row rather than decoding each clear bit in it.
         let mut pending = self.pending_event_steps(row.start()..row.end());
+        let mut first_possible = row.start();
         while let Some(index) = pending.next() {
             match self.event_conflict_row_admission(
                 self.machine().event_conflict_for_index(index),
@@ -182,6 +183,9 @@ impl EventCursor {
             ) {
                 super::ConflictAdmission::Excluded { scope, arm } => {
                     let end = self.excluded_arm_end(index, scope, arm).min(row.end());
+                    if index == first_possible {
+                        first_possible = end;
+                    }
                     pending = self.pending_event_steps(end..row.end());
                 }
                 super::ConflictAdmission::Allowed
@@ -204,7 +208,9 @@ impl EventCursor {
             }
         }
         // A scope with no participating event is absent, rather than complete.
-        let mut index = row.start();
+        // Leading excluded arms cannot establish participation either. Reuse
+        // their checked boundary rather than decode that prefix a second time.
+        let mut index = first_possible;
         while index < row.end() {
             match self.event_conflict_row_admission(
                 self.machine().event_conflict_for_index(index),

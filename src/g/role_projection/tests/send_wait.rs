@@ -211,7 +211,7 @@ theorem actualPendingReturnHasAConcreteRequiredPredecessor :
       sourceActionRequiresView resource.role binding prior.actionId.side = true :=
   a_source_held_view_wait_has_an_unfinished_required_predecessor actualPendingReturnHasItsHeldPayloadPredecessor
 "#,
-                snapshot = super::commit::observation_source(&before)
+                snapshot = crate::endpoint::proof_snapshot::observation_source(&before)
             );
             let directory =
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");

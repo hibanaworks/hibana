@@ -29,7 +29,7 @@ mod evidence;
 mod matching;
 
 pub(crate) use evidence::MatchedRecvFrame;
-use evidence::RecvDescriptor;
+pub(in crate::endpoint::kernel) use evidence::RecvDescriptor;
 
 pub(crate) struct RecvState {
     pending_recv: lane_port::PendingRecv,
@@ -112,7 +112,21 @@ where
     ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
         let lane_limit = self.progress.cursor.logical_lane_count();
         let mut words = [0; LANE_SET_VIEW_WORDS];
-        let lanes = self.live_recv_lanes(target_label, target_payload, &mut words)?;
+        let lanes = match self.live_recv_lanes(target_label, target_payload, &mut words) {
+            Ok(lanes) => lanes,
+            Err(RecvError::Unavailable | RecvError::OutOfOrder)
+                if self.operation.public_active_op == super::core::PublicActiveOp::Recv
+                    && pending_recv.is_unpolled() =>
+            {
+                return Poll::Ready(Err(RecvError::Unavailable));
+            }
+            // A started receive or materialized preview retains the terminal
+            // failure contract. Unavailability never discards accepted input.
+            Err(RecvError::Unavailable) => {
+                return Poll::Ready(Err(RecvError::PhaseInvariant));
+            }
+            Err(error) => return Poll::Ready(Err(error)),
+        };
         let mut next = lanes.first_set(lane_limit);
         let mut pending_lane = false;
         let mut parked_lane = false;
@@ -226,7 +240,7 @@ where
         Ok(RecvCommitPlan::direct(delta, frame))
     }
 
-    fn prepare_recv_commit_delta(
+    pub(in crate::endpoint::kernel) fn prepare_recv_commit_delta(
         &mut self,
         logical_label: u8,
         payload_kind: crate::eff::EventPayload,

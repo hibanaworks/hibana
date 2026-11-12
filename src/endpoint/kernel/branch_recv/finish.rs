@@ -205,7 +205,34 @@ where
         publish_branch: super::BranchMeta,
         frame: lane_port::ReceivedFrame<'r>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
-        let branch_scope = publish_branch.scope_id;
+        if publish_branch.choice.is_none() {
+            let descriptor = super::super::recv::RecvDescriptor {
+                meta,
+                cursor_index: publish_branch.cursor_index,
+            };
+            let delta = match self.prepare_recv_commit_delta(
+                meta.label,
+                meta.payload_kind,
+                descriptor,
+                &frame,
+            ) {
+                Ok(delta) => delta,
+                Err(error) => {
+                    frame.discard_uncommitted();
+                    return Err(error);
+                }
+            };
+            return Ok(RecvCommitPlan::branch(
+                publish_branch,
+                delta,
+                RecvCommitPayload::wire(frame),
+            ));
+        }
+        let branch_scope = publish_branch
+            .choice
+            .map_or_else(crate::global::const_dsl::ScopeId::none, |choice| {
+                choice.scope_id
+            });
         let cursor_index = publish_branch.cursor_index;
         let mut frame = Some(frame);
         let body_reentry = self

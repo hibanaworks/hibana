@@ -59,6 +59,24 @@ def DecodedProgramColumns.selectedActor?
   selectActorWithBound columns.actorDecisions selected
     (columns.actorDecisions.length + 1) reference
 
+/-- A direct actor reference cannot change when future route choices become
+known. Compiler return searches can exclude another fixed receiver before
+exploring the event's conditional presence. -/
+theorem fixed_actor_reference_is_choice_independent
+    (columns : DecodedProgramColumns) (selected : Nat → Option RouteArm)
+    {reference : Nat} (direct : reference < 256) :
+    columns.selectedActor? selected reference = some reference := by
+  simp [DecodedProgramColumns.selectedActor?, selectActorWithBound, direct]
+
+theorem wrong_fixed_actor_cannot_be_an_endpoint_return
+    (columns : DecodedProgramColumns) (selected : Nat → Option RouteArm)
+    {reference owner : Nat} {present : Prop}
+    (direct : reference < 256) (other : reference ≠ owner) :
+    ¬ (present ∧ columns.selectedActor? selected reference = some owner) := by
+  rw [fixed_actor_reference_is_choice_independent columns selected direct]
+  intro matched
+  exact other (Option.some.inj matched.2)
+
 theorem unknown_actor_choice_does_not_authorize_a_holder
     {columns : DecodedProgramColumns} {selected : Nat → Option RouteArm}
     {reference : Nat} {row : DecodedActorDecision}

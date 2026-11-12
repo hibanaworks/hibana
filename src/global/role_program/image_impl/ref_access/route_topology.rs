@@ -111,12 +111,7 @@ impl RoleImageRef {
     }
 
     const fn lane_successor_start(&self) -> usize {
-        self.view_lane_index_start()
-            + if self.columns.route_scopes.len == 0 {
-                0
-            } else {
-                self.local_step_count() * 2
-            }
+        self.view_lane_index_start() + self.local_step_count() * 2
     }
 
     const fn alternative_head_start(&self) -> usize {
@@ -303,18 +298,27 @@ impl RoleImageRef {
     }
 
     /// Lower bound in the sealed `(logical view, lane, local row)` index.
-    /// Images with no routes need no offer candidates and omit this index.
+    /// Ordinary receives use the same index without inventing a route.
     pub(crate) fn view_lane_step_at_or_after(
         &self,
         view: u8,
         lane: u8,
         start: usize,
     ) -> Option<usize> {
-        if self.columns.route_scopes.len == 0 || start >= self.local_step_count() {
+        if start >= self.local_step_count() {
             return None;
         }
         let prefix = (u32::from(view) << 24) | (u32::from(lane) << 16);
-        let key = prefix | start as u32;
+        let low = self.view_lane_slot_at_or_after(view, lane, start);
+        if low == self.local_step_count() {
+            return None;
+        }
+        let step = self.view_lane_step_at(low);
+        (self.view_lane_step_key(step) >> 16 == prefix >> 16).then_some(step)
+    }
+
+    fn view_lane_slot_at_or_after(&self, view: u8, lane: u8, start: usize) -> usize {
+        let key = (u32::from(view) << 24) | (u32::from(lane) << 16) | start as u32;
         let mut low = 0;
         let mut high = self.local_step_count();
         while low < high {
@@ -325,11 +329,35 @@ impl RoleImageRef {
                 high = mid;
             }
         }
-        if low == self.local_step_count() {
-            return None;
-        }
-        let step = self.view_lane_step_at(low);
-        (self.view_lane_step_key(step) >> 16 == prefix >> 16).then_some(step)
+        low
+    }
+
+    /// Static repetition entries for this exact view/lane. The constructor
+    /// checks the forward links against source scopes; no progress is stored.
+    pub(crate) fn roll_offer_heads(&self, view: u8, lane: u8) -> impl Iterator<Item = usize> + '_ {
+        let count = self.local_step_count();
+        let mut position = if self.columns.roll_scopes.len == 0 {
+            count
+        } else {
+            self.view_lane_slot_at_or_after(view, lane, 0)
+        };
+        let prefix = (u32::from(view) << 8) | u32::from(lane);
+        let heads = self.columns.roll_offer_heads().start;
+        core::iter::from_fn(move || {
+            if position == count
+                || self.view_lane_step_key(self.view_lane_step_at(position)) >> 16 != prefix
+            {
+                return None;
+            }
+            let next = read_u16(self.blob.as_slice(), heads + position * 2);
+            if next == u16::MAX {
+                position = count;
+                None
+            } else {
+                position = next as usize + 1;
+                Some(self.view_lane_step_at(next as usize))
+            }
+        })
     }
 
     pub(super) const fn validate_route_topology<const E: usize>(&self, rows: &ValidationRows<E>) {
@@ -345,9 +373,6 @@ impl RoleImageRef {
                 invalid_resident_descriptor();
             }
             next[lane] = step;
-        }
-        if self.columns.route_scopes.len == 0 {
-            return;
         }
         let mut last_view = [None; 256];
         let permutation = self.view_lane_index_start();
@@ -366,6 +391,10 @@ impl RoleImageRef {
                 invalid_resident_descriptor();
             }
             previous_key = Some(key);
+            if self.columns.route_scopes.len == 0 {
+                step += 1;
+                continue;
+            }
             let view = (rows.keys[step] >> 8) as usize;
             let effect = rows.effects[step] as usize;
             let mut expected = last_view[view];
@@ -400,7 +429,51 @@ impl RoleImageRef {
             last_view[view] = Some(step);
             step += 1;
         }
-        self.validate_offer_alternatives(rows);
+        if self.columns.route_scopes.len != 0 {
+            self.validate_offer_alternatives(rows);
+        }
+        if self.columns.roll_scopes.len != 0 {
+            let heads = self.columns.roll_offer_heads().start;
+            let mut next = u16::MAX;
+            let mut key = u16::MAX;
+            let mut slot = count;
+            while slot != 0 {
+                slot -= 1;
+                let step = read_u16(bytes, permutation + slot * 2) as usize;
+                if rows.keys[step] != key {
+                    key = rows.keys[step];
+                    next = u16::MAX;
+                }
+                let effect = rows.effects[step] as usize;
+                if let Some(roll) = self.program().source_roll_containing(effect, effect + 1) {
+                    let previous = if slot == 0 {
+                        None
+                    } else {
+                        let step = read_u16(bytes, permutation + (slot - 1) * 2) as usize;
+                        if rows.keys[step] == key {
+                            Some(rows.effects[step] as usize)
+                        } else {
+                            None
+                        }
+                    };
+                    let inside = match previous {
+                        None => false,
+                        Some(before) => {
+                            match self.program().source_roll_containing(before, effect + 1) {
+                                Some(parent) => parent.same(roll),
+                                None => false,
+                            }
+                        }
+                    };
+                    if !inside {
+                        next = slot as u16;
+                    }
+                }
+                if read_u16(bytes, heads + slot * 2) != next {
+                    invalid_resident_descriptor();
+                }
+            }
+        }
         let mut slot = 0;
         while slot < self.columns.route_scopes.len as usize {
             let mut arm = 0;

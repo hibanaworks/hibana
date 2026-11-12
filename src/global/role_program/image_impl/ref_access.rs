@@ -205,12 +205,12 @@ impl RoleImageRef {
         self.facts
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) const fn columns(&self) -> &'static RoleImageColumns {
         self.columns
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) const fn blob(&self) -> BlobPtr {
         self.blob
     }
@@ -411,7 +411,7 @@ impl RoleImageRef {
                 LocalAction::Send { lane, .. }
                 | LocalAction::Recv { lane, .. }
                 | LocalAction::Local { lane, .. } => lane,
-                #[cfg(all(test, hibana_repo_tests))]
+                #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
                 LocalAction::Terminate => invalid_resident_descriptor(),
             };
             if actual_lane != expected_lane {

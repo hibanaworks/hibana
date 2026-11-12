@@ -478,7 +478,7 @@ fn write_observations(
             "def choiceBefore{index} : Hibana.ActorProgressObservation := {}\n\n\
              def choiceWire{index} : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, \
              sender := {}, receiver := {}, frameLabel := {}, payload := {payload:?} }}\n\n",
-            super::commit::observation_source(before),
+            crate::endpoint::proof_snapshot::observation_source(before),
             header.session().raw(),
             header.lane(),
             header.source_role(),
@@ -510,7 +510,7 @@ fn write_observations(
          occurrenceChoiceChoreo 9063 (choicePrefixBefore, {}) (choicePrefixAfter, {}) [] 1 :=\n  \
          .tail .refl (.commit (record := {{ commit := choicePrefixCommit, before := {}, after := {} }}) \
          choicePrefixChecked (by decide))\n\n",
-        super::commit::observation_source(notice.0), super::commit::observation_source(notice.1),
+        crate::endpoint::proof_snapshot::observation_source(notice.0), crate::endpoint::proof_snapshot::observation_source(notice.1),
         notice.0.completion_mutations, notice.1.completion_mutations,
         notice.0.completion_mutations, notice.1.completion_mutations
     ));
@@ -534,8 +534,8 @@ fn write_observations(
         source.push_str(&std::format!(
             "def choiceReceiverBefore{visit} : Hibana.ActorProgressObservation := {}\n\n\
              def choiceReceiverAfter{visit} : Hibana.ActorProgressObservation := {}\n\n",
-            super::commit::observation_source(before),
-            super::commit::observation_source(after),
+            crate::endpoint::proof_snapshot::observation_source(before),
+            crate::endpoint::proof_snapshot::observation_source(after),
         ));
         let base = if let Some(scope) = before.steps[event].reentry_scope {
             std::format!(
@@ -629,7 +629,7 @@ theorem choiceReceipt{visit}NeedsNoCommonWholePath : choiceSend{index}.pathIndex
              wire := choiceReturnWire{visit} }}\n\n\
              private theorem choiceReturnChecked{visit} : choiceReturn{visit}.check occurrenceWorkerImage \
              occurrenceChoiceChoreo 9063 = true := by decide\n\n",
-            super::commit::observation_source(returned), return_header.session().raw(), return_header.lane(),
+            crate::endpoint::proof_snapshot::observation_source(returned), return_header.session().raw(), return_header.lane(),
             return_header.source_role(), return_header.target_role(), return_header.label().raw()
         ));
         if visit == 0 {

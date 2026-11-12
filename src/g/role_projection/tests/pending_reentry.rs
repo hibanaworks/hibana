@@ -306,7 +306,7 @@ async fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_depende
                 descriptor_source(RoleDescriptorRef::from_resident(
                     owner_program.role_image_ref()
                 )),
-                super::commit::observation_source(&pending_snapshot),
+                crate::endpoint::proof_snapshot::observation_source(&pending_snapshot),
             );
             for (visit, (before, after)) in independent_observations.iter().enumerate() {
                 let sample = std::format!("pendingIndependent{visit}");
@@ -332,7 +332,7 @@ async fn a_pending_owned_send_keeps_its_payload_unavailable_for_resource_depende
                          theorem {sample}Accepted : {sample}.check pendingBorrowImage pendingBorrowChoreo = true := by decide\n\n\
                          theorem {sample}SourceOrdered : {sample}.SourceOrdered pendingBorrowImage pendingBorrowChoreo :=\n  \
                          Hibana.{proof} {sample}Accepted\n\n",
-                        super::commit::observation_source(before), super::commit::observation_source(after),
+                        crate::endpoint::proof_snapshot::observation_source(before), crate::endpoint::proof_snapshot::observation_source(after),
                     ));
             }
             let output =

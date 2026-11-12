@@ -39,10 +39,6 @@ impl BranchCommitPlan {
 /// Branch metadata carried from `offer()` to the selected branch first step.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BranchMeta {
-    /// The scope this branch belongs to.
-    pub(crate) scope_id: ScopeId,
-    /// The selected arm (0, 1, ...).
-    pub(crate) selected_arm: u8,
     /// Wire lane for this branch.
     pub(crate) lane_wire: u8,
     /// Exact typestate node selected by `offer()` for this branch.
@@ -55,6 +51,24 @@ pub(crate) struct BranchMeta {
     pub(crate) frame_label: u16,
     /// Branch first-step category.
     pub(crate) kind: BranchKind,
+    /// A route decision exists only for operations materialized through a route.
+    /// An enabled ordinary receive carries its exact event, without inventing
+    /// a route or granting any additional progress authority.
+    pub(in crate::endpoint::kernel) choice: Option<BranchChoice>,
+}
+
+impl BranchMeta {
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
+    pub(crate) fn route_choice(self) -> Option<(ScopeId, u8)> {
+        self.choice
+            .map(|choice| (choice.scope_id, choice.selected_arm))
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::endpoint::kernel) struct BranchChoice {
+    pub(in crate::endpoint::kernel) scope_id: ScopeId,
+    pub(in crate::endpoint::kernel) selected_arm: u8,
     /// Route-shape profile captured during offer materialization.
     pub(in crate::endpoint::kernel) profile: OfferScopeProfile,
     /// Route arm authority used when commit emits route-arm selection events.

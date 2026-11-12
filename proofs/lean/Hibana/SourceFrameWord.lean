@@ -346,31 +346,15 @@ private theorem a_class_reset_has_its_real_source_preflight
       (group.data.activeRows previous).all (fun row =>
         if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
         then before.doneState.done row.eventId else true) = true := by
-  unfold prepareObservedActorBody? at prepared
-  obtain ⟨data, dataAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  obtain ⟨data, previous, _, rolls, choices, dataAt, previousAt, _, rollsAt, member,
+    scopeAt, choicesAt, reset, _, _, _, _, _, _, _, previousAgrees, _, complete, _⟩ :=
+    prepared_actor_body_source_facts prepared
   have sameData := Option.some.inj (dataAt.symm.trans group.decoded)
   subst data
-  obtain ⟨previous, previousAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨next, nextAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨rolls, rollsAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
   have sameRows := Option.some.inj (rollsAt.symm.trans group.decodedRolls)
   subst rolls
-  obtain ⟨chosen, chosenAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨choices, choicesAt, allowed⟩ := Option.bind_eq_some_iff.mp prepared
-  dsimp only at allowed
-  split at allowed
-  next guarded =>
-    have same := Option.some.inj allowed
-    cases same
-    have filtered : roll ∈ group.rolls.filter (fun row => row.scope == scope) := by
-      rw [resolveUnique?_eq_some_iff.mp chosenAt]
-      exact List.mem_singleton_self _
-    have member := List.mem_filter.mp filtered
-    simp only [Bool.and_eq_true, and_assoc] at guarded
-    exact ⟨previous, choices, previousAt, member.1, beq_iff_eq.mp member.2,
-      rfl, choicesAt, guarded.2.2.2.2.2.2.2.1,
-      by simpa only [Bool.and_eq_true] using guarded.2.2.2.2.2.2.2.2.2.1⟩
-  next rejected => simp at allowed
+  exact ⟨previous, choices, previousAt, member, scopeAt, reset, choicesAt,
+    previousAgrees, a_completed_source_body_has_its_current_rows complete⟩
 
 private theorem a_class_reset_changes_exactly_its_source_bits
     (snapshot : ActorProgressObservation) (roll : DecodedRollRow)

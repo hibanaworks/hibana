@@ -74,6 +74,10 @@ impl PendingRecv {
         Self { port_key: None }
     }
 
+    pub(super) const fn is_unpolled(&self) -> bool {
+        self.port_key.is_none()
+    }
+
     #[inline]
     fn clear(&mut self) {
         self.port_key = None;

@@ -246,7 +246,7 @@ fn write_observations(
             source.push_str(&std::format!(
                 "def {}Actor{index} : Hibana.ActorVisitRecord := {{ image := visitImage{index}, \
                  admission := {{ snapshot := {}, pathIndex := 0, admitted := {admitted:?} }} }}\n\n",
-                cut.name, super::commit::observation_source(snapshot),
+                cut.name, crate::endpoint::proof_snapshot::observation_source(snapshot),
             ));
         }
         source.push_str(&std::format!(

@@ -88,6 +88,21 @@ where
             return;
         }
         let _ = self.transition_public_op(edge);
+        if self
+            .operation
+            .public_route_branch
+            .as_ref()
+            .is_some_and(|branch| branch.branch_meta.choice.is_none())
+        {
+            let branch = crate::invariant_some(self.operation.public_route_branch.take());
+            let frame = crate::invariant_some(branch.offered_frame);
+            let lane = frame.lane() as usize;
+            let result = frame.into_frame().requeue_on(self.port_for_lane(lane));
+            self.reconcile_retirements();
+            if result.is_err() {
+                self.fail_session(SessionFaultKind::TransportClosed);
+            }
+        }
     }
 
     #[inline]
@@ -229,6 +244,9 @@ where
                             matches!(
                                 branch.branch_meta.kind,
                                 BranchKind::ArmSend | BranchKind::LocalAction
+                            ) && self.view_event_is_enabled(
+                                branch.branch_meta.cursor_index.as_usize(),
+                                &mut self.preview_queries(),
                             )
                         }) =>
             {
@@ -501,6 +519,7 @@ where
         error: &RecvError,
     ) -> SessionFaultKind {
         let cause = match error {
+            RecvError::Unavailable => crate::invariant(),
             RecvError::Transport(_) => SessionFaultKind::TransportClosed,
             RecvError::SessionFault(kind) => *kind,
             RecvError::Codec(_) => SessionFaultKind::DecodeFailed,
@@ -520,6 +539,7 @@ where
     ) -> SessionFaultKind {
         let cause = match error {
             SendError::Transport(_) => SessionFaultKind::TransportClosed,
+            SendError::Unavailable => crate::invariant(),
             SendError::SessionFault(kind) => *kind,
             SendError::Codec(_)
             | SendError::OutOfOrder

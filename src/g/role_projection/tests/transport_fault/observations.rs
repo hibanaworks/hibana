@@ -26,7 +26,7 @@ pub(super) fn write(
                 source,
                 "def {name} : ActorProgressObservation := {}\n\
                 def {name}Mutations : Nat := {}\n",
-                super::super::commit::observation_source(cut),
+                crate::endpoint::proof_snapshot::observation_source(cut),
                 cut.completion_mutations
             )
             .unwrap();

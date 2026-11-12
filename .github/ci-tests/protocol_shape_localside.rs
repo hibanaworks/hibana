@@ -9,6 +9,28 @@ pub(super) fn contains(source: &Protocol, label: u8) -> bool {
         .any(|m| matches!(m, Protocol::Message { event: candidate, .. } if *candidate == label))
 }
 
+fn bounds(source: &Protocol) -> (usize, usize) {
+    let mut messages = Vec::new();
+    source.messages(&mut messages);
+    let first = match messages.first().unwrap() {
+        Protocol::Message { event, .. } => usize::from(*event),
+        _ => unreachable!(),
+    };
+    let last = match messages.last().unwrap() {
+        Protocol::Message { event, .. } => usize::from(*event) + 1,
+        _ => unreachable!(),
+    };
+    (first, last)
+}
+
+fn borrow_observation(group: &Protocol, part: &Protocol, actor: u8, role: usize) -> String {
+    let (start, stop) = bounds(group);
+    let (part_start, part_stop) = bounds(part);
+    format!(
+        "observed.borrows.borrow_mut().push([{actor},{role},{start},{stop},{part_start},{part_stop},script.first_occurrence(),observed.completed.borrow().len()]);"
+    )
+}
+
 pub(super) fn message_selected_head(source: &Protocol, label: u8) -> bool {
     match source {
         Protocol::Message { .. } => false,
@@ -26,6 +48,36 @@ pub(super) fn mobile(source: &Protocol) -> bool {
     messages
         .iter()
         .any(|m| matches!(m, Protocol::Message { owned: true, .. }))
+}
+
+// An incoming continuation inside a choice remains offerable after a rolled
+// prefix. Exercise that public path with a live Future, not a cancelled
+// one-poll probe or only a preview whose frame was already queued.
+fn follows_roll_in_choice(source: &Protocol, event: u8) -> bool {
+    fn rolled(source: &Protocol) -> bool {
+        match source {
+            Protocol::Roll(_) => true,
+            Protocol::Message { .. } => false,
+            Protocol::Seq(a, b)
+            | Protocol::Par(a, b)
+            | Protocol::Route(a, b)
+            | Protocol::Resolved(a, b, _) => rolled(a) || rolled(b),
+        }
+    }
+    fn walk(source: &Protocol, event: u8, choice: bool, after: bool) -> bool {
+        match source {
+            Protocol::Message { event: found, .. } => *found == event && choice && after,
+            Protocol::Seq(a, b) => {
+                walk(a, event, choice, after) || walk(b, event, choice, after || rolled(a))
+            }
+            Protocol::Par(a, b) => walk(a, event, choice, after) || walk(b, event, choice, after),
+            Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
+                walk(a, event, true, after) || walk(b, event, true, after)
+            }
+            Protocol::Roll(body) => walk(body, event, choice, after),
+        }
+    }
+    walk(source, event, false, false)
 }
 
 pub(super) fn holder_after(source: &Protocol, execution: &Execution, holder: u8) -> u8 {
@@ -61,6 +113,56 @@ pub(super) fn holder_after(source: &Protocol, execution: &Execution, holder: u8)
             holder_after(body, second, holder_after(body, first, holder))
         }
         _ => panic!("source and ownership execution disagree"),
+    }
+}
+
+// Generate only scripted input data. A callback can preview the next parent
+// visit before a retained child finishes; resetting every ancestor to the
+// child's historical path would contradict that already parked decision.
+// Each resolver's planned choices form its input prefix. The last value is
+// held thereafter, so previewing beyond the finite execution still has input.
+// A resolver absent from the entire script has no input and must not run.
+fn resolver_input_code(source: &Protocol) -> String {
+    match source {
+        Protocol::Message { .. } => String::new(),
+        Protocol::Seq(a, b) | Protocol::Par(a, b) => {
+            let (a, b) = (resolver_input_code(a), resolver_input_code(b));
+            if a.is_empty() && b.is_empty() {
+                return String::new();
+            }
+            let pattern = if matches!(source, Protocol::Seq(..)) {
+                "Script::Seq(a,b)"
+            } else {
+                "Script::Par(a,b,_)"
+            };
+            format!(
+                "{{let(a,b)=match script{{{pattern}=>(a.as_ref(),b.as_ref()),_=>panic!(\"source/input pair mismatch\")}};{{let script=a;{}}}{{let script=b;{}}}}}",
+                a, b
+            )
+        }
+        Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
+            let (a, b) = (resolver_input_code(a), resolver_input_code(b));
+            let input = match source {
+                Protocol::Resolved(_, _, id) => format!("decision_inputs[{id}].push_back(right);"),
+                _ => String::new(),
+            };
+            if input.is_empty() && a.is_empty() && b.is_empty() {
+                return String::new();
+            }
+            format!(
+                "{{let(script,right)=match script{{Script::Branch(body,right)=>(body.as_ref(),*right),_=>panic!(\"source/input branch mismatch\")}};{input}if right{{{}}}else{{{}}}}}",
+                b, a
+            )
+        }
+        Protocol::Roll(body) => {
+            let inputs = resolver_input_code(body);
+            if inputs.is_empty() {
+                return inputs;
+            }
+            format!(
+                "{{for visit in match script{{Script::Roll(visits)=>visits,_=>panic!(\"source/input visit mismatch\")}}{{let script=visit.as_ref();{inputs}}}}}"
+            )
+        }
     }
 }
 
@@ -115,6 +217,21 @@ fn parallel_ancestors<'a>(source: &'a Protocol, target: &Protocol) -> Option<Vec
         }
         Protocol::Roll(body) => parallel_ancestors(body, target),
     }
+}
+
+/// The whole payload value is moved into a mobile parallel child. Other
+/// children can hold borrowed resource fragments, but cannot move that value.
+pub(super) fn payload_in_scope(global: &Protocol, target: &Protocol) -> bool {
+    parallel_ancestors(global, target)
+        .expect("payload query must belong to the source")
+        .into_iter()
+        .all(|parent| {
+            let mut parts = Vec::new();
+            parallel_parts(parent, &mut parts);
+            parts
+                .into_iter()
+                .any(|part| mobile(part) && parallel_ancestors(part, target).is_some())
+        })
 }
 
 fn borrows_resource_mutably(source: &Protocol, actor: u8) -> bool {
@@ -254,6 +371,52 @@ fn route_owners<'a>(source: &'a Protocol, incoming: u8, out: &mut Vec<(&'a Proto
 }
 
 impl Emitter<'_> {
+    // Only the deliberately invalid, single-poll measurement is shared.
+    // Successful localside operations remain directly in their source bodies.
+    // Otherwise every before/after cut duplicates this complete selector
+    // dispatch in the same async Future, causing quadratic generated code.
+    fn query_dispatch(&self) -> String {
+        let mut code = String::from(
+            "trait QueryEndpoint<'r>{fn query(&mut self,db:&mut Option<Endpoint<'r,3>>,input:(u8,bool,&mut core::task::Context<'_>))->Result<Outcome,hibana::EndpointError>;}",
+        );
+        for role in 0..4 {
+            let mut arms = String::new();
+            for (query, receive) in super::scope_probes::public_queries(self.source, role, Some(3))
+            {
+                let Protocol::Message { event, owned, .. } = query else {
+                    unreachable!()
+                };
+                let call = if receive {
+                    format!("self.recv::<M{event}>()")
+                } else {
+                    format!(
+                        "self.send::<M{event}>({})",
+                        if *owned {
+                            "db.take().expect(\"owned query has no Endpoint value\")"
+                        } else {
+                            "&()"
+                        }
+                    )
+                };
+                arms += &format!(
+                    "({event},{receive})=>{{let mut future=core::pin::pin!({call});match future.as_mut().poll(cx){{core::task::Poll::Ready(Ok(_))=>Ok(Outcome::Accepted),core::task::Poll::Ready(Err(error))=>Err(error),core::task::Poll::Pending=>Ok(Outcome::Pending)}}}},"
+                );
+            }
+            if arms.is_empty() {
+                continue;
+            }
+            for (lifetimes, target) in [
+                ("'r", format!("Endpoint<'r,{role}>")),
+                ("'e,'r", format!("hibana::ParallelEndpoint<'e,'r,{role}>")),
+            ] {
+                code += &format!(
+                    "impl<{lifetimes}> QueryEndpoint<'r> for {target}{{fn query(&mut self,db:&mut Option<Endpoint<'r,3>>,input:(u8,bool,&mut core::task::Context<'_>))->Result<Outcome,hibana::EndpointError>{{let _=&db;let(label,receive,cx)=input;match(label,receive){{{arms}_=>panic!(\"unknown scoped admission selector\")}}}}}}"
+                );
+            }
+        }
+        code
+    }
+
     fn endpoint(&self, role: u8, names: &[String; 4]) -> String {
         if role == 3 && mobile(self.source) {
             format!("{}.as_mut().expect(\"missing Endpoint value\")", names[3])
@@ -294,7 +457,7 @@ impl Emitter<'_> {
             return String::new();
         }
         format!(
-            "if let Some(probe @ LocalProbe::Borrow{{group:({}, {}),part:{},occurrence,actor:{actor},role:{role},label,receive}})=probe && occurrence==script.first_occurrence(){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match (label,receive){{{arms}_=>panic!(\"unknown borrowed-scope probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error)}},other=>panic!(\"operation outside borrowed scope was not rejected: {{probe:?}} {{other:?}}\")}}}}",
+            "if let Some(probe @ LocalProbe::Borrow{{group:({}, {}),part:{},occurrence,actor:{actor},role:{role},label,receive}})=probe && occurrence==script.first_occurrence(){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match (label,receive){{{arms}_=>panic!(\"unknown borrowed-scope probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error.into())}},other=>panic!(\"operation outside borrowed scope was not rejected: {{probe:?}} {{other:?}}\")}}}}",
             group.0,
             group.1,
             super::scope_probes::first_label(part)
@@ -303,7 +466,7 @@ impl Emitter<'_> {
 
     fn operation(
         &self,
-        message: &Protocol,
+        (message, target_scope): (&Protocol, &Protocol),
         actor: u8,
         names: &[String; 4],
         receive: bool,
@@ -348,11 +511,12 @@ impl Emitter<'_> {
         } else {
             format!("{observed};")
         };
-        let observe = if resource {
-            format!("observation_role({endpoint})")
+        let endpoint_ref = if resource {
+            endpoint.clone()
         } else {
-            format!("observation_role(&{endpoint})")
+            format!("&{endpoint}")
         };
+        let observe = format!("observation_role({endpoint_ref})");
         let mut causal = String::new();
         if receive {
             let arms = self.causal.iter().filter(|(before, _, receiver)| before == label && *receiver == role).map(|(_, target, _)| {
@@ -360,12 +524,45 @@ impl Emitter<'_> {
             }).collect::<String>();
             if !arms.is_empty() {
                 causal = format!(
-                    "if let Some(probe @ LocalProbe::BeforeReceive{{before:{label},occurrence,actor:{actor},role:{role},label}})=probe && occurrence==script.first_occurrence(){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match label{{{arms}_=>panic!(\"unknown causal probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error)}},other=>panic!(\"send before required receive was not rejected: script={{script_index}} reverse={{reverse_poll}} {{probe:?}} {{other:?}} prefix={{:?}}\",observed.completed.borrow())}}}}"
+                    "if let Some(probe @ LocalProbe::BeforeReceive{{before:{label},occurrence,actor:{actor},role:{role},label}})=probe && occurrence==script.first_occurrence(){{let result=core::future::poll_fn(|cx|core::task::Poll::Ready(match label{{{arms}_=>panic!(\"unknown causal probe\")}})).await;match result{{core::task::Poll::Ready(Err(error))=>{{observed.scope_rejections.borrow_mut().push(probe);return Err(error.into())}},other=>panic!(\"send before required receive was not rejected: script={{script_index}} reverse={{reverse_poll}} {{probe:?}} {{other:?}} prefix={{:?}}\",observed.completed.borrow())}}}}"
                 );
             }
         }
-        let code =
-            format!("hibana_runtime::yield_now().await;let observed_role={observe};{causal}{call}");
+        let queries = super::scope_probes::public_queries(
+            self.source,
+            role,
+            (*owned || payload_in_scope(self.source, target_scope)).then_some(3),
+        );
+        let query_payload =
+            if resource || !mobile(self.source) || !payload_in_scope(self.source, target_scope) {
+                "&mut None"
+            } else {
+                "&mut db"
+            };
+        let admission = |after| {
+            if queries.is_empty() {
+                return String::new();
+            }
+            format!(
+                "if let Some(probe @ LocalProbe::Admission{{at:{label},at_receive:{receive},after:{after},occurrence,actor:{actor},role:{role},label,receive,choice}})=probe && occurrence==script.first_occurrence(){{let prefix_records=captured.borrow().len();let prefix_borrows=observed.borrows.borrow().len();let prefix_calls=observed.completed.borrow().len();/* SAFETY: this live target uses InMemoryTransport, between executor polls. */let cut=unsafe{{ObservedEndpoint::operation_cut({endpoint_ref})}};assert_eq!(cut.actor.actor,{actor});assert_eq!(cut.target.view,{role});assert!(cut.actor.fault.is_none(),\"baseline query cut is already faulted\");let input=query_inputs.get(choice).expect(\"unplanned resolver input\");for(id,decision)in decisions.iter().enumerate(){{decision.set(std::collections::VecDeque::from([input.contains(&(id as u16))]));}}let result=core::future::poll_fn(|cx|core::task::Poll::Ready({endpoint}.query({query_payload},(label,receive,cx)))).await;let(outcome,error_utf8)=match result{{Ok(outcome)=>(outcome,Vec::new()),Err(error)=>{{if error.is_unavailable(){{/* SAFETY: the query Future has ended; the same actual target remains live. */assert_eq!(unsafe{{ObservedEndpoint::operation_cut({endpoint_ref})}},cut,\"a pre-I/O rejection changed its actual scoped cut\");assert_eq!(captured.borrow().len(),prefix_records,\"a pre-I/O rejection emitted an observation\");}}(Outcome::Rejected,format!(\"{{error:?}}\").into_bytes())}}}};assert!(observed.admission.replace(Some(MeasuredAdmission{{probe,prefix_records,prefix_borrows,prefix_calls,outcome,error_utf8,cut}})).is_none());return Err(TrialError::Measured);}}"
+            )
+        };
+        let preview = if receive
+            && !*owned
+            && from != to
+            && follows_roll_in_choice(self.source, *label)
+        {
+            format!(
+                "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{label})).await?;drop(branch);"
+            )
+        } else {
+            String::new()
+        };
+        let code = format!(
+            "hibana_runtime::yield_now().await;let observed_role={observe};{}{causal}{preview}{call}{}",
+            admission(false),
+            admission(true)
+        );
         if resource {
             format!("if let Some(resource)={}.as_mut(){{{code}}}", names[3])
         } else {
@@ -391,13 +588,13 @@ impl Emitter<'_> {
                 let mut code = String::new();
                 if from == to {
                     if primed.is_none() {
-                        code += &self.operation(source, actor, names, false);
+                        code += &self.operation((source, source), actor, names, false);
                     }
                 } else {
                     if primed != Some(*label) {
-                        code += &self.operation(source, actor, names, false);
+                        code += &self.operation((source, source), actor, names, false);
                     }
-                    code += &self.operation(source, actor, names, true);
+                    code += &self.operation((source, source), actor, names, true);
                 }
                 if code.is_empty() {
                     code
@@ -425,27 +622,6 @@ impl Emitter<'_> {
                 )
             }
             Protocol::Roll(body) => {
-                if matches!(body.as_ref(), Protocol::Par(..)) {
-                    let (declarations, checks, repeat, returns) =
-                        self.parallel_code(body, actor, names, None);
-                    if repeat.is_empty() {
-                        return repeat;
-                    }
-                    let assign = if returns { "db=" } else { "" };
-                    let visits = if primed.is_some() {
-                        let (_, first_checks, first, first_returns) =
-                            self.parallel_code(body, actor, names, primed);
-                        assert_eq!(returns, first_returns);
-                        format!(
-                            "{{let [_first,_second]=match script{{Script::Roll(visits)=>[visits[0].as_ref(),visits[1].as_ref()],_=>panic!(\"expected repeated script\")}};{{let script=_first;{first_checks}{assign}{first};}}{{let script=_second;{checks}{assign}{repeat};}}}}"
-                        )
-                    } else {
-                        format!(
-                            "for visit in match script{{Script::Roll(visits)=>visits,_=>panic!(\"expected repeated script\")}}{{let script=visit.as_ref();{checks}{assign}{repeat};}}"
-                        )
-                    };
-                    return format!("{{{declarations}{visits}}}");
-                }
                 let first = self.emit(body, actor, names, primed);
                 if primed.is_some() {
                     let second = self.emit(body, actor, names, None);
@@ -562,15 +738,13 @@ impl Emitter<'_> {
                     let Protocol::Message { event: label, .. } = message else {
                         unreachable!()
                     };
-                    let decisions = self.paths[label]
-                        .iter()
-                        .map(|(id, right)| format!("decisions[{id}].set(Some({right}));"))
-                        .collect::<String>();
                     if matches!(source, Protocol::Route(..)) || message_selected_head(body, *label)
                     {
-                        let send = self.operation(message, actor, names, false);
+                        let send = self.operation((message, source), actor, names, false);
                         let rest = self.emit(body, actor, names, Some(*label));
-                        arms += &format!("{label}=>{{{decisions}{send}{rest}}},");
+                        arms += &format!(
+                            "{label}=>{{{{let script=script.first_scheduled_message();assert!(matches!(script,Script::Message({label},_)));{send}}}{rest}}},"
+                        );
                     } else if previewed.insert(self.paths[label].clone()) {
                         let alternatives = entries
                             .iter()
@@ -594,7 +768,7 @@ impl Emitter<'_> {
                             "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{label})).await?;let label=branch.label();drop(branch);let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{label})).await?;assert_eq!(branch.label(),label);drop(branch);"
                         );
                         let rest = self.emit(body, actor, names, None);
-                        arms += &format!("{alternatives}=>{{{decisions}{preview}{rest}}},");
+                        arms += &format!("{alternatives}=>{{{preview}{rest}}},");
                     }
                 }
                 format!("match script.trace()[0].0{{{arms}_=>panic!(\"unknown branch entry\")}}")
@@ -623,9 +797,13 @@ impl Emitter<'_> {
             }
             let left = self.emit(a, actor, names, None);
             let right = self.emit(b, actor, names, None);
-            common += &format!(
-                "let (entry,continuation)=script.split_first_message();{{let script=entry;if right{{{right}}}else{{{left}}}}}"
-            );
+            common += &if left.is_empty() && right.is_empty() {
+                "let (_,continuation)=script.split_first_message();".into()
+            } else {
+                format!(
+                    "let (entry,continuation)=script.split_first_message();{{let script=entry;if right{{{right}}}else{{{left}}}}}"
+                )
+            };
             let (Some(at), Some(bt)) = (at, bt) else {
                 return format!("{{{select}{common}assert!(continuation.is_none());}}");
             };
@@ -666,7 +844,7 @@ impl Emitter<'_> {
             for (view, entry) in views {
                 let endpoint = self.endpoint(view, names);
                 offers.push(format!(
-                    "async{{let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);Ok::<_,hibana::EndpointError>(label)}}"
+                    "async{{let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;let label=branch.label();drop(branch);Ok::<_,TrialError>(label)}}"
                 ));
                 let labels = left_entries
                     .iter()
@@ -691,19 +869,26 @@ impl Emitter<'_> {
             )
         };
         let mut branches = String::new();
-        for (entries, selected, body) in [(left_entries, false, left), (right_entries, true, right)]
-        {
-            let labels = entries
-                .into_iter()
-                .map(|(_, label)| label)
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .map(|event| self.source.contract_for(event).to_string())
-                .collect::<Vec<_>>()
-                .join("|");
-            if !labels.is_empty() {
-                branches += &format!("{labels}=>{{assert_eq!(right,{selected});{body}}},");
-            }
+        let left_labels = left_entries
+            .into_iter()
+            .map(|(_, event)| self.source.contract_for(event))
+            .collect::<std::collections::BTreeSet<_>>();
+        let right_labels = right_entries
+            .into_iter()
+            .map(|(_, event)| self.source.contract_for(event))
+            .collect::<std::collections::BTreeSet<_>>();
+        for label in left_labels.union(&right_labels) {
+            let body = match (left_labels.contains(label), right_labels.contains(label)) {
+                // A reused public contract does not identify a source arm.
+                // Exercise the planned word compatible with this preview;
+                // actual occurrence/choice and every admission are checked
+                // independently from the captured records by the source oracle.
+                (true, true) => format!("if right{{{right}}}else{{{left}}}"),
+                (true, false) => format!("assert_eq!(right,false);{left}"),
+                (false, true) => format!("assert_eq!(right,true);{right}"),
+                _ => unreachable!(),
+            };
+            branches += &format!("{label}=>{{{body}}},");
         }
         format!(
             "{{{select}{common}{preview}match label{{{branches}_=>panic!(\"unknown received branch\")}}}}"
@@ -750,6 +935,14 @@ impl Emitter<'_> {
                     "let [mut {name}]=if let Some(resource)={}.as_mut(){{let [part]=resource.par()?;[Some(part)]}}else{{[None]}};",
                     names[3]
                 );
+                let part = parent_parts
+                    .into_iter()
+                    .find(|part| present(part, 3, None))
+                    .unwrap();
+                declarations += &format!(
+                    "if {name}.is_some(){{{}}}",
+                    borrow_observation(parent, part, actor, 3)
+                );
                 names[3] = name;
             }
         }
@@ -778,6 +971,12 @@ impl Emitter<'_> {
                     let name = format!("{}p{role}_{i}", if used { "" } else { "_" });
                     part_names[*i][role] = name.clone();
                     inner.push(name.clone());
+                    let observation = borrow_observation(source, parts[*i], actor, role);
+                    scope_checks += &if optional {
+                        format!("if {name}.is_some(){{{observation}}}")
+                    } else {
+                        observation
+                    };
                     if used {
                         let endpoint = self.endpoint(role as u8, &part_names[*i]);
                         let check =
@@ -825,10 +1024,10 @@ impl Emitter<'_> {
                 }
                 let bind = |plan: &str, body: &str| {
                     if body.is_empty() {
-                        "async{Ok::<_,hibana::EndpointError>(())}".to_owned()
+                        "async{Ok::<_,TrialError>(())}".to_owned()
                     } else {
                         format!(
-                            "async{{let script={plan};let result={body};Ok::<_,hibana::EndpointError>(result)}}"
+                            "async{{let script={plan};let result={body};Ok::<_,TrialError>(result)}}"
                         )
                     }
                 };
@@ -899,26 +1098,58 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
         .flatten()
         .map(|(id, _)| *id)
         .collect::<std::collections::BTreeSet<_>>();
+    let query_inputs = super::decisions::patterns(source, resolvers.len().try_into().unwrap());
+    let initial_inputs = resolver_input_code(source);
+    let input_array = query_inputs
+        .iter()
+        .map(|input| format!("&{input:?}"))
+        .collect::<Vec<_>>()
+        .join(",");
     let mut code = format!(
         r#"
+    if let Some(program)=programs.p0.as_ref(){{write_operation_image(program,{case});}}
+    if let Some(program)=programs.p1.as_ref(){{write_operation_image(program,{case});}}
+    if let Some(program)=programs.p2.as_ref(){{write_operation_image(program,{case});}}
+    if let Some(program)=programs.p3.as_ref(){{write_operation_image(program,{case});}}
+    let query_inputs:&[&[u16]]=&[{input_array}];
     let mut completed_plan_words=std::collections::BTreeSet::new();
     let script_range=selected_script_range({script_count});
-    let scripts=std::io::BufRead::lines(std::io::BufReader::new(std::fs::File::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/{case}.jsonl")).expect("missing script plans")));
+    let scripts=std::io::BufRead::lines(std::io::BufReader::new(std::fs::File::open(std::path::Path::new(PROTOCOL_SOURCE_DIR).join("scripts/{case}.jsonl")).expect("missing script plans")));
     use std::io::Write as _;
-    let scope_root=std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let scope_root=std::path::Path::new(PROTOCOL_SOURCE_DIR);
     let mut scope_plans=ScopePlans::new(std::io::BufReader::new(std::fs::File::open(scope_root.join("scope-plans/{case}.jsonl")).expect("missing scope plans")),{case},{});
     let recorded=observation_root();
     std::fs::create_dir_all(recorded.join("scope-observations")).unwrap();
     let mut scope_observations=std::io::BufWriter::new(std::fs::File::create(recorded.join("scope-observations/{case}.jsonl")).unwrap());
     writeln!(scope_observations,"{{{{\"name\":{case},\"scripts\":{}}}}}").unwrap();
+    std::fs::create_dir_all(recorded.join("captures")).unwrap();
+    let mut captures=std::io::BufWriter::new(std::fs::File::create(recorded.join("captures/{case}.jsonl")).unwrap());
+    writeln!(captures,"{{{{\"name\":{case},\"scripts\":{script_count},\"first\":{{}},\"count\":{{}}}}}}",script_range.start,script_range.len()).unwrap();
+    std::fs::create_dir_all(recorded.join("admission-observations")).unwrap();
+    let mut admissions=std::io::BufWriter::new(std::fs::File::create(recorded.join("admission-observations/{case}.jsonl")).unwrap());
+    writeln!(admissions,"{{{{\"name\":{case},\"scripts\":{script_count},\"first\":{{}},\"count\":{{}},\"sourceConformanceChecked\":false,\"resolverInputs\":{{query_inputs:?}}}}}}",script_range.start,script_range.len()).unwrap();
+    std::fs::create_dir_all(recorded.join("operation-states")).unwrap();
+    let mut states=std::io::BufWriter::new(std::fs::File::create(recorded.join("operation-states/{case}.jsonl")).unwrap());
+    let mut state_ids=std::collections::BTreeMap::<String,usize>::new();
+    let mut projection=std::io::BufWriter::new(std::fs::File::create(recorded.join("captures/{case}.projection.json")).unwrap());
+    let snapshot=if let Some(program)=programs.p0.as_ref(){{hibana::runtime::tap::projected(program).collect::<Vec<_>>()}}else if let Some(program)=programs.p1.as_ref(){{hibana::runtime::tap::projected(program).collect::<Vec<_>>()}}else if let Some(program)=programs.p2.as_ref(){{hibana::runtime::tap::projected(program).collect::<Vec<_>>()}}else{{hibana::runtime::tap::projected(programs.p3.as_ref().expect("missing source program")).collect::<Vec<_>>()}};
+    write!(projection,"[").unwrap();for(index,event)in snapshot.iter().enumerate(){{if index!=0{{write!(projection,",").unwrap();}}write!(projection,"[{{}},{{}},{{}},{{}},{{}}]",event.ts(),event.id(),event.causal_key(),event.arg0(),event.arg1()).unwrap();}}writeln!(projection,"]").unwrap();projection.flush().unwrap();
     let mut checked_scripts=0usize;
     for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let planned_probes=scope_plans.next(script_index);let record_script=script_range.contains(&script_index);let probes=if record_script{{planned_probes.as_slice()}}else{{&[]}};for reverse_poll in [false,true] {{
     if record_script{{write!(scope_observations,"{{{{\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}}").unwrap();}}
     let mut scoped_rejections=Vec::new();
+    let mut baseline_events=Vec::new();let mut baseline_borrows=Vec::new();let mut baseline_calls=Vec::new();
+    let expected_admissions=probes.iter().filter(|probe|matches!(probe,LocalProbe::Admission{{..}})).count();let mut measured_admissions=0usize;
+    if record_script{{writeln!(admissions,"{{{{\"kind\":\"inventory\",\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}},\"queries\":{{expected_admissions}}}}}}").unwrap();}}
     for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
       let _=reverse_poll;
-      let decisions:Vec<std::cell::Cell<Option<bool>>>=(0..{}).map(|_|std::cell::Cell::new(None)).collect();let _=&decisions;
+      let mut decision_inputs:Vec<std::collections::VecDeque<bool>>=(0..{}).map(|_|std::collections::VecDeque::new()).collect();{initial_inputs}
+      let decisions:Vec<_>=decision_inputs.into_iter().map(std::cell::Cell::new).collect();
       let sid=SessionId::new(2);
+      let captured=std::cell::RefCell::new(Vec::new());
+      let capture=|producer:usize,event:hibana::runtime::tap::TapEvent|captured.borrow_mut().push((producer,event));
+      let capture0=|event|capture(0,event);let capture1=|event|capture(1,event);
+      let capture2=|event|capture(2,event);let capture3=|event|capture(3,event);
       // SAFETY: this execution owns its resource and its only initial issuer.
       let network=InMemoryTransport::new(programs.issuance.iter().map(|&(role,_)|((sid,role),unsafe{{EndpointBinding::new()}})));
       let [mut slab0,mut slab1,mut slab2,mut slab3]=[vec![0;128*1024],vec![0;128*1024],vec![0;128*1024],vec![0;128*1024]];
@@ -927,22 +1158,27 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
       let rv1=s1.init().rendezvous(&mut slab1,network.clone()).unwrap();
       let rv2=s2.init().rendezvous(&mut slab2,network.clone()).unwrap();
       let rv3=s3.init().rendezvous(&mut slab3,network.clone()).unwrap();
+      if record_script && (probe.is_none() || matches!(probe,Some(LocalProbe::Admission{{..}}))){{rv0.observe(&capture0);rv1.observe(&capture1);rv2.observe(&capture2);rv3.observe(&capture3);}}
     "#,
         script_count,
         script_count,
         resolvers.len()
     );
+    code.insert_str(0, &e.query_dispatch());
     for id in resolvers {
+        let choose = format!(
+            "|d|{{let mut choices=d[{id}].take();let right=*choices.front().expect(\"unplanned resolver input\");if choices.len()>1{{choices.pop_front();}}d[{id}].set(choices);Ok(if right{{DecisionArm::Right}}else{{DecisionArm::Left}})}}"
+        );
         code += &format!("match programs.resolver_roles[{id}]{{");
         for actor in 0..3 {
             code += &format!(
-                "{actor}=>rv{actor}.set_resolver(programs.p{actor}.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap(),"
+                "{actor}=>rv{actor}.set_resolver(programs.p{actor}.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,{choose})).unwrap(),"
             );
         }
         code += "3=>{";
         for actor in 0..4 {
             code += &format!(
-                "if {}{{rv{actor}.set_resolver(programs.p3.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,|d|Ok(if d[{id}].get().expect(\"unplanned choice\"){{DecisionArm::Right}}else{{DecisionArm::Left}}))).unwrap();}}",
+                "if {}{{rv{actor}.set_resolver(programs.p3.as_ref().unwrap(),ResolverRef::<{id}>::decision_state(&decisions,{choose})).unwrap();}}",
                 if actor == 3 {
                     "programs.issuance.is_empty()"
                 } else {
@@ -1015,7 +1251,7 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
             ""
         };
         code += &format!(
-            "async{{{db}{delay}{body}{}Ok::<_,hibana::EndpointError>(())}};",
+            "async{{{db}{delay}{body}{}Ok::<_,TrialError>(())}};",
             if mobile(source) && actor < 3 {
                 "drop(db);"
             } else {
@@ -1024,15 +1260,35 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
         );
     }
     code += r#"}.await;
+    if let Some(probe @ LocalProbe::Admission{..})=probe{
+      assert!(matches!(result,Err(TrialError::Measured)),"scoped admission did not reach its actual handle: {probe:?} {result:?}");
+      assert!(observed.calls.borrow().is_empty(),"scoped trial left a pending call after cancellation");
+      let measured=observed.admission.take().expect("missing scoped admission result");assert_eq!(measured.probe,probe);
+      let events=captured.borrow();let borrows=observed.borrows.borrow();let calls=observed.completed.borrow();
+      assert!(measured.prefix_records<=baseline_events.len() && events[..measured.prefix_records]==baseline_events[..measured.prefix_records],"scoped admission changed the preceding actual capture: {probe:?}");
+      assert!(measured.prefix_borrows<=baseline_borrows.len() && borrows[..measured.prefix_borrows]==baseline_borrows[..measured.prefix_borrows],"scoped admission changed the preceding borrow boundaries");
+      assert!(measured.prefix_calls<=baseline_calls.len() && calls[..measured.prefix_calls]==baseline_calls[..measured.prefix_calls],"scoped admission changed the preceding completed calls");
+      let outcome=match measured.outcome{Outcome::Accepted=>"completed",Outcome::Pending=>"pending",Outcome::Rejected=>"rejected",Outcome::Unavailable=>panic!("a real scoped call cannot be unavailable")};
+      write!(admissions,"{{\"script\":{script_index},\"reversePoll\":{reverse_poll},\"probe\":{},\"prefixRecords\":{},\"prefixBorrows\":{},\"prefixCalls\":{},\"outcome\":\"{outcome}\",\"errorUtf8\":{:?},\"checkpoints\":{:?},",probe.json(),measured.prefix_records,measured.prefix_borrows,measured.prefix_calls,measured.error_utf8,[&rv0,&rv1,&rv2,&rv3].map(|rv|rv.tap().checkpoint().expect("capture ordinal exhausted"))).unwrap();
+      let payload=operation_state_json(&measured.cut);
+      let state=if let Some(&id)=state_ids.get(&payload){id}else{let id=state_ids.len();writeln!(states,"{{\"id\":{id},{}",&payload[1..]).unwrap();state_ids.insert(payload,id);id};
+      write!(admissions,"\"state\":{state},\"suffix\":[").unwrap();
+      for(index,(producer,event))in events[measured.prefix_records..].iter().enumerate(){if index!=0{write!(admissions,",").unwrap();}write!(admissions,"[{producer},{},{},{},{},{}]",event.ts(),event.id(),event.causal_key(),event.arg0(),event.arg1()).unwrap();}writeln!(admissions,"]}}").unwrap();measured_admissions+=1;continue;
+    }
     if let Some(probe)=probe{assert!(result.is_err(),"local probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned local probe was not reached");scoped_rejections.push(actual[0].json());continue;}
-    result.unwrap();
+    result.unwrap_or_else(|error|panic!("generated baseline failed: script={script_index}, reverse={reverse_poll}, error={error:?}, completed={:?}",observed.completed.borrow()));
     if record_script{write!(scope_observations,",\"completed\":[").unwrap();
     for (index,(actor,role,label,receive)) in observed.completed.borrow().iter().enumerate(){if index!=0{write!(scope_observations,",").unwrap();}write!(scope_observations,"[{actor},{role},{label},{receive}]").unwrap();}
-    write!(scope_observations,"]").unwrap();}
+    write!(scope_observations,"]").unwrap();
+    write!(captures,"{{\"script\":{script_index},\"reversePoll\":{reverse_poll},\"checkpoints\":{:?},\"events\":[",[&rv0,&rv1,&rv2,&rv3].map(|rv|rv.tap().checkpoint().expect("capture ordinal exhausted"))).unwrap();
+    for (index,(producer,event)) in captured.borrow().iter().enumerate(){if index!=0{write!(captures,",").unwrap();}write!(captures,"[{producer},{},{},{},{},{}]",event.ts(),event.id(),event.causal_key(),event.arg0(),event.arg1()).unwrap();}
+    write!(captures,"],\"borrows\":{:?}",observed.borrows.borrow()).unwrap();
+    writeln!(captures,"}}").unwrap();}
+    baseline_events=captured.borrow().clone();baseline_borrows=observed.borrows.borrow().clone();baseline_calls=observed.completed.borrow().clone();
     assert!(observed.calls.borrow().is_empty());
     "#;
     code += &format!(
-        r#"}}if record_script{{writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}}}completed_plan_words.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();"#,
+        r#"}}assert_eq!(measured_admissions,expected_admissions,"missing scoped admission measurements");if record_script{{writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}}}completed_plan_words.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();captures.flush().unwrap();admissions.flush().unwrap();states.flush().unwrap();"#,
         script_count
     );
     code

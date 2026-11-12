@@ -59,7 +59,8 @@ impl EventCursor {
     ) -> bool {
         let target = progress_step.0;
         let end = usize::from(target.step_idx);
-        let retained = self.is_recv_at(end) && self.has_retained_roll_completion();
+        let retained_completion = self.has_retained_roll_completion();
+        let retained = self.is_recv_at(end) && retained_completion;
         let mut pending = self.pending_event_steps(0..end);
         while let Some(step_idx) = pending.next() {
             if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)
@@ -76,6 +77,13 @@ impl EventCursor {
                     continue;
                 }
                 if self.event_actor_is_local(pending_idx, selected_arm_for_scope) == Some(false) {
+                    continue;
+                }
+                if retained_completion
+                    && let Some(completed_end) =
+                        self.completed_retained_route_end(pending_idx, end, selected_arm_for_scope)
+                {
+                    pending = self.pending_event_steps(completed_end.min(end)..end);
                     continue;
                 }
                 match self.event_conflict_row_admission_with_preview(
@@ -556,14 +564,6 @@ impl EventCursor {
             Some(selected_arm),
             &mut selected_arm_for_scope,
         )
-    }
-
-    pub(crate) fn active_reentry_offer_entry(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<(ScopeId, StateIndex)> {
-        let region = self.route_scope_rows(scope_id)?;
-        Some((scope_id, StateIndex::from_usize(region.start())))
     }
 
     #[inline]

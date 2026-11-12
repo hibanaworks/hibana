@@ -3,7 +3,7 @@ use super::{Protocol, localside};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) use super::catalog_counts::CONTRACTS as COUNT;
-pub(super) const VARIANTS: usize = 4;
+pub(super) const VARIANTS: usize = 5;
 
 /// Source positions whose sends have the same public selector in opposite
 /// parallel arms. The receiver is inferred by send(), so it cannot distinguish
@@ -144,6 +144,324 @@ pub(super) fn protocol(rank: usize) -> Protocol {
         owned,
     };
     let seq = |left, right| Protocol::Seq(Box::new(left), Box::new(right));
+    if rank == 27 {
+        // 14H's effect owner releases the material only after consuming its
+        // formulation prefix. The holder cannot use an older elastic assay
+        // to outrun that data boundary after the next material return.
+        return seq(
+            Protocol::Roll(Box::new(seq(
+                message(0, 2, false),
+                seq(
+                    message(0, 2, true),
+                    seq(
+                        message(2, 1, true),
+                        seq(
+                            Protocol::Roll(Box::new(seq(
+                                message(3, 2, false),
+                                message(2, 1, false),
+                            ))),
+                            message(1, 0, true),
+                        ),
+                    ),
+                ),
+            ))),
+            message(0, 2, false),
+        );
+    }
+    if rank == 26 {
+        // 14H: returning the material leaves old inner acknowledgements
+        // eligible. The next enclosing visit still starts at the parallel
+        // grants, rather than requiring those old sequential tails to join.
+        let grants = Protocol::Par(
+            Box::new(message(0, 1, true)),
+            Box::new(message(0, 1, false)),
+        );
+        let measured = seq(
+            Protocol::Roll(Box::new(seq(message(3, 2, false), message(2, 1, false)))),
+            message(1, 0, true),
+        );
+        let independent = Protocol::Roll(Box::new(seq(message(1, 2, false), message(2, 1, false))));
+        return seq(
+            Protocol::Roll(Box::new(seq(
+                grants,
+                Protocol::Par(Box::new(measured), Box::new(independent)),
+            ))),
+            message(0, 1, false),
+        );
+    }
+    if rank == 25 {
+        // The same delegated send contract occurs on lane 0 in the inactive
+        // sequential arm and lane 1 in the selected parallel arm (14M).
+        // After the outer choice and sibling send, the nested resolver runs
+        // through a fragment which does not own the inactive arm's I/O port.
+        let result = || {
+            Protocol::Resolved(
+                Box::new(message(3, 2, false)),
+                Box::new(message(3, 2, false)),
+                0,
+            )
+        };
+        return seq(
+            message(0, 1, true),
+            seq(
+                Protocol::Resolved(
+                    Box::new(seq(result(), message(3, 0, false))),
+                    Box::new(Protocol::Par(
+                        Box::new(message(3, 0, false)),
+                        Box::new(result()),
+                    )),
+                    0,
+                ),
+                message(1, 0, true),
+            ),
+        );
+    }
+    if rank == 24 {
+        // The listeners participate in independent input lanes and can also
+        // hold resource 3. A route's actor-wide offer lane therefore need not
+        // have an I/O port in the ordinary listener view (11M reusable pool).
+        let notice = || seq(message(0, 1, false), message(0, 2, false));
+        let lease = |worker| {
+            seq(
+                notice(),
+                seq(
+                    message(0, worker, true),
+                    seq(
+                        message(3, 0, false),
+                        seq(
+                            message(0, 3, false),
+                            seq(message(worker, 0, true), notice()),
+                        ),
+                    ),
+                ),
+            )
+        };
+        let leases = Protocol::Roll(Box::new(Protocol::Route(
+            Box::new(lease(1)),
+            Box::new(lease(2)),
+        )));
+        return Protocol::Par(
+            Box::new(Protocol::Par(
+                Box::new(message(1, 0, false)),
+                Box::new(message(2, 0, false)),
+            )),
+            Box::new(Protocol::Route(
+                Box::new(seq(leases, notice())),
+                Box::new(notice()),
+            )),
+        );
+    }
+    if rank == 23 {
+        // A fresh child visit can select an unused arm after the containing
+        // choice's selected body completed. It retains that outer decision.
+        return Protocol::Roll(Box::new(Protocol::Resolved(
+            Box::new(seq(
+                message(0, 1, false),
+                Protocol::Roll(Box::new(Protocol::Resolved(
+                    Box::new(message(0, 1, false)),
+                    Box::new(seq(message(0, 1, false), message(1, 0, false))),
+                    0,
+                ))),
+            )),
+            Box::new(seq(message(0, 1, false), message(1, 0, false))),
+            0,
+        )));
+    }
+    if rank == 21 {
+        // All three peers participate, but the same public send selects a
+        // different first peer after two nested Right decisions (11M).
+        let order = |a, b, c| {
+            seq(
+                message(0, a, false),
+                seq(message(0, b, false), message(0, c, false)),
+            )
+        };
+        return Protocol::Resolved(
+            Box::new(Protocol::Resolved(
+                Box::new(order(1, 2, 3)),
+                Box::new(order(2, 1, 3)),
+                0,
+            )),
+            Box::new(Protocol::Resolved(
+                Box::new(order(2, 1, 3)),
+                Box::new(order(3, 1, 2)),
+                0,
+            )),
+            0,
+        );
+    }
+    if rank == 22 {
+        // The same relocation with an actual affine resource as payload.
+        // Both workers receive a loan or the other worker's final notice.
+        let loan = |worker, other| {
+            seq(
+                message(0, worker, true),
+                seq(
+                    message(3, 0, false),
+                    seq(message(worker, 0, true), message(0, other, false)),
+                ),
+            )
+        };
+        return Protocol::Resolved(
+            Box::new(loan(1, 2)),
+            Box::new(Protocol::Resolved(
+                Box::new(loan(1, 2)),
+                Box::new(loan(2, 1)),
+                0,
+            )),
+            0,
+        );
+    }
+    if rank == 20 {
+        // An unresolved choice at an old roll entry must use the same
+        // custody admission as a typed send. Start the continuation's offer
+        // before its peer sends, and keep that Future alive across Pending.
+        let returned = || message(0, 1, true);
+        let submitted = || seq(message(3, 0, false), message(1, 0, true));
+        let ready = || seq(returned(), seq(message(1, 0, false), message(1, 0, true)));
+        let rejected = Protocol::Resolved(
+            Box::new(message(0, 1, false)),
+            Box::new(message(0, 1, false)),
+            0,
+        );
+        return seq(
+            returned(),
+            seq(
+                submitted(),
+                seq(
+                    Protocol::Roll(Box::new(seq(rejected, seq(returned(), submitted())))),
+                    Protocol::Resolved(Box::new(ready()), Box::new(ready()), 0),
+                ),
+            ),
+        );
+    }
+    if rank == 19 {
+        // A preview may keep its next choice while the carrier still needs
+        // to receive the real resource back. Unlike assignment 18, this
+        // continuation contains an unconsumed return, not only an old one.
+        let arm = || seq(message(0, 0, false), message(3, 2, false));
+        return seq(
+            Protocol::Roll(Box::new(Protocol::Resolved(
+                Box::new(arm()),
+                Box::new(arm()),
+                0,
+            ))),
+            seq(
+                message(0, 1, true),
+                seq(message(1, 0, true), message(0, 2, false)),
+            ),
+        );
+    }
+    if rank == 18 {
+        // A failed result can repeat only while its entry resource is still
+        // here. Submission moves that resource onward, but keeps the original
+        // carrier live for a subsequent incoming result choice.
+        let request = || seq(message(3, 0, false), message(1, 0, true));
+        return seq(
+            message(0, 1, true),
+            seq(
+                request(),
+                seq(
+                    Protocol::Resolved(
+                        Box::new(message(0, 1, false)),
+                        Box::new(seq(
+                            Protocol::Roll(Box::new(seq(
+                                message(0, 1, false),
+                                seq(message(0, 1, true), request()),
+                            ))),
+                            message(0, 1, false),
+                        )),
+                        0,
+                    ),
+                    seq(
+                        message(0, 2, true),
+                        seq(
+                            Protocol::Route(
+                                Box::new(message(2, 0, false)),
+                                Box::new(message(2, 0, false)),
+                            ),
+                            message(2, 0, true),
+                        ),
+                    ),
+                ),
+            ),
+        );
+    }
+    if rank == 17 {
+        // Each whole-view offer starts a new enclosing choice, while the
+        // inner exchange can repeat within that chosen visit. Alternating
+        // outer inputs must not remain stuck on the first committed arm.
+        let arm = || {
+            Protocol::Par(
+                Box::new(Protocol::Roll(Box::new(seq(
+                    message(0, 1, false),
+                    message(1, 0, false),
+                )))),
+                Box::new(message(0, 2, false)),
+            )
+        };
+        return Protocol::Roll(Box::new(Protocol::Resolved(
+            Box::new(arm()),
+            Box::new(arm()),
+            0,
+        )));
+    }
+    if rank == 16 {
+        // Both arms use the delegated resource. Rework is initiated by its
+        // holder, which returns the same Endpoint before a new parent visit.
+        let checked = || seq(message(3, 2, false), message(2, 3, false));
+        let choice = Protocol::Resolved(
+            Box::new(seq(
+                message(0, 1, false),
+                seq(checked(), message(1, 0, false)),
+            )),
+            Box::new(seq(
+                message(0, 1, false),
+                seq(
+                    Protocol::Roll(Box::new(seq(
+                        checked(),
+                        seq(message(1, 0, false), message(0, 1, false)),
+                    ))),
+                    message(0, 1, false),
+                ),
+            )),
+            0,
+        );
+        let review = seq(
+            message(0, 1, true),
+            seq(message(1, 0, false), seq(choice, message(1, 0, true))),
+        );
+        return seq(
+            Protocol::Roll(Box::new(Protocol::Par(
+                Box::new(review),
+                Box::new(message(2, 0, false)),
+            ))),
+            message(2, 0, false),
+        );
+    }
+    if rank == 15 {
+        // Finishing a right-arm suffix leaves its inner roll available while
+        // the parallel sibling is absent. Reentering that child must retain
+        // the parent's decision, even when its resolver input has changed.
+        let review = seq(
+            message(1, 0, false),
+            Protocol::Resolved(
+                Box::new(message(0, 1, false)),
+                Box::new(seq(
+                    Protocol::Roll(Box::new(seq(message(0, 1, false), message(1, 0, false)))),
+                    message(0, 1, false),
+                )),
+                0,
+            ),
+        );
+        return seq(
+            Protocol::Roll(Box::new(Protocol::Par(
+                Box::new(review),
+                Box::new(message(2, 0, false)),
+            ))),
+            message(2, 0, false),
+        );
+    }
     if rank == 14 {
         return Protocol::Resolved(
             Box::new(Protocol::Resolved(
@@ -331,9 +649,10 @@ fn assign(source: &mut Protocol, protected: &BTreeSet<u8>, contracts: [Option<u8
 
 /// Source identity stays fixed; only the public `g::Msg` label changes.
 /// The first three assignments keep observable entries distinct. A fourth
-/// shares sequential entry contracts in resolved choices; participants execute
-/// that common operation before observing the remaining alternatives. This
-/// does not enumerate every partition of messages into shared contracts.
+/// shares entry contracts in resolved choices, including different peers. A
+/// fifth limits that sharing to the same peer, preserving independent sibling
+/// sends while reusing a nested contract on different lanes. Identical
+/// assignments are deduplicated. This is not every contract partition.
 pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
     let mut protected = BTreeSet::new();
     choice_entries(source, &mut protected);
@@ -376,18 +695,31 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
             result.push((name, variant));
         }
     }
-    fn shared_entries(source: &Protocol, aliases: &mut BTreeMap<u8, u8>) {
+    fn heads<'a>(source: &'a Protocol, entries: &mut Vec<&'a Protocol>) {
+        match source {
+            Protocol::Message { .. } => entries.push(source),
+            Protocol::Seq(first, _) | Protocol::Roll(first) => heads(first, entries),
+            Protocol::Par(a, b) | Protocol::Route(a, b) | Protocol::Resolved(a, b, _) => {
+                heads(a, entries);
+                heads(b, entries);
+            }
+        }
+    }
+    fn shared_entries(source: &Protocol, aliases: &mut BTreeMap<u8, u8>, same_peer: bool) {
         match source {
             Protocol::Message { .. } => {}
-            Protocol::Roll(body) => shared_entries(body, aliases),
+            Protocol::Roll(body) => shared_entries(body, aliases, same_peer),
             Protocol::Seq(a, b)
             | Protocol::Par(a, b)
             | Protocol::Route(a, b)
             | Protocol::Resolved(a, b, _) => {
-                if matches!(source, Protocol::Resolved(..))
-                    && let (Some((a, Some(_))), Some((b, Some(_)))) =
-                        (localside::split_first(a), localside::split_first(b))
-                    && let (
+                if matches!(source, Protocol::Resolved(..)) {
+                    let (mut left, mut right) = (Vec::new(), Vec::new());
+                    heads(a, &mut left);
+                    heads(b, &mut right);
+                    for a in left {
+                        for b in &right {
+                            if let (
                         Protocol::Message {
                             from: af,
                             to: at,
@@ -402,13 +734,18 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
                             owned: bo,
                             ..
                         },
-                    ) = (a, b)
-                    && (af, at, ao) == (bf, bt, bo)
-                {
-                    aliases.insert(*event, *contract);
+                    ) = (a, *b)
+                    // send::<M>() names the logical view and message, not
+                    // its peer. Different recipients must share this case.
+                    && (af, ao) == (bf, bo) && (!same_peer || at == bt)
+                            {
+                                aliases.insert(*event, *contract);
+                            }
+                        }
+                    }
                 }
-                shared_entries(a, aliases);
-                shared_entries(b, aliases);
+                shared_entries(a, aliases, same_peer);
+                shared_entries(b, aliases, same_peer);
             }
         }
     }
@@ -417,8 +754,16 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
             Protocol::Message {
                 event, contract, ..
             } => {
-                if let Some(label) = aliases.get(event) {
-                    *contract = *label;
+                let mut label = *event;
+                while let Some(next) = aliases.get(&label) {
+                    assert!(
+                        *next < label,
+                        "entry aliases must follow earlier source occurrences"
+                    );
+                    label = *next;
+                }
+                if label != *event {
+                    *contract = label;
                 }
             }
             Protocol::Roll(body) => relabel(body, aliases),
@@ -431,13 +776,15 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
             }
         }
     }
-    let mut aliases = BTreeMap::new();
-    shared_entries(source, &mut aliases);
-    if !aliases.is_empty() {
-        let mut variant = source.clone();
-        relabel(&mut variant, &aliases);
-        if result.iter().all(|(_, previous)| previous != &variant) {
-            result.push(("shared-entry", variant));
+    for (name, same_peer) in [("shared-entry", false), ("shared-peer-entry", true)] {
+        let mut aliases = BTreeMap::new();
+        shared_entries(source, &mut aliases, same_peer);
+        if !aliases.is_empty() {
+            let mut variant = source.clone();
+            relabel(&mut variant, &aliases);
+            if result.iter().all(|(_, previous)| previous != &variant) {
+                result.push((name, variant));
+            }
         }
     }
     assert!(result.len() <= VARIANTS);
@@ -447,6 +794,141 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_prefix_and_returned_loan_have_two_enclosing_visits() {
+        let mut source = protocol(27);
+        super::super::syntax::number(&mut source);
+        assert!(source.executions().any(|execution| {
+            let trace = execution.trace();
+            let count = |event| trace.messages.iter().filter(|(at, _)| *at == event).count();
+            count(0) == 2
+                && count(1) == 2
+                && count(2) == 2
+                && count(3) >= 2
+                && count(5) == 2
+                && trace.messages.last().map(|(event, _)| *event) == Some(6)
+        }));
+    }
+
+    #[test]
+    fn parallel_grants_restart_after_returned_material_and_retained_acknowledgements() {
+        let mut source = protocol(26);
+        super::super::syntax::number(&mut source);
+        assert!(
+            source.executions().any(|execution| {
+                let trace = execution.trace();
+                let count = |event| trace.messages.iter().filter(|(at, _)| *at == event).count();
+                count(0) == 2
+                    && count(2) >= 2
+                    && count(3) >= 2
+                    && count(5) >= 2
+                    && trace.messages.last().map(|(event, _)| *event) == Some(7)
+            }),
+            "the source scripts must return the actual Endpoint and restart both grant visits"
+        );
+    }
+
+    #[test]
+    fn a_child_switches_to_an_unused_arm_before_the_parent_restarts() {
+        let mut source = protocol(23);
+        super::super::syntax::number(&mut source);
+        assert!(
+            source.executions().any(|execution| {
+                execution
+                    .trace()
+                    .messages
+                    .iter()
+                    .map(|(event, _)| *event)
+                    .eq([0, 2, 3, 1, 4, 5])
+            }),
+            "the finite scripts must perform the child's rejected/accepted visits before a fresh parent visit"
+        );
+    }
+
+    #[test]
+    fn nested_entry_aliases_cross_peers_and_reach_the_outer_contract() {
+        for (rank, entries) in [(21, vec![0, 3, 6, 9]), (22, vec![0, 4, 8])] {
+            let mut source = protocol(rank);
+            super::super::syntax::number(&mut source);
+            let variants = variants(&source);
+            let shared = &variants
+                .iter()
+                .find(|(name, _)| *name == "shared-entry")
+                .unwrap()
+                .1;
+            for &event in &entries {
+                assert_eq!(shared.contract_for(event), entries[0]);
+            }
+            let mut original = Vec::new();
+            let mut actual = Vec::new();
+            source.messages(&mut original);
+            shared.messages(&mut actual);
+            assert_eq!(original.len(), actual.len());
+            for (original, actual) in original.iter().zip(actual) {
+                match (original, actual) {
+                    (
+                        Protocol::Message {
+                            event: a,
+                            from: af,
+                            to: at,
+                            owned: ao,
+                            ..
+                        },
+                        Protocol::Message {
+                            event: b,
+                            from: bf,
+                            to: bt,
+                            owned: bo,
+                            ..
+                        },
+                    ) => assert_eq!((a, af, at, ao), (b, bf, bt, bo)),
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn delegated_nested_resolver_keeps_shared_contracts_and_sibling_first_schedules() {
+        let mut source = protocol(25);
+        super::super::syntax::number(&mut source);
+        let variants = variants(&source);
+        let shared = &variants
+            .iter()
+            .find(|(name, _)| *name == "shared-peer-entry")
+            .unwrap()
+            .1;
+        assert_eq!(shared.contract_for(1), shared.contract_for(5));
+        assert_eq!(shared.contract_for(2), shared.contract_for(6));
+        assert_ne!(shared.contract_for(4), shared.contract_for(5));
+        assert!(super::super::syntax_violations(shared).is_empty());
+        for nested in [5, 6] {
+            assert!(shared.executions().any(|execution| {
+                let events = &execution.trace().messages;
+                let position = |event| events.iter().position(|(id, _)| *id == event);
+                matches!((position(0), position(4), position(nested), position(7)),
+                    (Some(loan), Some(other), Some(result), Some(returned))
+                    if loan < other && other < result && result < returned)
+            }));
+        }
+    }
+
+    #[test]
+    fn sparse_listener_views_execute_both_loan_arms_in_one_repeat() {
+        let mut source = protocol(24);
+        super::super::syntax::number(&mut source);
+        assert!(
+            source.executions().any(|execution| {
+                let events = &execution.trace().messages;
+                let position = |event| events.iter().position(|(id, _)| *id == event);
+                matches!((position(4), position(7), position(12), position(15)),
+                (Some(loan_a), Some(return_a), Some(loan_b), Some(return_b))
+                if loan_a < return_a && return_a < loan_b && loan_b < return_b)
+            }),
+            "the generated scripts must transfer the same resource to both listeners across visits"
+        );
+    }
 
     fn message(from: u8, to: u8, event: u8, owned: bool) -> Protocol {
         Protocol::Message {
@@ -565,8 +1047,11 @@ mod tests {
             0,
         );
         let variants = variants(&source);
-        assert_eq!(variants.len(), 3);
-        let reused = &variants[2].1;
+        let reused = &variants
+            .iter()
+            .find(|(name, _)| *name == "reuse-last")
+            .unwrap()
+            .1;
         assert_eq!(reused.contract_for(3), reused.contract_for(4));
         for entry in [0, 1, 2, 4] {
             assert_eq!(reused.contract_for(entry), entry);

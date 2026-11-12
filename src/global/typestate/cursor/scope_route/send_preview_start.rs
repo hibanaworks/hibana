@@ -42,8 +42,9 @@ impl EventCursor {
         {
             return Err(SendPreviewError::OutOfOrder);
         }
+        let source = source.unwrap_or(0..usize::MAX);
         let mut blocked = None;
-        for idx in self.outbound_candidates(selector, source.unwrap_or(0..usize::MAX), indexed) {
+        for idx in self.outbound_candidates(selector, source.clone(), indexed.clone()) {
             let event = crate::invariant_some(self.send_preview_outbound_event_at(idx));
             let preview_conflict = self.machine().event_conflict_for_index(idx);
             let mut arms = |scope, view| match view {
@@ -74,6 +75,23 @@ impl EventCursor {
         }
         if let Some(error) = blocked {
             Err(error)
+        } else if self.source_has_outbound_contract(selector, source.clone(), indexed.clone())
+            && self
+                .outbound_candidates(selector, source, indexed)
+                .all(|idx| {
+                    self.local_event_done(idx)
+                        && self
+                            .machine()
+                            .event_program()
+                            .roll_ancestors(idx)
+                            .next()
+                            .is_none()
+                })
+        {
+            // Every declared occurrence is spent and outside every source roll.
+            // No callback, transfer preparation or I/O has started. Do not let
+            // the fallback head misidentify another contract as this request.
+            Err(SendPreviewError::Unavailable)
         } else {
             Ok(None)
         }

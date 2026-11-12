@@ -12,7 +12,7 @@ pub(in crate::endpoint::kernel::recv) struct RecvCandidate {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::endpoint::kernel::recv) struct RecvDescriptor {
-    pub(in crate::endpoint::kernel::recv) meta: RecvMeta,
-    pub(in crate::endpoint::kernel::recv) cursor_index: StateIndex,
+pub(in crate::endpoint::kernel) struct RecvDescriptor {
+    pub(in crate::endpoint::kernel) meta: RecvMeta,
+    pub(in crate::endpoint::kernel) cursor_index: StateIndex,
 }

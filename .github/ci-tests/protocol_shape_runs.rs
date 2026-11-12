@@ -5,7 +5,8 @@ use std::{
     env, fs,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -13,6 +14,11 @@ const DEFAULT_BATCH: usize = 8192;
 const FIRST: &str = "HIBANA_PROTOCOL_SHAPE_SCRIPT_FIRST";
 const COUNT: &str = "HIBANA_PROTOCOL_SHAPE_SCRIPT_COUNT";
 const OUTPUT: &str = "HIBANA_PROTOCOL_SHAPE_OBSERVATION_DIR";
+
+#[path = "protocol_shape_measurements.rs"]
+mod measurements;
+#[path = "protocol_shape_state_data.rs"]
+mod state_data;
 
 struct Case {
     name: usize,
@@ -81,11 +87,11 @@ fn invoke(
     Ok(())
 }
 
-fn binaries(output: &Path) -> Result<Vec<PathBuf>> {
-    let manifest = output.join("Cargo.toml").canonicalize()?;
+fn binaries(output: &Path, manifest: &Path, transcript: &Path) -> Result<Vec<PathBuf>> {
+    let manifest = manifest.canonicalize()?;
     let target = output.join("target").canonicalize()?;
     let mut paths = BTreeSet::new();
-    for line in BufReader::new(fs::File::open(output.join("test-binaries.jsonl"))?).lines() {
+    for line in BufReader::new(fs::File::open(transcript)?).lines() {
         let value: Value = serde_json::from_str(&line?)?;
         if value["reason"] == "compiler-artifact" && value["profile"]["test"] == true {
             let owner = value["manifest_path"]
@@ -112,6 +118,69 @@ fn binaries(output: &Path) -> Result<Vec<PathBuf>> {
         return Err("empty generated test artifact inventory".into());
     }
     Ok(paths.into_iter().collect())
+}
+
+fn compile(root: &Path, output: &Path, input: &Path, unit: usize) -> Result<PathBuf> {
+    let transcript = output.join(format!("native-compile-{unit}.jsonl"));
+    let manifest = root.join("Cargo.toml");
+    let mut command = Command::new("cargo");
+    command
+        .arg(format!(
+            "+{}",
+            env::var("TOOLCHAIN").unwrap_or("stable".into())
+        ))
+        .args([
+            "test",
+            "--locked",
+            "--lib",
+            "--no-run",
+            "--message-format=json",
+        ])
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--target-dir")
+        .arg(output.join("target"))
+        .env("HIBANA_GENERATED_PROTOCOL_SHAPES", input)
+        .env("CARGO_PROFILE_TEST_OPT_LEVEL", "1")
+        .env("CARGO_PROFILE_TEST_DEBUG", "0")
+        .env("CARGO_PROFILE_TEST_DEBUG_ASSERTIONS", "true")
+        .env("CARGO_PROFILE_TEST_OVERFLOW_CHECKS", "true")
+        .env("CARGO_PROFILE_TEST_INCREMENTAL", "false")
+        .stdin(Stdio::null())
+        .stdout(
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&transcript)?,
+        );
+    if let Some(flags) = env::var_os("CARGO_ENCODED_RUSTFLAGS") {
+        let mut flags = flags;
+        flags.push("\x1f--cfg\x1fhibana_generated_protocols");
+        command.env("CARGO_ENCODED_RUSTFLAGS", flags);
+    } else {
+        let mut flags = env::var_os("RUSTFLAGS").unwrap_or_default();
+        flags.push(" --cfg hibana_generated_protocols");
+        command.env("RUSTFLAGS", flags);
+    }
+    if !command.status()?.success() {
+        return Err(format!("generated native input {unit} failed to compile").into());
+    }
+    let paths = binaries(output, &manifest, &transcript)?;
+    let [binary] = paths.as_slice() else {
+        return Err("one canonical library test binary is required per generated input".into());
+    };
+    Ok(binary.clone())
+}
+
+fn file_hash(path: &Path) -> Result<String> {
+    let result = Command::new("shasum")
+        .args(["-a", "256", "--"])
+        .arg(path)
+        .output()?;
+    if !result.status.success() {
+        return Err("cannot hash a generated source or executable".into());
+    }
+    Ok(String::from_utf8(result.stdout)?)
 }
 
 fn same_bytes(first: &Path, second: &Path) -> Result<bool> {
@@ -150,8 +219,7 @@ fn merge_record(line: &str, script: usize, reverse: bool, output: &mut impl Writ
     Ok(())
 }
 
-fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()> {
-    let name = format!("shape_{}", case.name);
+fn run_case(binary: &Path, name: &str, output: &Path, case: &Case, size: usize) -> Result<()> {
     let parts = fs::canonicalize(output)?
         .join("scope-parts")
         .join(case.name.to_string());
@@ -203,7 +271,6 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
         }
         std::thread::scope(|scope| -> Result<()> {
             let mut children = Vec::new();
-            let name = name.as_str();
             for (range, directory) in batch {
                 children.push(scope.spawn(move || {
                     invoke(binary, name, Some((range, directory)))
@@ -263,6 +330,21 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
     drop(writer);
     fs::rename(&first_initial, initial)?;
     fs::rename(assembled, observation)?;
+    measurements::assemble(output, case, &parts)?;
+    let whole_states = output.join("whole-operation-states");
+    fs::create_dir_all(&whole_states)?;
+    let filename = format!("{}.jsonl", case.name);
+    let destination = whole_states.join(&filename);
+    for (_, part) in &parts {
+        let source = part.join("whole-operation-states").join(&filename);
+        if destination.try_exists()? {
+            if !same_bytes(&source, &destination)? {
+                return Err("whole-call cuts changed between script partitions".into());
+            }
+        } else {
+            fs::copy(source, &destination)?;
+        }
+    }
     fs::remove_dir_all(
         first_initial
             .parent()
@@ -275,7 +357,10 @@ fn run_case(binary: &Path, output: &Path, case: &Case, size: usize) -> Result<()
     Ok(())
 }
 
-fn run(output: &Path, size: usize) -> Result<()> {
+fn run(root: &Path, output: &Path, size: usize) -> Result<()> {
+    let root = root.canonicalize()?;
+    let output = output.canonicalize()?;
+    let output = output.as_path();
     let entries: Vec<Value> =
         serde_json::from_reader(fs::File::open(output.join("scope-inputs.json"))?)?;
     let mut cases = BTreeMap::new();
@@ -293,16 +378,31 @@ fn run(output: &Path, size: usize) -> Result<()> {
         return Err("empty generated execution inventory".into());
     }
     let mut seen = BTreeSet::new();
-    let binaries = binaries(output)?;
-    let hashes = Command::new("shasum")
-        .args(["-a", "256", "--"])
-        .args(&binaries)
-        .output()?;
-    if !hashes.status.success() {
-        return Err("cannot hash generated test binaries".into());
+    let inputs: Vec<PathBuf> =
+        serde_json::from_reader(fs::File::open(output.join("native-inputs.json"))?)?;
+    let mut unique_inputs = BTreeSet::new();
+    let mut compilation = Duration::ZERO;
+    let mut execution = Duration::ZERO;
+    let mut receipts = BufWriter::new(
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output.join("native-builds.jsonl"))?,
+    );
+    if inputs.is_empty() {
+        return Err("empty native compilation inventory".into());
     }
-    fs::write(output.join("test-binaries.sha256"), hashes.stdout)?;
-    for binary in binaries {
+    for (unit, input) in inputs.into_iter().enumerate() {
+        let input = output.join(input).canonicalize()?;
+        if !input.starts_with(output.join("src")) || !unique_inputs.insert(input.clone()) {
+            return Err("foreign or duplicated native source input".into());
+        }
+        let input_before = file_hash(&input)?;
+        let started = Instant::now();
+        let binary = compile(&root, output, &input, unit)?;
+        compilation += started.elapsed();
+        let binary_before = file_hash(&binary)?;
+        let started = Instant::now();
         let listed = Command::new(&binary)
             .args(["--list", "--format", "terse"])
             .output()?;
@@ -312,9 +412,13 @@ fn run(output: &Path, size: usize) -> Result<()> {
         let listing = String::from_utf8(listed.stdout)?;
         let mut unique = BTreeSet::new();
         for line in listing.lines().filter(|line| !line.is_empty()) {
-            let name = line
+            let qualified = line
                 .strip_suffix(": test")
                 .ok_or("unexpected generated test listing")?;
+            let Some(name) = qualified.strip_prefix("endpoint::generated_protocol_shapes::") else {
+                // Ordinary core tests have their own required native gate.
+                continue;
+            };
             if !unique.insert(name) {
                 return Err("duplicate test in executable inventory".into());
             }
@@ -322,41 +426,54 @@ fn run(output: &Path, size: usize) -> Result<()> {
                 if !seen.insert(name.to_owned()) {
                     return Err("source case appears in multiple binaries".into());
                 }
-                run_case(&binary, output, case, size)?;
+                run_case(&binary, qualified, output, case, size)?;
             } else if name.starts_with("shape_") {
                 return Err("unknown generated source case".into());
             } else {
-                invoke(&binary, name, None)?;
+                invoke(&binary, qualified, None)?;
             }
         }
+        execution += started.elapsed();
+        if file_hash(&input)? != input_before || file_hash(&binary)? != binary_before {
+            return Err("generated source or executable changed during its validation".into());
+        }
+        writeln!(
+            receipts,
+            "{}",
+            serde_json::json!({
+                "unit":unit,"input":input,"input_hash":input_before,
+                "binary":binary,"binary_hash":binary_before,
+            })
+        )?;
+        receipts.flush()?;
     }
     if seen.len() != cases.len() {
         return Err("missing executable source case".into());
     }
-    let hashes = Command::new("shasum")
-        .args(["-a", "256", "--check"])
-        .arg(output.join("test-binaries.sha256"))
-        .output()?;
-    fs::write(output.join("test-binaries-check.log"), &hashes.stdout)?;
-    if !hashes.status.success() {
-        return Err("generated test binary changed during execution".into());
-    }
+    fs::write(
+        output.join("compile.time"),
+        format!("real {}\n", compilation.as_secs_f64()),
+    )?;
+    fs::write(
+        output.join("execute.time"),
+        format!("real {}\n", execution.as_secs_f64()),
+    )?;
     Ok(())
 }
 
 fn main() -> Result<()> {
     let args = env::args_os().skip(1).collect::<Vec<_>>();
-    if args.len() != 1 && args.len() != 2 {
-        return Err("usage: protocol-shape-runs OUTPUT [SCRIPTS_PER_PROCESS]".into());
+    if args.len() != 2 && args.len() != 3 {
+        return Err("usage: protocol-shape-runs CORE OUTPUT [SCRIPTS_PER_PROCESS]".into());
     }
     let size = args
-        .get(1)
+        .get(2)
         .map(|value| -> Result<usize> {
             Ok(value.to_str().ok_or("invalid process size")?.parse()?)
         })
         .transpose()?
         .unwrap_or(DEFAULT_BATCH);
-    run(Path::new(&args[0]), size)
+    run(Path::new(&args[0]), Path::new(&args[1]), size)
 }
 
 #[cfg(test)]
@@ -384,24 +501,24 @@ mod tests {
         let transcript = root.join("test-binaries.jsonl");
         fs::write(&transcript, record.to_string()).unwrap();
         assert_eq!(
-            binaries(&root).unwrap(),
+            binaries(&root, &manifest, &transcript).unwrap(),
             [executable.canonicalize().unwrap()]
         );
         record["manifest_path"] = serde_json::json!(other_manifest);
         fs::write(&transcript, record.to_string()).unwrap();
-        assert!(binaries(&root).is_err());
+        assert!(binaries(&root, &manifest, &transcript).is_err());
         record["manifest_path"] = serde_json::json!(manifest);
         record["executable"] = serde_json::json!(foreign_binary);
         fs::write(&transcript, record.to_string()).unwrap();
-        assert!(binaries(&root).is_err());
+        assert!(binaries(&root, &manifest, &transcript).is_err());
         record["executable"] = serde_json::json!(executable);
         fs::write(&transcript, format!("{record}\n{record}\n")).unwrap();
-        assert!(binaries(&root).is_err());
+        assert!(binaries(&root, &manifest, &transcript).is_err());
         record["executable"] = Value::Null;
         fs::write(&transcript, record.to_string()).unwrap();
-        assert!(binaries(&root).is_err());
+        assert!(binaries(&root, &manifest, &transcript).is_err());
         fs::write(&transcript, "").unwrap();
-        assert!(binaries(&root).is_err());
+        assert!(binaries(&root, &manifest, &transcript).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

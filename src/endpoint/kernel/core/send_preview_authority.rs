@@ -17,6 +17,9 @@ where
             return Err(SendError::PhaseInvariant);
         };
         let branch_meta = branch.branch_meta;
+        let Some(choice) = branch_meta.choice else {
+            return Err(SendError::PhaseInvariant);
+        };
         let has_offered_frame = branch.offered_frame.is_some();
 
         if !matches!(
@@ -59,17 +62,14 @@ where
         if meta.label != branch_meta.label
             || meta.frame_label != branch_meta.frame_label
             || meta.lane != branch_meta.lane_wire
-            || meta.route_scope != branch_meta.scope_id
+            || meta.route_scope != choice.scope_id
         {
             return Err(SendError::PhaseInvariant);
         }
-        if meta
-            .route_arm
-            .is_some_and(|arm| arm != branch_meta.selected_arm)
-        {
+        if meta.route_arm.is_some_and(|arm| arm != choice.selected_arm) {
             return Err(SendError::PhaseInvariant);
         }
-        meta.selected_route_arm = Some(branch_meta.selected_arm);
+        meta.selected_route_arm = Some(choice.selected_arm);
 
         Ok(crate::endpoint::kernel::SendPreview::materialized_branch(
             meta,
@@ -78,15 +78,11 @@ where
     }
 
     #[inline]
-    fn preview_dynamic_resolver_arm_for_scope(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-    ) -> SendResult<Option<u8>> {
+    fn preview_dynamic_resolver_arm_for_scope(&self, scope_id: ScopeId) -> SendResult<Option<u8>> {
         let Some(resolver) = self.progress.cursor.route_scope_resolver(scope_id) else {
             return Ok(None);
         };
-        let arm = self.resolve_dynamic_resolver_for_send_preview(lane, resolver)?;
+        let arm = self.resolve_dynamic_resolver_for_send_preview(resolver)?;
         Ok(Some(arm.index()))
     }
 
@@ -94,7 +90,6 @@ where
     pub(in crate::endpoint::kernel::core) fn preview_controller_send_arm_for_scope(
         &self,
         scope_id: ScopeId,
-        lane: u8,
     ) -> SendResult<Option<u8>> {
         if !self.is_route_controller(scope_id) {
             return Ok(None);
@@ -105,7 +100,7 @@ where
         if let Some(arm) = self.parked_preview_arm_for_scope(scope_id) {
             return Ok(Some(arm));
         }
-        self.preview_dynamic_resolver_arm_for_scope(scope_id, lane)
+        self.preview_dynamic_resolver_arm_for_scope(scope_id)
     }
 
     #[inline]

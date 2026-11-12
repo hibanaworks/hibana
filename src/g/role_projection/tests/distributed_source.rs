@@ -456,7 +456,7 @@ where
             source,
             "def distributedInitial{} : ActorProgressObservation := {}\n",
             snapshot.actor,
-            super::commit::observation_source(snapshot)
+            crate::endpoint::proof_snapshot::observation_source(snapshot)
         )
         .unwrap();
     }
@@ -494,7 +494,7 @@ where
             def distributedAfter{index} : ActorProgressObservation := {}\n\n\
             def distributedWire{index} : OwnedWireObservation := {{ session := {}, lane := {}, sender := {}, receiver := {}, frameLabel := {}, payload := {:?} }}\n\n\
             def distributedChannel{index} : TransportChannel := {{ session := {}, generation := 0, lane := {}, sender := {}, receiver := {} }}\n",
-            super::commit::observation_source(before), super::commit::observation_source(after),
+            crate::endpoint::proof_snapshot::observation_source(before), crate::endpoint::proof_snapshot::observation_source(after),
             header.session().raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(), frame.payload(),
             header.session().raw(), header.lane(), header.source_role(), header.target_role()).unwrap();
         let (base, commit, measurement) = if let Some(scope) = before.steps[event].reentry_scope {
@@ -534,7 +534,7 @@ where
                 {{ pathIndex := {next_path}, event := {event}, view := {}, before := {}, after := distributedAfter{index} }})\n\n\
                 private theorem distributedPrepared{index} : distributedReentry{index}.prepared? distributedImage{actor} distributedChoreo = some distributedPreparedPair{index} := by distributed_decide\n",
                 operation.view, rows.start(), rows.len(), operation.view,
-                super::commit::observation_source(&prepared)).unwrap();
+                crate::endpoint::proof_snapshot::observation_source(&prepared)).unwrap();
             (
                 std::format!("distributedPreparedPair{index}.2.before"),
                 std::format!("distributedPreparedPair{index}.2"),
@@ -891,7 +891,7 @@ theorem distributedFreshMixedSourceIdentityBeforeItsNewReceivePair :
             .unwrap();
         writeln!(source, "private def distributedCandidate{index} : ActorAdmissionObservation := {{ snapshot := {}, pathIndex := 0, admitted := {admitted:?}, retainedRolls := {:?} }}\n\n\
             private def distributedCandidateRow{index} := (distributedCandidateData.rows[{event}]?).get (by decide)\n",
-            super::commit::observation_source(before), before.retained_rolls).unwrap();
+            crate::endpoint::proof_snapshot::observation_source(before), before.retained_rolls).unwrap();
         let base = if let Some(scope) = before.steps[event].reentry_scope {
             std::format!(
                 "((prepareObservedActorBody? distributedImage0 distributedChoreo distributedCandidate{index}.snapshot 0 0 {scope} {event}).get (by decide)).2"

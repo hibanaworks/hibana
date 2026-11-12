@@ -210,6 +210,10 @@ fn resident_actor_image_checks_both_sides_before_publication() {
         bytes[index] = 0;
         bytes[index + 2] = 2;
         bytes[index + 4] = 1;
+        let views = COLUMNS.view_lane_index().start;
+        bytes[views] = 0;
+        bytes[views + 2] = 2;
+        bytes[views + 4] = 1;
         let successors = COLUMNS.lane_successors().start;
         bytes[successors] = 1;
         bytes[successors + 2] = 2;

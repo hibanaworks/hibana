@@ -499,4 +499,63 @@ mod tests {
             Some(Failure::RuntimeOnly)
         );
     }
+
+    #[test]
+    fn shrinking_preserves_the_failure_class_and_refuses_backend_failures() {
+        let root = std::env::temp_dir().join(format!(
+            "hibana-shrinker-process-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let mut source = super::super::message(&mut 0, 0, 1, false);
+        for _ in 0..3 {
+            source = Protocol::Seq(Box::new(source.clone()), Box::new(source));
+        }
+        syntax::number(&mut source);
+        let rank = syntax::Grammar::new(3).rank(&source);
+        let probe = [
+            "bash",
+            "-c",
+            r#"
+if [[ "$2" == 0 ]]; then counts='runtime-only=1 model-only=0';
+else counts='runtime-only=0 model-only=1'; fi
+printf 'uncaught exception: generated Endpoint/source conformance failed: %s\n' "$counts"
+exit 1
+"#,
+            "shrinker-process-test",
+        ]
+        .map(str::to_owned);
+        let output = root.join("classified");
+        shrink(Path::new("."), 3, rank.clone(), &output, &probe).unwrap();
+        let best = fs::read_to_string(output.join("best.tsv")).unwrap();
+        assert_eq!(best, "depth\trank\toperators\n1\t65\t1\n");
+        assert_eq!(
+            fs::read_to_string(output.join("result.txt")).unwrap(),
+            "failure=ModelOnly\nminimal_under=subtree-removal\n"
+        );
+        let trials = fs::read_to_string(output.join("trials.tsv")).unwrap();
+        assert!(trials.contains("Some(RuntimeOnly)"));
+        assert!(trials.contains("Some(ModelOnly)"));
+        assert!(shrink(Path::new("."), 3, rank.clone(), &output, &probe).is_err());
+        assert_eq!(fs::read_to_string(output.join("best.tsv")).unwrap(), best);
+        let failed = root.join("backend-failure");
+        let backend = [
+            "bash",
+            "-c",
+            "echo 'compiler failed'; exit 73",
+            "backend-failure-test",
+        ]
+        .map(str::to_owned);
+        let error = shrink(Path::new("."), 3, rank, &failed, &backend).unwrap_err();
+        assert!(error.to_string().contains("unrecognized failure"));
+        assert_eq!(
+            fs::read_to_string(failed.join("trial-0/probe.log")).unwrap(),
+            "compiler failed\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }

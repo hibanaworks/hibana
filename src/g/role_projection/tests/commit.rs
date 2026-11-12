@@ -216,74 +216,6 @@ async fn owned_commits_publish_the_shared_actor_step_and_resource_view_together(
     Ok(())
 }
 
-#[cfg(not(miri))]
-pub(super) fn observation_source(snapshot: &ActorSnapshot) -> std::string::String {
-    use crate::rendezvous::SessionFaultKind;
-    let fault = match snapshot.fault {
-        None => "none",
-        Some(SessionFaultKind::EndpointDropped) => "some .endpointDropped",
-        Some(SessionFaultKind::TransportClosed) => "some .transportClosed",
-        Some(SessionFaultKind::DecodeFailed) => "some .decodeFailed",
-        Some(SessionFaultKind::ProtocolViolation) => "some .protocolViolation",
-        Some(SessionFaultKind::ProgressInvariantViolated) => "some .progressInvariantViolated",
-    };
-    let views = snapshot
-        .views
-        .iter()
-        .map(|view| {
-            let mut operation = view.operation.clone();
-            operation.get_mut(..1).unwrap().make_ascii_lowercase();
-            std::format!(
-                "{{ role := {}, run := {}, nonce := {}, operation := .{operation} }}",
-                view.role,
-                view.run,
-                view.nonce
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let steps = snapshot
-        .steps
-        .iter()
-        .map(|step| {
-            let (eff, side) = match step.action {
-                LocalAction::Send { eff_index, .. } => (eff_index, "send"),
-                LocalAction::Recv { eff_index, .. } => (eff_index, "receive"),
-                LocalAction::Local { eff_index, .. } => (eff_index, "local"),
-                LocalAction::Terminate => unreachable!("observations contain only operation rows"),
-            };
-            std::format!(
-                "{{ effIndex := {}, view := {}, side := .{side}, done := {} }}",
-                eff.dense_ordinal(),
-                step.view,
-                step.done
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let choices = snapshot
-        .choices
-        .iter()
-        .map(|(scope, arm)| {
-            let arm = match arm {
-                None => "none",
-                Some(0) => "some .left",
-                Some(1) => "some .right",
-                _ => panic!("invalid observed route arm"),
-            };
-            std::format!("({scope}, {arm})")
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    std::format!(
-        "{{ actor := {}, run := {}, counter := {}, liveViews := {}, fault := {fault}, views := [{views}], steps := [{steps}], choices := [{choices}] }}",
-        snapshot.actor,
-        snapshot.run,
-        snapshot.counter,
-        snapshot.live_views
-    )
-}
-
 /// Copied evidence only. All Endpoint operations remain above.
 #[cfg(not(miri))]
 struct CommitObservation<'a> {
@@ -368,7 +300,7 @@ fn write_observations(
              theorem {name}WrongLocalRowRejected :\n  \
              ({{ {name} with event := {wrong_event} }} : Hibana.ActorCommitObservation).check \
              {image_name} actorCommitChoreo = false := by\n  decide\n\n",
-            observation_source(before), observation_source(after),
+            crate::endpoint::proof_snapshot::observation_source(before), crate::endpoint::proof_snapshot::observation_source(after),
         ));
         source.push_str(&std::format!(
             "def {name}Wire : Hibana.OwnedWireObservation := {{\n  \

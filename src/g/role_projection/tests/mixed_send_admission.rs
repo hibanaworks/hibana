@@ -288,7 +288,7 @@ fn write_observations(
             "def mixedBefore{index} : Hibana.ActorProgressObservation := {}\n\n\
              def mixedWire{index} : Hibana.OwnedWireObservation := {{ session := {}, lane := {}, sender := {}, \
              receiver := {}, frameLabel := {}, payload := {payload:?} }}\n\n",
-            super::commit::observation_source(before), header.session().raw(), header.lane(),
+            crate::endpoint::proof_snapshot::observation_source(before), header.session().raw(), header.lane(),
             header.source_role(), header.target_role(), header.label().raw(),
         ));
         let base = if let Some(scope) = before.steps[event].reentry_scope {
@@ -315,8 +315,8 @@ fn write_observations(
         source.push_str(&std::format!(
             "def mixedReceiverBefore{visit} : Hibana.ActorProgressObservation := {}\n\n\
              def mixedReceiverAfter{visit} : Hibana.ActorProgressObservation := {}\n\n",
-            super::commit::observation_source(before),
-            super::commit::observation_source(after),
+            crate::endpoint::proof_snapshot::observation_source(before),
+            crate::endpoint::proof_snapshot::observation_source(after),
         ));
         let base = if let Some(scope) = before.steps[event].reentry_scope {
             std::format!(

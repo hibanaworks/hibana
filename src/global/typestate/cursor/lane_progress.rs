@@ -3,6 +3,10 @@ use super::{
     ResidentLaneStep, ScopeId, StateIndex, state_index_to_usize,
 };
 impl EventCursor {
+    pub(crate) fn roll_offer_heads(&self, view: u8, lane: u8) -> impl Iterator<Item = usize> + '_ {
+        self.machine().event_program().roll_offer_heads(view, lane)
+    }
+
     pub(crate) fn next_offer_lane_alternative(
         &self,
         index: usize,

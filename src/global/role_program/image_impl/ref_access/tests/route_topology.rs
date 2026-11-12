@@ -1,6 +1,6 @@
 use super::*;
 use crate::{Endpoint, global::role_program::RoleLocalDirection};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, vec::Vec};
 
 fn compare(rows: &RoleImageRef) {
     let raw = rows.lanes();
@@ -17,7 +17,9 @@ fn compare(rows: &RoleImageRef) {
     let mut views = BTreeSet::from([0, 254, 255]);
     let mut lanes = BTreeSet::from([0, 254, 255]);
     for step in 0..count {
+        views.insert(view_at(step));
         let lane = rows.local_step_lane(step).unwrap();
+        lanes.insert(lane);
         let expected = (step + 1..count)
             .find(|&next| rows.local_step_lane(next) == Some(lane))
             .unwrap_or(count);
@@ -85,6 +87,38 @@ fn compare(rows: &RoleImageRef) {
                     );
                 }
             }
+        }
+    }
+    for &view in &views {
+        for &lane in &lanes {
+            let expected: Vec<_> = (0..count)
+                .filter(|&step| {
+                    if view_at(step) != view || rows.local_step_lane(step) != Some(lane) {
+                        return false;
+                    }
+                    let effect = raw.local_step_event(step).unwrap().eff_index as usize;
+                    (0..rows.program().source_scope_marker_count()).any(|marker| {
+                        let Some((_, start, end)) = rows.program().source_roll_at(marker) else {
+                            return false;
+                        };
+                        start <= effect
+                            && effect < end
+                            && !(0..step).any(|before| {
+                                let prior =
+                                    raw.local_step_event(before).unwrap().eff_index as usize;
+                                view_at(before) == view
+                                    && rows.local_step_lane(before) == Some(lane)
+                                    && start <= prior
+                                    && prior < end
+                            })
+                    })
+                })
+                .collect();
+            assert_eq!(
+                rows.roll_offer_heads(view, lane).collect::<Vec<_>>(),
+                expected,
+                "rolling entries: view={view} lane={lane}"
+            );
         }
     }
     compare_alternative_links(rows);
@@ -208,7 +242,8 @@ fn constructor_rejects_every_mutated_offer_topology_byte() {
     let global = g::route(
         g::seq(g::send::<0, 1, Msg<1, ()>>(), g::send::<1, 0, Msg<2, ()>>()),
         g::par(g::send::<0, 1, Msg<3, ()>>(), g::send::<0, 1, Msg<4, ()>>()),
-    );
+    )
+    .roll();
     let rows = project::<0>(&global).role_image_ref();
     for offset in rows.columns.route_entry_steps().start..rows.columns.blob_len() {
         for bit in 0..8 {
@@ -226,7 +261,31 @@ fn lane_successors_cover_a_protocol_without_routes() {
     let rows = project::<0>(&global).role_image_ref();
     assert_eq!(rows.columns.route_scopes.len, 0);
     compare(rows);
-    for offset in rows.columns.lane_successors() {
+    for offset in rows
+        .columns
+        .view_lane_index()
+        .chain(rows.columns.lane_successors())
+    {
+        for bit in 0..8 {
+            reject(rows, |bytes, _, _| bytes[offset] ^= 1 << bit);
+        }
+    }
+}
+
+#[test]
+fn ordinary_repetition_indexes_are_checked_without_any_route() {
+    let global = g::seq(
+        g::par(g::send::<0, 1, Msg<1, ()>>(), g::send::<0, 2, Msg<2, ()>>()).roll(),
+        g::send::<0, 1, Msg<3, ()>>(),
+    );
+    let rows = project::<0>(&global).role_image_ref();
+    assert_eq!(rows.columns.route_scopes.len, 0);
+    compare(rows);
+    for offset in rows
+        .columns
+        .view_lane_index()
+        .chain(rows.columns.roll_offer_heads())
+    {
         for bit in 0..8 {
             reject(rows, |bytes, _, _| bytes[offset] ^= 1 << bit);
         }

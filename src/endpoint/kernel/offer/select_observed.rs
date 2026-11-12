@@ -10,9 +10,9 @@ where
     T: Transport + 'r,
 {
     /// Classify one exact user receive without advancing its local step.
-    /// Only a projected first-visible branch receive can select an offer.
-    /// Ordinary input stays available to recv; future input waits for its
-    /// projected predecessor. Both share recv's identity and progress checks.
+    /// A first-visible branch receive can supply route evidence. An ordinary
+    /// input retains only its exact event identity. Future input waits for its
+    /// projected predecessor; both share recv's identity and progress checks.
     #[inline(never)]
     pub(in crate::endpoint::kernel::offer) fn select_observed_ingress(
         &mut self,
@@ -127,7 +127,9 @@ where
             return Ok(None);
         };
         let Some(scope_id) = scope_id else {
-            return Ok(Some(ObservedIngressSelection::OrdinaryReceive(key.lane)));
+            return Ok(Some(ObservedIngressSelection::OrdinaryReceive(
+                checked_state_index(target_idx).ok_or(RecvError::PhaseInvariant)?,
+            )));
         };
         let observed_arm = self
             .progress

@@ -840,15 +840,11 @@ fn compare_view_lane_lower_bounds(rows: &RoleImageRef) {
     for requested_view in [0, 1, 2, 3, 254, 255] {
         for lane in (0..rows.footprint().logical_lane_count).chain([254, 255]) {
             for start in 0..=count + 1 {
-                let expected = (rows.footprint().route_scope_count != 0)
-                    .then(|| {
-                        (start..count).find(|&step| {
-                            view(step) == requested_view
-                                && raw.local_step_lane(step, rows.footprint().logical_lane_count)
-                                    == Some(lane as u8)
-                        })
-                    })
-                    .flatten();
+                let expected = (start..count).find(|&step| {
+                    view(step) == requested_view
+                        && raw.local_step_lane(step, rows.footprint().logical_lane_count)
+                            == Some(lane as u8)
+                });
                 assert_eq!(
                     rows.view_lane_step_at_or_after(requested_view, lane as u8, start),
                     expected,
@@ -860,7 +856,7 @@ fn compare_view_lane_lower_bounds(rows: &RoleImageRef) {
 }
 
 #[test]
-fn retained_view_lane_lower_bounds_match_raw_source_facets_and_omitted_indices() {
+fn retained_view_lane_lower_bounds_match_raw_source_facets_with_or_without_routes() {
     type Loan<'r> = Msg<93, Endpoint<'r, 2>>;
     let global = g::seq(
         g::send::<0, 1, Loan>(),

@@ -1,8 +1,8 @@
 /// Exclusive access to one logical role's local protocol.
 ///
 /// Successful operations advance the protocol. [`Endpoint::offer`] previews a
-/// choice without advancing it, and [`Endpoint::par`] borrows independent parts
-/// for concurrent execution.
+/// choice or an enabled input without advancing it, and [`Endpoint::par`]
+/// borrows independent parts for concurrent execution.
 ///
 /// An endpoint cannot be cloned. It can be moved as a message payload when the
 /// global protocol permits, transferring the same role's continuation. A failed
@@ -15,7 +15,7 @@ pub struct Endpoint<'r, const ROLE: u8> {
     pub(super) _borrow: core::marker::PhantomData<&'r mut ()>,
 }
 
-/// Preview of a selected route branch returned by [`Endpoint::offer`].
+/// Preview of a selected branch or enabled input returned by [`Endpoint::offer`].
 ///
 /// Inspect [`RouteBranch::label`], then use [`RouteBranch::recv`] or
 /// [`RouteBranch::send`] for the previewed operation. Dropping a preview does not

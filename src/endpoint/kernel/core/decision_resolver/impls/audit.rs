@@ -18,14 +18,7 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
-    fn emit_dynamic_resolver_audit(
-        &self,
-        lane: u8,
-        scope_id: ScopeId,
-        resolver_id: u16,
-        result: u8,
-    ) {
-        let port = self.port_for_lane(lane as usize);
+    fn emit_dynamic_resolver_audit(&self, scope_id: ScopeId, resolver_id: u16, result: u8) {
         let event = events::resolver_audit(
             self.progress.cursor.role(),
             self.context.sid.raw(),
@@ -33,25 +26,23 @@ where
             resolver_id,
             result,
         );
-        emit(port.tap(), event);
+        emit(self.context.session.rendezvous().tap(), event);
     }
 
     pub(in crate::endpoint::kernel) fn emit_dynamic_resolver_success_audit(
         &self,
-        lane: u8,
         scope_id: ScopeId,
         resolver_id: u16,
         arm: DecisionArm,
     ) {
-        self.emit_dynamic_resolver_audit(lane, scope_id, resolver_id, resolver_audit_result(arm));
+        self.emit_dynamic_resolver_audit(scope_id, resolver_id, resolver_audit_result(arm));
     }
 
     pub(in crate::endpoint::kernel) fn emit_dynamic_resolver_reject_audit(
         &self,
-        lane: u8,
         scope_id: ScopeId,
         resolver_id: u16,
     ) {
-        self.emit_dynamic_resolver_audit(lane, scope_id, resolver_id, RESOLVER_AUDIT_REJECT);
+        self.emit_dynamic_resolver_audit(scope_id, resolver_id, RESOLVER_AUDIT_REJECT);
     }
 }

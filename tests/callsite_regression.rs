@@ -51,6 +51,253 @@ fn assert_compact_debug(rendered: &str) {
 static UNIT_RESOLVER_STATE: () = ();
 const SCHEMA_ROUTE_RESOLVER: u16 = 4120;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_unavailable_borrowed_send_preserves_queued_input_and_later_rolls()
+-> Result<(), hibana::EndpointError> {
+    let source = g::seq(
+        g::send::<0, 1, Msg<1, u32>>(),
+        g::seq(
+            g::send::<0, 1, Msg<3, u32>>().roll(),
+            g::send::<1, 0, Msg<2, u32>>(),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut store = SessionKitStorage::uninit();
+    let rv = store
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(1946);
+    let mut origin = rv.enter(sid, &p0).unwrap();
+    let mut target = rv.enter(sid, &p1).unwrap();
+    origin.send::<Msg<1, u32>>(&17).await?;
+    let queued = transport.queued_frame(1);
+    let rejected = origin.send::<Msg<1, u32>>(&19).await.unwrap_err();
+    assert!(rejected.is_unavailable(), "{rejected:?}");
+    assert_eq!(transport.queued_frame(1), queued);
+    assert_eq!(target.recv::<Msg<1, u32>>().await?, 17);
+    for value in [23, 29] {
+        origin.send::<Msg<3, u32>>(&value).await?;
+        assert_eq!(target.recv::<Msg<3, u32>>().await?, value);
+    }
+    target.send::<Msg<2, u32>>(&31).await?;
+    assert_eq!(origin.recv::<Msg<2, u32>>().await?, 31);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_unavailable_owned_send_faults_without_restoring_moved_authority()
+-> Result<(), hibana::EndpointError> {
+    use hibana::Endpoint;
+    type Loan<'r> = Msg<1, Endpoint<'r, 2>>;
+    type Returned<'r> = Msg<2, Endpoint<'r, 2>>;
+    let source = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(g::send::<1, 0, Returned>(), g::send::<0, 1, Msg<3, u32>>()),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let transport = TestTransport::new();
+    let [mut owner_slab, mut holder_slab] = [[0; 64 * 1024]; 2];
+    let mut owner_store = SessionKitStorage::uninit();
+    let mut holder_store = SessionKitStorage::uninit();
+    let owner = owner_store
+        .init()
+        .rendezvous(&mut owner_slab, transport.clone())
+        .unwrap();
+    let holder = holder_store
+        .init()
+        .rendezvous(&mut holder_slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(1947);
+    let mut issuer = owner.enter(sid, &p0).unwrap();
+    let resource = owner.enter(sid, &p2).unwrap();
+    let mut worker = holder.enter(sid, &p1).unwrap();
+    issuer.send::<Loan>(resource).await?;
+    let resource = worker.recv::<Loan>().await?;
+    worker.send::<Returned>(resource).await?;
+    let resource = issuer.recv::<Returned>().await?;
+    let rejected = issuer.send::<Loan>(resource).await.unwrap_err();
+    assert!(!rejected.is_unavailable(), "{rejected:?}");
+    assert!(owner.enter(sid, &p2).is_err());
+    let fault = issuer.send::<Msg<3, u32>>(&17).await.unwrap_err();
+    assert!(format!("{fault:?}").contains("SessionFault"), "{fault:?}");
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_unavailable_contract_in_another_fragment_is_still_terminal()
+-> Result<(), hibana::EndpointError> {
+    let source = g::par(
+        g::send::<0, 1, Msg<1, u32>>(),
+        g::send::<0, 1, Msg<2, u32>>(),
+    );
+    let p0 = project::<0>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut store = SessionKitStorage::uninit();
+    let rv = store
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let mut origin = rv.enter(SessionId::new(1948), &p0).unwrap();
+    let [mut first, mut second] = origin.par()?;
+    first.send::<Msg<1, u32>>(&17).await?;
+    let queued = transport.queued_frame(1);
+    let rejected = second.send::<Msg<1, u32>>(&19).await.unwrap_err();
+    assert!(!rejected.is_unavailable(), "{rejected:?}");
+    let fault = second.send::<Msg<2, u32>>(&23).await.unwrap_err();
+    assert!(format!("{fault:?}").contains("SessionFault"), "{fault:?}");
+    assert_eq!(transport.queued_frame(1), queued);
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_unavailable_receive_does_not_fault_the_next_permitted_call()
+-> Result<(), hibana::EndpointError> {
+    let source = g::seq(
+        g::send::<0, 1, Msg<1, u32>>(),
+        g::seq(
+            g::send::<0, 1, Msg<3, u32>>(),
+            g::send::<1, 0, Msg<2, u32>>(),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut store = SessionKitStorage::uninit();
+    let rv = store
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(1943);
+    let mut origin = rv.enter(sid, &p0).unwrap();
+    let mut target = rv.enter(sid, &p1).unwrap();
+    origin.send::<Msg<1, u32>>(&17).await?;
+    origin.send::<Msg<3, u32>>(&23).await?;
+    assert_eq!(target.recv::<Msg<1, u32>>().await?, 17);
+    let queued = transport.queued_frame(1);
+    let rejected = target.recv::<Msg<1, u32>>().await.unwrap_err();
+    assert!(rejected.is_unavailable(), "{rejected:?}");
+    assert_eq!(transport.queued_frame(1), queued);
+    assert_eq!(target.recv::<Msg<3, u32>>().await?, 23);
+    target.send::<Msg<2, u32>>(&29).await?;
+    assert_eq!(origin.recv::<Msg<2, u32>>().await?, 29);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_unavailable_receive_preserves_a_different_parked_preview()
+-> Result<(), hibana::EndpointError> {
+    let source = g::seq(
+        g::send::<0, 1, Msg<1, u32>>(),
+        g::seq(
+            g::route(
+                g::send::<0, 1, Msg<2, u32>>(),
+                g::send::<0, 1, Msg<4, u32>>(),
+            ),
+            g::send::<1, 0, Msg<3, u32>>(),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut store = SessionKitStorage::uninit();
+    let rv = store
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(1945);
+    let mut origin = rv.enter(sid, &p0).unwrap();
+    let mut target = rv.enter(sid, &p1).unwrap();
+    origin.send::<Msg<1, u32>>(&17).await?;
+    target.recv::<Msg<1, u32>>().await?;
+    origin.send::<Msg<2, u32>>(&23).await?;
+    let branch = target.offer().await?;
+    assert_eq!(branch.label(), 2);
+    drop(branch);
+    let rejected = target.recv::<Msg<1, u32>>().await.unwrap_err();
+    assert!(rejected.is_unavailable(), "{rejected:?}");
+    assert_eq!(target.recv::<Msg<2, u32>>().await?, 23);
+    target.send::<Msg<3, u32>>(&29).await?;
+    assert_eq!(origin.recv::<Msg<3, u32>>().await?, 29);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_unavailable_owned_receive_keeps_the_actual_returned_authority_unique()
+-> Result<(), hibana::EndpointError> {
+    use hibana::Endpoint;
+    type Loan<'r> = Msg<1, Endpoint<'r, 2>>;
+    type Returned<'r> = Msg<4, Endpoint<'r, 2>>;
+    let source = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::send::<2, 3, Msg<2, u32>>(),
+            g::seq(
+                g::send::<3, 2, Msg<3, ()>>(),
+                g::seq(g::send::<1, 0, Returned>(), g::send::<1, 0, Msg<5, u32>>()),
+            ),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p3 = project::<3>(&source);
+    let transport = TestTransport::new();
+    let [mut owner_slab, mut holder_slab] = [[0; 64 * 1024]; 2];
+    let mut owner_store = SessionKitStorage::uninit();
+    let mut holder_store = SessionKitStorage::uninit();
+    let owner = owner_store
+        .init()
+        .rendezvous(&mut owner_slab, transport.clone())
+        .unwrap();
+    let holder = holder_store
+        .init()
+        .rendezvous(&mut holder_slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(1944);
+    let mut issuer = owner.enter(sid, &p0).unwrap();
+    let resource = owner.enter(sid, &p2).unwrap();
+    let mut service = owner.enter(sid, &p3).unwrap();
+    let mut worker = holder.enter(sid, &p1).unwrap();
+    issuer.send::<Loan>(resource).await?;
+    let mut resource = worker.recv::<Loan>().await?;
+    resource.send::<Msg<2, u32>>(&7).await?;
+    assert_eq!(service.recv::<Msg<2, u32>>().await?, 7);
+    service.send::<Msg<3, ()>>(&()).await?;
+    resource.recv::<Msg<3, ()>>().await?;
+    worker.send::<Returned>(resource).await?;
+    let _resource = issuer.recv::<Returned>().await?;
+    let rejected = match worker.recv::<Loan>().await {
+        Err(error) => error,
+        Ok(_) => panic!("completed loan was issued again"),
+    };
+    assert!(rejected.is_unavailable(), "{rejected:?}");
+    assert!(transport.queue_is_empty());
+    assert!(holder.enter(sid, &p2).is_err());
+    worker.send::<Msg<5, u32>>(&11).await?;
+    assert_eq!(issuer.recv::<Msg<5, u32>>().await?, 11);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
 fn reject_from_unit(_: &()) -> Result<DecisionArm, ResolverError> {
     Err(ResolverError::reject())
 }

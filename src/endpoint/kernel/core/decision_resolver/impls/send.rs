@@ -21,7 +21,12 @@ where
         if rows.is_empty() {
             return Ok(SendRouteAuthority::none());
         }
-        self.resolve_send_route_preview_rows(meta, rows, preview_idx)?;
+        // The cursor resolves the complete enclosing choice chain outside in
+        // while selecting this occurrence. Here only check which ancestors
+        // are retained by a child reentry; calling their resolvers again can
+        // replace a decision already used to select the send.
+        self.fresh_route_start_for_rows(rows, preview_idx, Some(meta.lane))
+            .map_err(|_| SendError::PhaseInvariant)?;
         Ok(SendRouteAuthority::direct(meta.lane))
     }
 
@@ -78,6 +83,11 @@ where
         meta: &SendMeta,
         preview_idx: usize,
     ) -> SendResult<Option<PackedLaneRange>> {
+        // The sealed image bounds every conflict by its route inventory.
+        // Without routes, no per-send conflict lookup is needed.
+        if !self.progress.cursor.has_route_scopes() {
+            return Ok(None);
+        }
         let conflict = self.progress.cursor.event_conflict_for_index(preview_idx);
         if conflict.to_conflict().is_none() {
             return Ok(None);
@@ -91,87 +101,6 @@ where
                 .route_commit_range_for_conflict(conflict)
                 .ok_or(SendError::PhaseInvariant)?,
         ))
-    }
-
-    fn resolve_send_route_preview_rows(
-        &self,
-        meta: &SendMeta,
-        rows: SelectedRouteCommitRowsRef,
-        preview_idx: usize,
-    ) -> SendResult<()> {
-        let fresh_start = self
-            .fresh_route_start_for_rows(rows, preview_idx, Some(meta.lane))
-            .map_err(|_| SendError::PhaseInvariant)?;
-        let mut idx = 0usize;
-        while idx < rows.len() {
-            let route_row = rows
-                .get(&self.progress.cursor, idx)
-                .ok_or(SendError::PhaseInvariant)?;
-            let scope_id = route_row.scope();
-            let arm_index = route_row.selected_arm();
-            // A completed containing arm does not start a new visit when the
-            // candidate is a child's reentry rather than its own entry.
-            if fresh_start.is_none_or(|start| idx < start) {
-                if self.selected_arm_for_scope(scope_id) != Some(arm_index) {
-                    return Err(SendError::PhaseInvariant);
-                }
-                idx += 1;
-                continue;
-            }
-            let Some(resolver) = self.progress.cursor.route_scope_resolver(scope_id) else {
-                idx += 1;
-                continue;
-            };
-            self.resolve_dynamic_route_arm_for_send_preview(meta, arm_index, resolver)?;
-            idx += 1;
-        }
-        Ok(())
-    }
-
-    fn resolve_dynamic_route_arm_for_send_preview(
-        &self,
-        meta: &SendMeta,
-        arm_index: u8,
-        resolver: DynamicRouteResolver,
-    ) -> SendResult<()> {
-        let scope_id = resolver.scope();
-        let resolver_id = resolver.resolver_id();
-        if let Some(selected) = self.selected_arm_for_scope(scope_id) {
-            if self.reentrant_selected_arm_complete(scope_id, selected) {
-                if meta.route_scope != scope_id {
-                    let resolution =
-                        self.resolve_dynamic_resolver_for_send_preview(meta.lane, resolver)?;
-                    return if resolution.index() == arm_index {
-                        Ok(())
-                    } else {
-                        Err(SendError::ResolverReject { resolver_id })
-                    };
-                }
-                return if meta.selected_route_arm == Some(arm_index) {
-                    Ok(())
-                } else {
-                    Err(SendError::PhaseInvariant)
-                };
-            }
-            return if selected == arm_index {
-                Ok(())
-            } else {
-                Err(SendError::ResolverReject { resolver_id })
-            };
-        }
-        if meta.route_scope == scope_id {
-            return if meta.selected_route_arm == Some(arm_index) {
-                Ok(())
-            } else {
-                Err(SendError::PhaseInvariant)
-            };
-        }
-        let resolution = self.resolve_dynamic_resolver_for_send_preview(meta.lane, resolver)?;
-        if resolution.index() == arm_index {
-            Ok(())
-        } else {
-            Err(SendError::ResolverReject { resolver_id })
-        }
     }
 
     fn verify_materialized_branch_route_rows(
@@ -202,7 +131,6 @@ where
 
     pub(in crate::endpoint::kernel::core) fn resolve_dynamic_resolver_for_send_preview(
         &self,
-        lane: u8,
         resolver: DynamicRouteResolver,
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
         let scope_id = resolver.scope();
@@ -222,7 +150,6 @@ where
         match resolver_result {
             Ok(resolution) => {
                 self.emit_dynamic_resolver_success_audit(
-                    lane,
                     scope_id,
                     resolver.resolver_id(),
                     resolution,
@@ -230,7 +157,7 @@ where
                 Ok(resolution)
             }
             Err(crate::session::cluster::error::ClusterError::ResolverReject { resolver_id }) => {
-                self.emit_dynamic_resolver_reject_audit(lane, scope_id, resolver_id);
+                self.emit_dynamic_resolver_reject_audit(scope_id, resolver_id);
                 Err(SendError::ResolverReject { resolver_id })
             }
             Err(err) => Err(Self::send_error_from_cluster(err)),

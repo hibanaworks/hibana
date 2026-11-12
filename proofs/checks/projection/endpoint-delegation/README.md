@@ -79,6 +79,23 @@ result with explicit departure checks and reject a second resource with the
 same role in a different component. This derives a source return, not delivery
 after a transport failure.
 
+For a non-restoring resource, the compiler builds seeded physical-actor
+components with a disjoint-set forest instead of repeatedly sweeping every
+event. It resolves each actor under its actual source choice. An unknown route
+can share its continuation only when both arms have the same component partition
+and seeded components; the permission pass separately requires equal incoming
+knowledge and resource guards. Unequal summaries retain explicit path splitting.
+Possible holders are never joined merely to avoid that split.
+Every present event in an included component is marked on both sides, so its
+actor-sharing predecessor cover is already closed. `ReentryAbsence.lean` proves
+this closure property for one actual choice/holder assignment; it does not prove
+the Rust traversal or grant knowledge between parallel siblings. Native tests
+compare the forest with independent reachability over 110,592 three-edge graphs,
+and compare merged with fully selected paths in 131,072 three-event cases over
+four actors, sequence/parallel continuations and conditional holder bindings.
+They also check that the production backward closure adds no event to each
+selected component cover, and retain full-u8/disjoint-component boundary tests.
+
 The same entry point exhausts every `u8` actor triple for fixed parallel, route
 and repeated-prefix sources: 184,549,376 production queries in total. Independent
 scalar expectations check the results. Another 7,873,200 queries compare pruned
@@ -121,3 +138,13 @@ physical resource identity, authentication or transport delivery. The
 integration supplies physical identity at `EndpointBinding`'s unsafe boundary.
 The carrier must provide FIFO, nonduplication, run isolation and receive
 continuity across holder changes. An I/O error never reissues that binding.
+
+`ReentryAbsence.lean` justifies pruning return-dependency exploration when no
+outgoing resource of the repeated body occurs anywhere in the complete source
+interval of an already-located return. No assignment of dependency bits or
+route presence can manufacture an absent resource use. The production validator
+still verifies that the resource actually returns before applying this prune.
+Native tests retain a negative case where a needed return uses the outgoing
+resource, and distinguish independent parallel events and component identities.
+This is a construction-cost optimization; runtime progress and ownership are
+unchanged.

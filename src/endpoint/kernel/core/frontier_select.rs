@@ -83,7 +83,10 @@ where
                 EventArmView::Preview => previews(candidate)
                     .or_else(|| self.selected_arm_for_recv_event(row.conflict(), candidate, view)),
             };
-            if self.event_eligibility(row, &mut selected).is_ok() {
+            // Cursor eligibility is insufficient after a resource moved to
+            // the continuation. Do not retain a resolver stage whose entry
+            // fails the same custody admission as its eventual send.
+            if self.enabled_candidate(row, &mut selected).is_some() {
                 return Some(row);
             }
         }

@@ -568,7 +568,7 @@ fn terminal_blob_bound_rejects_every_nonterminal_column_before_publication() {
     columns.validate_blob_bound();
     assert_eq!(
         columns.blob_len(),
-        column_end + ROLE_IMAGE_U16_STRIDE,
+        column_end + ROLE_IMAGE_U16_STRIDE * 2,
         "inclusive column end is valid"
     );
 }

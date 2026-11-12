@@ -427,6 +427,88 @@ theorem a_parallel_prefix_cannot_restart_before_its_sequential_tail :
 theorem a_fresh_parallel_prefix_cannot_reuse_its_old_join :
     acceptedParallelPrefix (completedPrefixAndTail ++ [.roll 0, .send 2]) = false := by decide
 
+/-- The 11M reduction uses one public contract with three possible first
+peers. Both enclosing decisions must identify the final source occurrence. -/
+def nestedSharedPeers : Choreo := .route (.dynamic 940)
+  (.seq (.send 0 1 41 0) (.seq (.send 0 2 41 0) (.send 0 3 41 0)))
+  (.route (.dynamic 941)
+    (.seq (.send 0 2 41 0) (.seq (.send 0 1 41 0) (.send 0 3 41 0)))
+    (.seq (.send 0 3 41 0) (.seq (.send 0 1 41 0) (.send 0 2 41 0))))
+
+def acceptedNestedPeers (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 4 nestedSharedPeers) trace).isSome
+
+theorem both_right_choices_enable_the_third_shared_entry :
+    acceptedNestedPeers [.resolve 0 0 940 .right, .resolve 0 1 941 .right,
+      .send 6, .recv 6, .send 7, .recv 7, .send 8, .recv 8] = true := by decide
+
+theorem outer_right_does_not_replace_the_inner_decision :
+    acceptedNestedPeers [.resolve 0 0 940 .right, .send 6] = false := by decide
+
+theorem an_inner_right_cannot_send_the_inner_left_occurrence :
+    acceptedNestedPeers [.resolve 0 0 940 .right, .resolve 0 1 941 .right,
+      .send 3] = false := by decide
+
+theorem outer_left_does_not_need_the_inactive_inner_resolver :
+    acceptedNestedPeers [.resolve 0 0 940 .left,
+      .send 0, .recv 0, .send 1, .recv 1, .send 2, .recv 2] = true := by decide
+
+/-- A child may enter a previously unused arm without making its completed
+parent choose again. Roll IDs are postorder: child 0, containing body 1. -/
+def nestedReview : Choreo := .roll (.route (.dynamic 801)
+  (.seq (.send 0 1 1 0)
+    (.roll (.route (.dynamic 802)
+      (.send 0 1 4 0) (.seq (.send 0 1 5 0) (.send 1 0 6 0)))))
+  (.seq (.send 0 1 2 0) (.send 1 0 3 0)))
+
+def acceptedNestedReview (trace : List GlobalOperation) : Bool :=
+  (run (GlobalConfig.initial 1 2 nestedReview) trace).isSome
+
+def completedNestedRejection : List GlobalOperation :=
+  [.resolve 0 0 801 .left, .send 0, .recv 0,
+    .resolve 0 1 802 .right, .send 2, .recv 2, .send 3, .recv 3]
+
+theorem an_unused_child_arm_keeps_its_completed_parent_choice :
+    acceptedNestedReview (completedNestedRejection ++
+      [.roll 0, .resolve 0 1 802 .left, .send 1, .recv 1]) = true := by decide
+
+theorem a_child_restart_does_not_authorize_a_new_parent_decision :
+    acceptedNestedReview (completedNestedRejection ++
+      [.roll 0, .resolve 0 0 801 .right]) = false := by decide
+
+theorem an_enclosing_restart_still_requires_its_own_prefix :
+    acceptedNestedReview (completedNestedRejection ++
+      [.roll 1, .resolve 0 0 801 .left, .resolve 0 1 802 .left, .send 1]) = false := by decide
+
+#print axioms an_unused_child_arm_keeps_its_completed_parent_choice
+#print axioms a_child_restart_does_not_authorize_a_new_parent_decision
+#print axioms an_enclosing_restart_still_requires_its_own_prefix
+
+#print axioms both_right_choices_enable_the_third_shared_entry
+/-- The opposite subtree also has a resolver. The outer selection makes that
+resolver inactive; equal public contracts do not authorize evaluating it. -/
+def sharedPeersInBothArms : Choreo := .route (.dynamic 940)
+  (.route (.dynamic 941)
+    (.seq (.send 0 1 41 0) (.seq (.send 0 2 41 0) (.send 0 3 41 0)))
+    (.seq (.send 0 2 41 0) (.seq (.send 0 1 41 0) (.send 0 3 41 0))))
+  (.route (.dynamic 942)
+    (.seq (.send 0 3 41 0) (.seq (.send 0 1 41 0) (.send 0 2 41 0)))
+    (.seq (.send 0 3 41 0) (.seq (.send 0 2 41 0) (.send 0 1 41 0))))
+
+theorem an_outer_right_choice_disables_the_left_child_resolver :
+    (run (GlobalConfig.initial 1 4 sharedPeersInBothArms)
+      [.resolve 0 0 940 .right, .resolve 0 1 941 .left]).isSome = false := by decide
+
+theorem shared_contracts_follow_only_the_active_nested_resolvers :
+    (run (GlobalConfig.initial 1 4 sharedPeersInBothArms)
+      [.resolve 0 0 940 .right, .resolve 0 2 942 .right,
+        .send 9, .recv 9, .send 10, .recv 10, .send 11, .recv 11]).isSome = true := by decide
+
+#print axioms an_outer_right_choice_disables_the_left_child_resolver
+#print axioms shared_contracts_follow_only_the_active_nested_resolvers
+#print axioms outer_right_does_not_replace_the_inner_decision
+#print axioms an_inner_right_cannot_send_the_inner_left_occurrence
+#print axioms outer_left_does_not_need_the_inactive_inner_resolver
 #print axioms a_scheduled_entry_is_eligible
 #print axioms an_in_progress_choice_cannot_change_arm
 #print axioms right_then_left_remains_enabled

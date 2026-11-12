@@ -134,28 +134,6 @@ impl<'a> LaneSetView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) fn is_empty(self) -> bool {
-        if !self.is_word_mode() {
-            let mut idx = 0usize;
-            while idx < self.byte_len() {
-                if self.byte_at(idx) != 0 {
-                    return false;
-                }
-                idx += 1;
-            }
-            return true;
-        }
-        let mut idx = 0usize;
-        while idx < self.word_len() {
-            if self.word_at(idx) != 0 {
-                return false;
-            }
-            idx += 1;
-        }
-        true
-    }
-
-    #[inline(always)]
     pub(crate) fn equals(self, other: Self) -> bool {
         if self.word_len() != other.word_len() {
             return false;

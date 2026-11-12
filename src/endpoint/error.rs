@@ -12,7 +12,10 @@ pub(crate) enum EndpointOp {
 /// An error from an Endpoint or branch operation.
 ///
 /// Its `Display` and `Debug` output identify the failed operation and cause.
-/// Protocol violations and transport failures fault the local session run.
+/// `is_unavailable()` identifies a declared receive or completed borrowed-payload
+/// send rejected before transport polling or progress publication. That
+/// rejection leaves the run usable.
+/// Protocol violations after admission and transport failures fault the run.
 /// Starting another run requires fresh transport state that excludes frames
 /// from the previous run.
 #[derive(Clone, Copy)]
@@ -30,6 +33,17 @@ impl fmt::Debug for EndpointError {
 }
 
 impl EndpointError {
+    /// Whether this call was unavailable before starting communication.
+    ///
+    /// No frame was read or sent and no progress or authority was published.
+    /// A caller can return this rejection to its input source and continue with
+    /// another permitted call. A receive waiting on another view stays Pending.
+    /// A failed owned send does not restore its moved Endpoint and remains
+    /// terminal; it is never reported as unavailable.
+    pub const fn is_unavailable(&self) -> bool {
+        matches!(self.kind, EndpointErrorKind::Unavailable)
+    }
+
     #[inline]
     pub(super) fn new<E>(op: EndpointOp, error: E) -> Self
     where
@@ -55,6 +69,7 @@ impl EndpointError {
 /// Endpoint progress failure kind independent of the public call boundary.
 #[derive(Clone, Copy)]
 pub(super) enum EndpointErrorKind {
+    Unavailable,
     Codec(CodecError),
     Transport(TransportError),
     OutOfOrder,
@@ -76,6 +91,7 @@ pub(super) enum EndpointErrorKind {
 impl fmt::Debug for EndpointErrorKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Unavailable => formatter.write_str("Unavailable"),
             Self::Codec(error) => formatter.debug_tuple("Codec").field(error).finish(),
             Self::Transport(error) => formatter.debug_tuple("Transport").field(error).finish(),
             Self::PhaseInvariant => formatter.write_str("PhaseInvariant"),
@@ -104,6 +120,7 @@ impl From<SendError> for EndpointErrorKind {
     fn from(error: SendError) -> Self {
         match error {
             SendError::Codec(error) => Self::Codec(error),
+            SendError::Unavailable => Self::Unavailable,
             SendError::Transport(error) => Self::Transport(error),
             SendError::PhaseInvariant => Self::PhaseInvariant,
             SendError::OutOfOrder => Self::OutOfOrder,
@@ -123,6 +140,7 @@ impl From<RecvError> for EndpointErrorKind {
     #[inline]
     fn from(error: RecvError) -> Self {
         match error {
+            RecvError::Unavailable => Self::Unavailable,
             RecvError::Transport(error) => Self::Transport(error),
             RecvError::Codec(error) => Self::Codec(error),
             RecvError::PhaseInvariant => Self::PhaseInvariant,
@@ -142,6 +160,8 @@ impl From<RecvError> for EndpointErrorKind {
 /// Errors surfaced inside the endpoint send kernel.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SendError {
+    /// A completed borrowed-payload contract was rejected before I/O.
+    Unavailable,
     /// Payload encoding failed.
     Codec(CodecError),
     /// Transport returned an error while transmitting the frame.
@@ -166,6 +186,8 @@ pub(crate) enum SendError {
 /// Errors surfaced inside the endpoint receive/decode kernel.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum RecvError {
+    /// A declared receive was rejected before any transport was polled.
+    Unavailable,
     /// Transport returned an error while awaiting the next frame.
     Transport(TransportError),
     /// Payload decoding failed.

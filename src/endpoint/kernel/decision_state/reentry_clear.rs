@@ -1,11 +1,5 @@
 use super::{CommitDeltaApplyPermit, RouteScopeSelectedArmSlot, RouteState};
-use crate::global::{const_dsl::ScopeId, typestate::CursorInvariantError};
-
-pub(in crate::endpoint::kernel) enum ReentryScopeLiveness {
-    NotReentry,
-    Incomplete,
-    Complete,
-}
+use crate::global::const_dsl::ScopeId;
 
 impl RouteState {
     pub(in crate::endpoint::kernel) fn replace_route_selection_arm_for_scope(
@@ -44,38 +38,6 @@ impl RouteState {
         if selected_slot.refs != 0 && selected_slot.arm == old_arm {
             selected_slot.arm = new_arm;
         }
-    }
-
-    pub(in crate::endpoint::kernel) fn active_reentry_scope_for_lane<F>(
-        &self,
-        lane_idx: usize,
-        mut classify_reentry_scope: F,
-    ) -> Result<Option<ScopeId>, CursorInvariantError>
-    where
-        F: FnMut(ScopeId) -> Result<ReentryScopeLiveness, CursorInvariantError>,
-    {
-        let mut completed_reentry = None;
-        let len = self.lane_route_arm_len(lane_idx);
-        let mut idx = len;
-        while idx > 0 {
-            idx -= 1;
-            let slot = self.lane_route_arms.get(lane_idx, idx);
-            let scope = slot.scope;
-            if scope.is_none() {
-                continue;
-            }
-            match classify_reentry_scope(scope)? {
-                ReentryScopeLiveness::NotReentry => {}
-                ReentryScopeLiveness::Incomplete => {
-                    return Ok(match completed_reentry {
-                        Some(completed) => Some(completed),
-                        None => Some(scope),
-                    });
-                }
-                ReentryScopeLiveness::Complete => completed_reentry = Some(scope),
-            }
-        }
-        Ok(completed_reentry)
     }
 
     pub(in crate::endpoint::kernel) fn clear_lane_route_selections_in_scope<F, G>(

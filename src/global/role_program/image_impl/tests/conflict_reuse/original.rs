@@ -387,7 +387,7 @@ impl<const N: usize> RoleImageBytes<N> {
             (eff_list, scopes),
             projection::LocalRows::Role(&role_rows),
         );
-        out.write_route_topology(scopes, &operations, columns);
+        out.write_route_topology((eff_list, scopes), &operations, columns);
         let offset = columns.blob_len();
         if offset > crate::global::role_program::ROLE_IMAGE_STORAGE_BYTE_CAPACITY {
             panic!("role image");

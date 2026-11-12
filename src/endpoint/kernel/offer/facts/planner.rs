@@ -29,9 +29,33 @@ where
     ) -> Option<Arm> {
         let cursor = &self.progress.cursor;
         let arm = cursor.route_arm_for_index(scope, index)?;
+        if self.selected_arm_for_scope(scope) != Some(arm) {
+            return None;
+        }
+        let lane = cursor.event_row_at(index)?.atom().lane;
         let mut committed = true;
-        cursor.visit_route_arms_for_index(index, |scope, arm| {
-            committed &= self.selected_live_arm_for_scope(scope) == Some(arm);
+        cursor.visit_route_arms_for_index(index, |ancestor, selected| {
+            // A whole-view offer can select a fresh enclosing visit. A held
+            // fragment instead keeps its actual body's restart boundary.
+            // Both retain the parent choice when only a child may reenter.
+            committed = committed
+                && self.selected_arm_for_scope(ancestor) == Some(selected)
+                && (self.selected_live_arm_for_scope(ancestor) == Some(selected)
+                    || !if self.region.is_whole() {
+                        cursor.route_offer_reentry_head_allows_index(
+                            ancestor,
+                            index,
+                            lane,
+                            &mut |target| self.selected_arm_for_scope(target),
+                        )
+                    } else {
+                        cursor.route_reentry_head_allows_index(
+                            ancestor,
+                            index,
+                            lane,
+                            &mut |target, _| self.selected_arm_for_scope(target),
+                        )
+                    });
         });
         if !committed {
             return None;
@@ -196,6 +220,18 @@ where
         let Some(arm) = self.selected_live_arm_for_scope(input.selection.scope_id) else {
             return OfferMaterializationReadiness::Ready;
         };
+        let index = input.selection.candidate_index.as_usize();
+        // The exact outgoing continuation already has its choice and source
+        // predecessors. An arm's generic receive-entry evidence cannot add
+        // another input requirement to that enabled operation. Publication
+        // still admits the event again after any intervening callback.
+        if matches!(input.cursor, OfferCursorReadiness::NonRecv)
+            && self
+                .committed_offer_arm(input.selection.scope_id, index)
+                .is_some()
+        {
+            return OfferMaterializationReadiness::Ready;
+        }
         if self.arm_requires_materialization_ready_evidence_at(
             input.selection.scope_id,
             arm,

@@ -85,8 +85,8 @@ fn write_retained_admission(
     use std::string::ToString;
     let image = descriptor_source(RoleDescriptorRef::from_resident(projected));
     let choreo = BranchSteps::lean_source();
-    let state = super::commit::observation_source(snapshot);
-    let after_state = super::commit::observation_source(after);
+    let state = crate::endpoint::proof_snapshot::observation_source(snapshot);
+    let after_state = crate::endpoint::proof_snapshot::observation_source(after);
     let before_writes = snapshot.completion_mutations;
     let after_writes = after.completion_mutations;
     let header = wire.header;

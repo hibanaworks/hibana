@@ -40,7 +40,7 @@ impl EventCursor {
 
     fn set_completed_roll_credits(&mut self, scope: ScopeId, value: u64) {
         let index = self.roll_credit_words(scope);
-        #[cfg(any(kani, all(test, hibana_repo_tests)))]
+        #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
         self.record_completion_mutation();
         let words =
             crate::invariant_some(self.completed_event_words_mut()[index..].first_chunk_mut());
@@ -317,13 +317,35 @@ impl EventCursor {
 
     /// Copy existing scope completions for qualification without treating a
     /// raw admission result as the evidence for its own prerequisites.
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) fn retained_roll_scopes(&self) -> std::vec::Vec<u16> {
         let mut scopes = std::vec::Vec::new();
         let mut slot = 0;
         while let Some((scope, _)) = self.machine().roll_scope_row_by_slot(slot) {
             let index = self.local_steps_len() + slot;
             if self.completed_event_words()[index / 32] & (1 << (index % 32)) != 0 {
+                scopes.push(scope.local_ordinal());
+            }
+            slot += 1;
+        }
+        scopes
+    }
+
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
+    pub(crate) fn credited_roll_scopes(&self) -> std::vec::Vec<u16> {
+        let mut scopes = std::vec::Vec::new();
+        if self
+            .machine()
+            .event_program()
+            .footprint()
+            .borrow_epoch_count
+            == 0
+        {
+            return scopes;
+        }
+        let mut slot = 0;
+        while let Some((scope, _)) = self.machine().roll_scope_row_by_slot(slot) {
+            if self.completed_roll_credits(scope) != 0 {
                 scopes.push(scope.local_ordinal());
             }
             slot += 1;
@@ -380,7 +402,7 @@ impl EventCursor {
             {
                 let index = self.roll_epoch_word_start() + 2 * slot;
                 let epoch = crate::invariant_some(self.roll_reentry_epoch(scope).checked_add(1));
-                #[cfg(any(kani, all(test, hibana_repo_tests)))]
+                #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
                 self.record_completion_mutation();
                 let words = crate::invariant_some(
                     self.completed_event_words_mut()[index..].first_chunk_mut(),
@@ -478,6 +500,12 @@ impl EventCursor {
             }
         }
         false
+    }
+
+    pub(crate) fn roll_has_retained_completion(&self, scope: ScopeId) -> bool {
+        let slot = crate::invariant_some(self.machine().event_program().roll_scope_slot(scope));
+        let index = self.local_steps_len() + slot;
+        self.completed_event_words()[index / 32] & (1 << (index % 32)) != 0
     }
 
     pub(crate) fn has_retained_roll_completion(&self) -> bool {

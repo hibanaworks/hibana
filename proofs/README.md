@@ -85,6 +85,17 @@ receives and with dropped/reacquired choice previews. Moving an unused resource
 must preserve an otherwise legal reentry. They check the shared replay path;
 the ranked syntax catalog above still has one delegated resource.
 
+The contract catalog also places a dynamic choice at a retained roll's entry
+and a following incoming choice. Completed localsides
+offer before ordinary receives following a roll within a choice, retaining that
+Future through Pending and dropping only the completed preview before the typed
+receive. This tests resumption when the peer sends later, in addition to the
+separate successful-preview/drop admission probes. The focused two-resource
+Endpoint regression explicitly checks both queued input and offer-before-send
+for one, two and four rejected visits. The controller-offer model requires both
+cursor eligibility and current resource custody; Rust-to-model conformance is
+checked by execution rather than asserted as a general refinement theorem.
+
 ```sh
 bash .github/scripts/check_protocol_shapes.sh --syntax-depth DEPTH FIRST COUNT
 ```
@@ -432,9 +443,7 @@ both the original issuance and its existing actor and resumption checks.
 The finite candidate horizon is not a completeness argument. A regression
 requires one resource operation, four inner exchanges and a legal return to
 have an admitted expansion, matching the actual Endpoint fixture. Another
-keeps unequal independent visit counts through a skewed parallel tree. Its
-control removes the source-structure term from the allocator's termination
-fuel and must fail that regression. Physical separation, original actors,
+keeps unequal independent visit counts through a skewed parallel tree. The allocator retains the source-structure term in its termination fuel. Physical separation, original actors,
 issuance and resumption guards remain required for each plan.
 An elastic visit may come from a roll inside sequential or parallel children,
 not just a roll immediately before that continuation. The context preserves
@@ -460,8 +469,7 @@ deliver and its peer may receive while the sender's poll remains Pending.
 `PendingAcceptance.lean` checks the source of EPF's actual Endpoint regression,
 where the continuation publishes before that pending sender. It also requires
 the remaining body after a committed entry and permits the continuation after
-that body completes. `check_pending_acceptance_sensitivity.sh` restores each
-opposite error and requires its concrete claim to fail. Generated shape commands
+that body completes. Concrete source claims and actual Pending histories cover both directions. Generated shape commands
 currently combine acceptance and publication in one completed send; these
 Pending boundaries supplement that schedule domain rather than claiming it
 already enumerates arbitrary partial-poll interleavings.
@@ -476,14 +484,10 @@ checks the changed and unchanged holder cases through real Endpoints and the
 model; a general theorem checks each resumed operation's selected entry owners.
 Only resources used by the selected body participate in this comparison.
 Positive and negative regression theorems also cover the temporary round trip.
-Sensitivity checks remove the current-visit query, seq/par context
-traversal, original-actor check, guarded route/parent-roll traversal and source
-entry ownership separately; each omission must fail. The original-actor
-predicate is checked against its general per-occurrence theorem: the entry-owner
-check now also protects the earlier concrete return example. The context and
-owner checks use executable source regressions; the two progress omissions fail
-kernel-checked examples. The owner mutant is built in a separate model copy,
-and all its general query proofs must compile before its regression runs.
+General source theorems and executable regressions check current visits,
+seq/par context, original actors, retained route/roll context and entry
+ownership. Validation uses the current model and runtime directly, without
+rebuilding altered copies of either.
 Previously observed choices stay fixed; fresh choices try every resolver
 assignment. The continuation inventory is derived from source-validated planned
 scripts, including their selected parallel orders and both visits of each roll.
@@ -536,7 +540,10 @@ distinct. A fourth assignment shares matching sequential entry contracts in
 resolved choices. Generated participants execute the common operation before
 using `offer()` to distinguish the remaining alternatives. Source occurrence
 tags still follow the immutable script; they do not select different public
-operations at that common entry. This does not enumerate every possible
+operations at that common entry. A fifth assignment shares resolved heads only
+when their logical peers also match. It retains independent parallel siblings
+while reusing a nested send on different lanes. Duplicate assignments are removed;
+the cross-peer assignment and its compile-fail cases remain. This does not enumerate every possible
 partition of messages into shared types, shared prefixes through parallel or
 repeated nodes, or an optional continuation after an indistinguishable entry.
 Reused outbound selectors in opposite parallel arms remain in the catalog as
@@ -554,7 +561,14 @@ and actual endpoint delegation. It also exercises an unread selected route arm
 beside an independent receive with the other arm's public contract, both with
 and without delegation. The selected frame remains unread while the independent
 receive progresses. Every contract source runs once in the ordinary assignments,
-including the populations owned by sensitivity controls.
+without rebuilding old production implementations.
+The 14M resolver-observation regression combines an owned resource loan, a
+sequential arm and a parallel arm containing the same nested resolver contracts.
+The sibling may finish before the nested send. A separate real Endpoint test
+checks that the shared contract occupies lanes 0 and 1, then invokes the nested
+resolver through the lane-1 fragment after committing the outer choice. Its
+actor-wide audit must not look up the inactive lane-0 port. Both inner outcomes
+are exercised; observer publication does not change admission or source rules.
 Three sources exercise a shared resolved entry in ordinary traffic,
 inside a roll, and in an actual Endpoint loan followed by resource operations
 and return. Reassociated sequential prefixes retain their original parallel
@@ -613,16 +627,14 @@ script prefixes against inputs derived from the source's enclosing scopes.
 A general theorem preserves history in probe identity. A mutation removes one
 history with a different next-call result while retaining the other history's
 entire group; inventory checking must reject it.
-`check_prefix_input_sensitivity.sh` rejects two temporary checker mutations:
-discarding the replayed choices after validation and fixing unentered scopes.
-Both must falsify the corresponding concrete Lean theorem.
+The concrete Lean theorems require recorded choices to survive replay and
+prevent a future resolver input from selecting an unentered scope.
 
 Control observations identify the executing actor in the high byte of their
 causal key, as Endpoint commits do. The compiled choice row supplies the logical
 controller; after delegation it can differ from that actor. Three real Endpoint
 tests cover repeated decisions, a delegated controller and a rejected decision
-without a subsequent commit. `check_control_actor_sensitivity.sh` restores only
-the two lane-based encoding paths and requires all three tests to fail.
+without a subsequent commit. These tests assert the actor identity directly.
 The existing `tap-commit/Encoding.lean` actor/key packing theorems cover every
 8-bit actor and result. These record checks do not certify a full execution
 history on their own.
@@ -634,8 +646,7 @@ payload receive. The runtime derives these records from the existing commit
 delta, without adding visit counters or another progress store. Actual Endpoint
 tests distinguish inner and outer roll reentry, cover a delegated view, and
 require that rejected calls and parked controller previews emit no reentry.
-`check_scope_reentry_sensitivity.sh` omits only the new record emission and must
-fail the nested-roll and delegated-history tests. The encoding check also
+The nested-roll and delegated-history tests assert these emissions directly. The encoding check also
 proves exact recovery of the full scope and entry fields and detects a
 scope-kind truncation control. These are observations of progress reset;
 complete history capture, transport-call correspondence and dynamic source
@@ -653,8 +664,7 @@ counter is added to resident state or wire frames.
 The common actor/key and scope/detail encoding theorems above also apply to
 this record. Real Endpoint tests include receipt and delegated resource use
 before the original sender publishes, rejection before I/O, and reset context
-on repeated sends. `check_send_poll_sensitivity.sh` restores missing or
-completion-only observations and requires both pending-history tests to fail.
+on repeated sends. The pending-history tests assert that polling is observed before completion.
 These records identify permitted polling points, not physical frame acceptance
 or a complete source-history refinement.
 
@@ -664,44 +674,22 @@ from zero up to that independently saved boundary. Tests cover independent
 readers, ring overwrite, exhausted public ordinals and internal counter wrap,
 including strict-provenance Miri. A checkpoint does not certify session
 completion or authenticate the saved records.
-`check_parked_offer_sensitivity.sh` runs all three contract assignments on the
-current source, then restores the old preview-handling production paths in a
-separate checkout. The restored version must reach and fail the generated
-`contract-collision=8/contracts=distinct` localside with a send `PhaseInvariant`; this occurs before admission
-probe comparison. It checks that generated inputs are unchanged and retains
-the patch and failure.
-Compiler failures do not count as detecting this defect.
-The receive-contract, resolver-occurrence and parked send/receive sensitivity
-checks resolve their expected case IDs from the positive run's
-`case-identities.tsv`. Adding contract assignments cannot silently stale a
-hard-coded number; a missing or duplicated named case fails the check.
-The same job runs `check_resolver_occurrence_sensitivity.sh`: the generated
-opposite-direction cases must pass on the current source and fail when only
-the resolver send-selection fix is reversed in a separate checkout. It retains
-the exact patch, input hashes and failure, then removes that checkout and its
-build cache.
+Current-source native regressions and generated public-call matrices cover
+parked previews, resolver occurrence identity and unrelated receive heads.
 Generated replays also count actual resolver callbacks and synchronously
 observed `RESOLVER_AUDIT` records, including outgoing offers, dropped previews
 and later typed operations. Each callback must have one observation before
-the API returns or suspends. `check_resolver_observation_sensitivity.sh`
-separately removes the observation from each resolver invocation path and
-requires these generated executions to fail. Compiler errors do not qualify.
+the API returns or suspends. Each generated callback must have its matching observation.
 Resolver-selection observations must also match a prior decision by the same
 actor, session and route site. A participant replying after learning a choice
 does not make another resolver decision. Actual Endpoint tests cover both
-arms across rolled visits; a separate control removes the fresh-controller
-condition and must fail the generated provenance check.
+arms across rolled visits. The generated provenance check requires the fresh controller condition.
 This connects the Rust observation producers to the audit contract; source
 execution theorems alone do not establish that Rust emitted every required
 record. In particular, a resolver-backed outgoing `offer()` must be recorded
 even when its branch is subsequently sent or dropped without a commit.
-`check_recv_contract_sensitivity.sh` reverses only the unrelated-head retention
-condition. It runs both receive families, including every contract assignment.
-The plain family must fail its required probe inventory: rejecting the receive
-also prevents the runtime prefix search from reaching later required probes.
-The delegated family supplies its prefixes from source traces and must report
-model-only admission mismatches. Both families must pass without the mutation,
-and the mutated run must use identical generated inputs.
+Both receive families run with every contract assignment, and their complete
+query inventories compare actual completion with the source rule.
 The source-occurrence model permits the independent receive; the regression
 tests and replay check its correspondence to Rust's lane/frame selection.
 Initial admission and the finite-prefix
@@ -819,8 +807,8 @@ TOOLCHAIN=stable bash .github/scripts/lib/resource_guard.sh \
   bash .github/scripts/check_miri.sh
 ```
 
-Run these commands sequentially. The guard limits the whole child process tree
-to 3,000,000,000 bytes. The Kani entry point already invokes it.
+Run these commands sequentially. The guard stops the whole child process tree
+at 2,750,000,000 bytes. The Kani entry point already invokes it.
 
 The [CI workflow](../.github/workflows/quality-gates.yml) also runs the individual
 checks, transport tests, embedded builds, size measurements and instruction

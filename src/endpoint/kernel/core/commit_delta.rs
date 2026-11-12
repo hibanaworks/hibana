@@ -121,11 +121,6 @@ impl CommittedCommitDelta {
     }
 
     #[inline(always)]
-    pub(crate) const fn selected_route_lane(&self) -> Option<u8> {
-        self.selected_routes.selected_lane()
-    }
-
-    #[inline(always)]
     pub(crate) const fn route_is_fresh(&self, index: usize) -> bool {
         self.fresh_route_start != PreparedCommitDelta::NO_FRESH_ROUTE
             && index >= self.fresh_route_start as usize

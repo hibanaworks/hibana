@@ -10,6 +10,15 @@ impl EventCursor {
     }
 
     #[inline]
+    pub(crate) fn has_borrow_epochs(&self) -> bool {
+        self.machine()
+            .event_program()
+            .footprint()
+            .borrow_epoch_count
+            != 0
+    }
+
+    #[inline]
     pub(super) fn outbound_candidates<'a>(
         &'a self,
         selector: crate::global::typestate::MessageSelector,
@@ -67,6 +76,28 @@ impl EventCursor {
     }
 
     #[inline]
+    pub(crate) fn declared_send_candidates(
+        &self,
+        role: u8,
+        label: u8,
+    ) -> impl Iterator<Item = usize> + '_ {
+        self.machine()
+            .event_program()
+            .outbound_candidates(role, label)
+    }
+
+    #[inline]
+    pub(crate) fn declared_receive_candidates(
+        &self,
+        role: u8,
+        label: u8,
+    ) -> impl Iterator<Item = usize> + '_ {
+        self.machine()
+            .event_program()
+            .receive_candidates(role, label)
+    }
+
+    #[inline]
     pub(crate) fn receive_candidates(
         &self,
         role: u8,
@@ -75,10 +106,7 @@ impl EventCursor {
         // Only explicit reentry can make a completed row available again.
         // Reuse the existing completion authority before decoding candidates.
         let repeatable = self.has_reentry_scopes();
-        let mut candidates = self
-            .machine()
-            .event_program()
-            .receive_candidates(role, label);
+        let mut candidates = self.declared_receive_candidates(role, label);
         core::iter::from_fn(
             #[inline(always)]
             move || loop {
@@ -170,7 +198,7 @@ impl EventCursor {
         idx < self.machine().node_len()
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) fn action_at(&self, idx: usize) -> super::LocalAction {
         self.machine().node(idx).action()
     }

@@ -16,19 +16,25 @@ where
         &mut self,
         branch: BranchMeta,
     ) -> RecvResult<BranchCommitPlan> {
-        let scope_id = branch.scope_id;
-        let selected_arm = branch.selected_arm;
         let lane_wire = branch.lane_wire;
         let lane_idx = lane_wire as usize;
         if lane_idx >= self.progress.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        if branch.route_token.is_committed()
-            && self.committed_offer_arm(scope_id, branch.cursor_index.as_usize())
-                != Some(Arm::from_raw(selected_arm))
-        {
-            return Err(RecvError::PhaseInvariant);
-        }
+        let Some(choice) = branch.choice else {
+            if branch.kind != BranchKind::WireRecv {
+                return Err(RecvError::PhaseInvariant);
+            }
+            let meta = self
+                .progress
+                .cursor
+                .try_recv_meta_at(state_index_to_usize(branch.cursor_index))
+                .ok_or(RecvError::PhaseInvariant)?;
+            return Ok(BranchCommitPlan::new(
+                Some(meta),
+                super::super::SelectedRouteCommitRowsRef::EMPTY,
+            ));
+        };
         let route_seed_rows = {
             let crate::endpoint::kernel::core::ActorProgress {
                 cursor,
@@ -47,6 +53,14 @@ where
             )?;
             rows.finish_for_lane(lane_wire)?
         };
+        let scope_id = choice.scope_id;
+        let selected_arm = choice.selected_arm;
+        if choice.route_token.is_committed()
+            && self.committed_offer_arm(scope_id, branch.cursor_index.as_usize())
+                != Some(Arm::from_raw(selected_arm))
+        {
+            return Err(RecvError::PhaseInvariant);
+        }
         if route_seed_rows.is_empty() {
             return Err(RecvError::PhaseInvariant);
         }
@@ -54,7 +68,7 @@ where
         if branch_scope_arm != Some(selected_arm) {
             return Err(RecvError::PhaseInvariant);
         }
-        if branch.route_token.is_resolver()
+        if choice.route_token.is_resolver()
             && self
                 .progress
                 .cursor
@@ -63,15 +77,15 @@ where
         {
             return Err(RecvError::PhaseInvariant);
         }
-        if branch.route_token.is_poll() && branch.kind == BranchKind::WireRecv {
-            if branch.profile.poll_wire_commit_requires_event() {
-                if !branch
+        if choice.route_token.is_poll() && branch.kind == BranchKind::WireRecv {
+            if choice.profile.poll_wire_commit_requires_event() {
+                if !choice
                     .route_arm_selection_commit_evidence
                     .emits_route_arm_selection_event()
                 {
                     return Err(RecvError::PhaseInvariant);
                 }
-            } else if branch
+            } else if choice
                 .profile
                 .poll_wire_commit_requires_intrinsic_observation()
             {
@@ -114,10 +128,6 @@ where
         branch: BranchMeta,
         committed: &CommittedCommitDelta,
     ) {
-        let scope_id = branch.scope_id;
-        let selected_arm = branch.selected_arm;
-        let lane_wire = branch.lane_wire;
-        let route_token = branch.route_token;
         let routes = committed.selected_routes();
         let mut branch_route_fresh = false;
         let mut route_idx = 0usize;
@@ -125,7 +135,11 @@ where
             let Some(row) = routes.get(&self.progress.cursor, route_idx) else {
                 crate::invariant();
             };
-            if committed.route_is_fresh(route_idx) && row.scope() == scope_id {
+            if committed.route_is_fresh(route_idx)
+                && branch
+                    .choice
+                    .is_some_and(|choice| row.scope() == choice.scope_id)
+            {
                 branch_route_fresh = true;
             }
             if committed.route_is_fresh(route_idx)
@@ -136,15 +150,19 @@ where
                     .route_scope_resolver(row.scope())
                     .is_some()
             {
-                let lane = self.offer_lane_for_scope(row.scope());
                 self.emit_route_arm_selection(
                     row.scope(),
                     RouteArmToken::from_resolver(Arm::from_raw(row.selected_arm())),
-                    lane,
                 );
             }
             route_idx += 1;
         }
+        let Some(choice) = branch.choice else {
+            return;
+        };
+        let scope_id = choice.scope_id;
+        let selected_arm = choice.selected_arm;
+        let route_token = choice.route_token;
 
         if route_token.is_committed() {
             if branch_route_fresh || self.selected_arm_for_scope(scope_id) != Some(selected_arm) {
@@ -164,33 +182,12 @@ where
             {
                 crate::invariant();
             }
-        } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
+        } else if route_token.is_ack() && choice.profile.publishes_controller_ack_decision() {
             let arm = Arm::from_raw(selected_arm);
             let token = RouteArmToken::from_ack(arm);
-            if matches!(branch.kind, BranchKind::ArmSend) {
-                let lane = lane_wire;
-                self.emit_route_arm_selection(scope_id, token, lane);
-            } else {
-                let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-                if offer_lanes.is_empty() {
-                    let lane = lane_wire;
-                    self.emit_route_arm_selection(scope_id, token, lane);
-                } else {
-                    let lane_limit = self.progress.cursor.logical_lane_count();
-                    let mut next = offer_lanes.first_set(lane_limit);
-                    while let Some(lane_idx) = next {
-                        let lane = lane_idx as u8;
-                        self.emit_route_arm_selection(scope_id, token, lane);
-                        next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-                    }
-                }
-            }
+            self.emit_route_arm_selection(scope_id, token);
         } else if route_token.is_poll() {
-            self.emit_route_arm_selection(
-                scope_id,
-                route_token,
-                self.offer_lane_for_scope(scope_id),
-            );
+            self.emit_route_arm_selection(scope_id, route_token);
         }
 
         if self.arm_has_recv(scope_id, selected_arm) {

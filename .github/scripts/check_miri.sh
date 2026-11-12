@@ -87,8 +87,24 @@ run_miri_test \
   -p hibana --test explicit_resource_join
 
 run_miri_test \
+  nested-shared-send-contract \
+  -p hibana --test nested_shared_contract
+
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test transferred-roll-entry-offer -p hibana --test conditional_owner_reentry \
+    offer_does_not_publish_a_reentry_whose_resource_has_moved_to_the_continuation -- --exact --test-threads=1
+)
+
+run_miri_test \
   session-fault-cancel-owner \
   -p hibana --test cursor_send_recv_session_fault_cancel
+
+(
+  hibana_disable_repo_tests_cfg
+  run_miri_test pre-io-rejection-owner -p hibana --test callsite_regression \
+    an_unavailable -- --test-threads=1
+)
 fi
 
 if [[ "$selection" == contract ]]; then
@@ -166,7 +182,8 @@ echo "Miri public Endpoint delegation example passed"
 
 (
   hibana_disable_repo_tests_cfg
-  run_miri_test conditional-owner-reentry -p hibana --test conditional_owner_reentry
+  run_miri_test conditional-owner-reentry -p hibana --test conditional_owner_reentry \
+    -- --skip offer_does_not_publish_a_reentry_whose_resource_has_moved_to_the_continuation
 )
 
 (

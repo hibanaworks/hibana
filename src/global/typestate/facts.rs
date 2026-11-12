@@ -307,7 +307,7 @@ pub(crate) enum LocalAction {
         lane: u8,
     },
     /// Terminal node (no further actions).
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     Terminate,
 }
 
@@ -336,7 +336,7 @@ enum PackedLocalAction {
         origin: EventOrigin,
         lane: u8,
     },
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     Terminate,
 }
 
@@ -421,7 +421,7 @@ impl LocalNode {
         }
     }
 
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
     #[inline(always)]
     const fn decode_optional_route_arm_raw(raw: u8) -> Option<Option<u8>> {
         match raw {
@@ -503,7 +503,7 @@ impl LocalNode {
     }
 
     /// Construct a terminal node that loops to itself.
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) const fn terminal(index: StateIndex) -> Self {
         Self {
             action: PackedLocalAction::Terminate,
@@ -560,7 +560,7 @@ impl LocalNode {
                 origin,
                 lane,
             },
-            #[cfg(all(test, hibana_repo_tests))]
+            #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
             PackedLocalAction::Terminate => LocalAction::Terminate,
         }
     }

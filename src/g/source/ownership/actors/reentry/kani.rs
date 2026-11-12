@@ -43,12 +43,11 @@ fn check_outgoing_return<const RETURNED: bool>() {
         messages[event] = Some(source.message_at(event));
         event += 1;
     }
-    let checker = Checker {
-        root: &source,
-        image: &image,
-        query: Query::new(&source, &[], &[]),
-        messages: &messages[..count],
-    };
+    let checker = Checker::new(
+        &source,
+        &image,
+        (Query::new(&source, &[], &[]), &messages[..count]),
+    );
     assert_eq!(
         checker.temporary_departures(
             &Body {
@@ -165,7 +164,8 @@ fn a_fresh_permit_authorizes_the_dependent_sender() {
 }
 
 #[kani::proof]
-#[kani::unwind(4)]
+// The u8 actor set has four words; merging a par needs its exit check too.
+#[kani::unwind(5)]
 fn a_parallel_permit_does_not_authorize_an_independently_enabled_send() {
     let (holder, controller) = actors();
     let image = ActorImage::<3, 0>::causal_fixture(
@@ -196,7 +196,7 @@ fn a_parallel_permit_does_not_authorize_an_independently_enabled_send() {
 }
 
 #[kani::proof]
-#[kani::unwind(4)]
+#[kani::unwind(5)]
 fn parallel_reentry_checks_the_physical_participant_component() {
     let (holder, _) = actors();
     let image = ActorImage::<2, 0>::causal_fixture(&[[holder.into(), 4], [6, 7]], &[]);
@@ -239,7 +239,7 @@ fn receipt_causality_comes_from_the_actual_actor_handoff() {
 }
 
 #[kani::proof]
-#[kani::unwind(4)]
+#[kani::unwind(5)]
 fn parallel_preorder_does_not_supply_a_resource_guard_handoff() {
     let a: u8 = kani::any();
     let b: u8 = kani::any();

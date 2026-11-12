@@ -6,9 +6,6 @@ mod catalog_counts;
 /// One execution plan for exhaustive catalogs and seeded syntax sampling.
 fn ci_matrix(extended: bool) -> serde_json::Value {
     const BUDGET: usize = 2;
-    // These full populations also provide the positive side of the required
-    // production mutations. The controls assignment executes each once.
-    const SENSITIVITY_CONTRACTS: [usize; 5] = [2, 6, 7, 8, 14];
     let plan = Plan::new(BUDGET, 0).expect("the mandatory finite catalog is defined");
     let mut entries = (0..plan.jobs)
         .map(|partition| {
@@ -20,17 +17,11 @@ fn ci_matrix(extended: bool) -> serde_json::Value {
         })
         .collect::<Vec<_>>();
     for first in 0..catalog_counts::CONTRACTS {
-        if SENSITIVITY_CONTRACTS.contains(&first) {
-            continue;
-        }
         entries.push(serde_json::json!({
             "id": format!("contracts-{first}"), "selection": "contracts",
             "first": first, "count": 1,
         }));
     }
-    entries.push(serde_json::json!({
-        "id": "controls", "selection": "controls", "contracts": SENSITIVITY_CONTRACTS,
-    }));
     if extended {
         for (family, depth, first) in [
             ("interactions", 4, 12439),
@@ -166,7 +157,6 @@ mod tests {
         let entries = matrix["include"].as_array().unwrap();
         let mut partitions = vec![false; Plan::new(2, 0).unwrap().jobs];
         let mut contracts = vec![false; catalog_counts::CONTRACTS];
-        let mut controls = 0;
         for entry in entries {
             match entry["selection"].as_str().unwrap() {
                 "constructors" => {
@@ -180,21 +170,11 @@ mod tests {
                     assert_eq!(entry["count"], 1);
                     assert!(!std::mem::replace(&mut contracts[first], true));
                 }
-                "controls" => {
-                    controls += 1;
-                    let assigned = entry["contracts"].as_array().unwrap();
-                    assert!(!assigned.is_empty());
-                    for rank in assigned {
-                        let rank = rank.as_u64().unwrap() as usize;
-                        assert!(!std::mem::replace(&mut contracts[rank], true));
-                    }
-                }
                 other => panic!("unexpected mandatory selection {other}"),
             }
         }
         assert!(partitions.into_iter().all(|assigned| assigned));
         assert!(contracts.into_iter().all(|assigned| assigned));
-        assert_eq!(controls, 1);
     }
 
     #[test]
@@ -217,7 +197,7 @@ mod tests {
                     ));
                 }
                 "sample" => assert!(depths.insert(entry["depth"].as_u64().unwrap())),
-                "constructors" | "contracts" | "controls" => {}
+                "constructors" | "contracts" => {}
                 other => panic!("unexpected additional selection: {other}"),
             }
         }

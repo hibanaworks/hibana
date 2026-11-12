@@ -1,21 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-# Supplemental source-oracle arguments belong to this same observation
-# lifetime. A failing supplemental check must retain the complete trial.
-population_args=()
-oracle_args=()
-while [[ $# -gt 0 ]]; do
-  if [[ "$1" == -- ]]; then
-    shift
-    if [[ $# == 0 ]]; then echo 'Missing supplemental oracle arguments' >&2; exit 2; fi
-    oracle_args=("$@")
-    break
-  fi
-  population_args+=("$1")
-  shift
-done
-set -- "${population_args[@]}"
+source "$ROOT_DIR/.github/scripts/lib/protocol_model_inputs.sh"
 admission_controls=false
 check=false
 if [[ "${1:-}" == --check ]]; then
@@ -71,27 +57,23 @@ if [[ -n "${HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT:-}" ]]; then
   OUTPUT="${HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT}/${OUTPUT#"${ROOT_DIR}/target/protocol-shapes/"}"
 fi
 source_hashes() {
-  (
-    cd "${ROOT_DIR}"
-    git ls-files --cached --others --exclude-standard -z |
-      perl -0ne 'print "$_\0" for grep { -f $_ } split /\0/' |
-      xargs -0 shasum -a 256 --
-  )
+  hibana_protocol_population_inputs "$ROOT_DIR"
 }
 if [[ "$check" == true ]]; then
-  if [[ ${#oracle_args[@]} != 0 ]]; then
-    echo 'A supplemental oracle requires a fresh trial' >&2
-    exit 2
-  fi
   temporary="$(mktemp)"
   trap 'rm -f -- "$temporary"' EXIT
   source_hashes > "$temporary"
   cmp "$temporary" "${OUTPUT}/source.sha256"
-  git -C "${ROOT_DIR}" rev-parse HEAD > "$temporary"
-  cmp "$temporary" "${OUTPUT}/revision.txt"
+  rustc +"${TOOLCHAIN:-stable}" --version > "$temporary"
+  cmp "$temporary" "${OUTPUT}/compiler.txt"
+  uname -sm > "$temporary"
+  cmp "$temporary" "${OUTPUT}/platform.txt"
+  hibana_protocol_compiler_environment > "$temporary"
+  cmp "$temporary" "${OUTPUT}/compiler-environment.sha256"
   (
     cd "${OUTPUT}"
     shasum -a 256 --check passed.sha256
+    shasum -a 256 --check capture-artifacts.sha256
     shasum -a 256 --check inputs.sha256
     shasum -a 256 --check dependencies.sha256
   )
@@ -100,6 +82,8 @@ fi
 mkdir -p "$(dirname "${OUTPUT}")"
 mkdir "${OUTPUT}"
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
+uname -sm > "${OUTPUT}/platform.txt"
+hibana_protocol_compiler_environment > "${OUTPUT}/compiler-environment.sha256"
 git -C "${ROOT_DIR}" rev-parse HEAD > "${OUTPUT}/revision.txt"
 git -C "${ROOT_DIR}" diff HEAD --binary > "${OUTPUT}/source.patch"
 source_hashes > "${OUTPUT}/source.sha256"
@@ -125,8 +109,8 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
 (
   cd "${OUTPUT}"
   shopt -s nullglob
-  shasum -a 256 Cargo.toml catalog.json catalog-scope.txt case-identities.tsv contract-assignments.tsv case-depths.tsv source-coverage*.tsv inputs.json scope-inputs.json src/*.rs src/bin/diagnose.rs \
-    diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.jsonl scripts/*.jsonl \
+  shasum -a 256 Cargo.toml catalog.json catalog-scope.txt case-identities.tsv contract-assignments.tsv case-depths.tsv source-coverage*.tsv inputs.json scope-inputs.json native-inputs.json src/*.rs src/bin/diagnose.rs \
+    diagnostics.tsv unclassified-rejections.txt traces/*.txt scope-plans/*.jsonl scripts/*.jsonl source-witnesses/*.jsonl \
     rejected/Cargo.toml rejected/inventory.tsv rejected/src/bin/*.rs > inputs.sha256
 )
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
@@ -145,17 +129,22 @@ if [[ "$(cat "${OUTPUT}/inputs.json")" == '[]' ]]; then
   exit 0
 fi
 rm -rf "${OUTPUT}/observations" "${OUTPUT}/scope-observations"
-/usr/bin/time -p -o "${OUTPUT}/compile.time" \
-  cargo +"${TOOLCHAIN:-stable}" test --manifest-path "${OUTPUT}/Cargo.toml" --target-dir "${OUTPUT}/target" --no-run \
-    --message-format=json > "${OUTPUT}/test-binaries.jsonl"
-(cd "${OUTPUT}" && shasum -a 256 Cargo.lock > dependencies.sha256)
-/usr/bin/time -p -o "${OUTPUT}/execute.time" \
+/usr/bin/time -p -o "${OUTPUT}/native.time" \
   cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-    --bin protocol-shape-runs -- "${OUTPUT}"
+    --bin protocol-shape-runs -- "${ROOT_DIR}" "${OUTPUT}"
+shasum -a 256 "${ROOT_DIR}/Cargo.lock" "${OUTPUT}/Cargo.lock" > "${OUTPUT}/dependencies.sha256"
 CHECKER="$(bash "${ROOT_DIR}/.github/scripts/build_protocol_checker.sh")"
 /usr/bin/time -p -o "${OUTPUT}/oracle.time" \
   "${CHECKER}" \
   "${OUTPUT}/inputs.json" "${OUTPUT}/observations" | tee "${OUTPUT}/oracle.log"
+for capture in "${OUTPUT}"/captures/*.jsonl; do
+  name="$(basename "$capture" .jsonl)"
+  cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
+    --bin protocol-shape-capture -- "${CHECKER}" "$capture" \
+    "${OUTPUT}/source-witnesses/${name}.witness.jsonl" \
+    "${OUTPUT}/admission-observations/${name}.jsonl" "${OUTPUT}/source-cuts-${name}" \
+    | tee "${OUTPUT}/source-cuts-${name}.log"
+done
 cat "${OUTPUT}/diagnose.time" "${OUTPUT}/compile.time" "${OUTPUT}/execute.time" "${OUTPUT}/oracle.time"
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shape-controls -- "${CHECKER}" "${OUTPUT}" | tee "${OUTPUT}/controls.log"
@@ -163,10 +152,6 @@ if [[ "$admission_controls" == true ]]; then
   cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
     --bin protocol-shape-controls -- --admission-controls "${CHECKER}" "${OUTPUT}" \
     | tee "${OUTPUT}/admission-controls.log"
-fi
-if [[ ${#oracle_args[@]} != 0 ]]; then
-  "${CHECKER}" "${OUTPUT}/inputs.json" "${OUTPUT}/observations" "${oracle_args[@]}" \
-    | tee "${OUTPUT}/additional-oracle.log"
 fi
 source_hashes > "${OUTPUT}/source-after.sha256"
 cmp "${OUTPUT}/source.sha256" "${OUTPUT}/source-after.sha256"
@@ -178,22 +163,35 @@ if [[ "$(cat "${OUTPUT}/unclassified-rejections.txt")" != 0 ]]; then
 fi
 cp "${OUTPUT}/source-coverage.tsv" "${OUTPUT}/executed-coverage.tsv"
 cp "${OUTPUT}/source-coverage-counts.tsv" "${OUTPUT}/executed-coverage-counts.tsv"
-# Admission arrays and partition copies have been consumed by the source
-# checker and its controls. Keep their hashes and all completed execution
+# The checker has consumed the admission questions, internal cut states and
+# normalized query copies. Keep their hashes, answers and complete execution
 # records; failed runs never reach this retirement boundary.
 (
   cd "${OUTPUT}"
-  temporary=(observations controls)
+  temporary=(observations controls admission-observations operation-states whole-operation-states)
   if [[ -d admission-controls ]]; then temporary+=(admission-controls); fi
   find "${temporary[@]}" -type f -print0 | xargs -0 shasum -a 256 -- \
     > admission-observations.sha256
+  find captures operation-images -type f -print0 | xargs -0 shasum -a 256 -- \
+    > capture-artifacts.sha256
+  for directory in source-cuts-*/; do
+    shasum -a 256 "${directory}source-questions.json" "${directory}resident-images.json" \
+      >> admission-observations.sha256
+    shasum -a 256 "${directory}source-answers.json" "${directory}protocol.bin" \
+      >> capture-artifacts.sha256
+  done
 )
-rm -r -- "${OUTPUT}/observations" "${OUTPUT}/scope-parts"
+rm -r -- "${OUTPUT}/observations" "${OUTPUT}/scope-parts" \
+  "${OUTPUT}/admission-observations" "${OUTPUT}/operation-states" "${OUTPUT}/whole-operation-states"
+for directory in "${OUTPUT}"/source-cuts-*/; do
+  rm -- "${directory}source-questions.json" "${directory}resident-images.json"
+done
 for controls in controls admission-controls; do
   if [[ -d "${OUTPUT}/$controls" ]]; then
     while IFS= read -r -d '' directory; do
       rm -r -- "$directory"
-    done < <(find "${OUTPUT}/$controls" -type d \( -name observations -o -name scope-observations -o -name scripts \) -prune -print0)
+    done < <(find "${OUTPUT}/$controls" -type d \( -name observations -o -name scope-observations -o -name scripts \
+      -o -name operation-states -o -name whole-operation-states -o -name operation-images \) -prune -print0)
   fi
 done
 # The sources, compiler transcript, binary hashes, completed execution records
@@ -203,10 +201,10 @@ if [[ -d "${OUTPUT}/rejected/target" ]]; then rm -r -- "${OUTPUT}/rejected/targe
 (
   cd "${OUTPUT}"
   shopt -s nullglob
-  files=(revision.txt compiler.txt source.patch source.sha256 source-after.sha256
-    inputs.sha256 dependencies.sha256 oracle.log controls.log admission-observations.sha256)
+  files=(revision.txt compiler.txt platform.txt compiler-environment.sha256 source.patch source.sha256 source-after.sha256
+    inputs.sha256 dependencies.sha256 oracle.log controls.log admission-observations.sha256
+    capture-artifacts.sha256 native-builds.jsonl roll-schedule-coverage.tsv)
   if [[ -f admission-controls.log ]]; then files+=(admission-controls.log); fi
-  if [[ ${#oracle_args[@]} != 0 ]]; then files+=(additional-oracle.log); fi
-  shasum -a 256 "${files[@]}" scope-observations/*.jsonl controls/*/rejection.log \
-    admission-controls/*/rejection.log > passed.sha256
+  shasum -a 256 "${files[@]}" native-compile-*.jsonl scope-observations/*.jsonl controls/*/rejection.log \
+    admission-controls/*/rejection.log source-cuts-*.log source-cuts-*/summary.json > passed.sha256
 )

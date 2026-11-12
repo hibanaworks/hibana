@@ -16,6 +16,7 @@ mod closure;
 mod commit;
 mod composed;
 mod conditional_controller;
+mod control_return_tail;
 mod controller_columns;
 mod distributed_source;
 mod elastic_continuation;

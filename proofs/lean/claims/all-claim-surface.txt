@@ -86,6 +86,17 @@ Hibana.EndpointDelegation.sequential_actor_work_precedes_its_continuation : ∀
   (left right : Hibana.EndpointDelegation.Source) {before after : Nat},
   @LT.lt.{0} Nat instLTNat before left.eventCount →
     @LE.le.{0} Nat instLENat left.eventCount after → @Eq.{1} Bool ((left.seq right).before before after) true
+Hibana.EndpointDelegation.source_absent_role_excludes_use : ∀ (source : Hibana.EndpointDelegation.Source)
+  (key : Hibana.EndpointDelegation.EndpointKey),
+  Not (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) source.usedRoles key.role) →
+    Not
+      (@Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+        (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) source.uses key)
+Hibana.EndpointDelegation.source_use_role_mem : ∀ (source : Hibana.EndpointDelegation.Source)
+  (key : Hibana.EndpointDelegation.EndpointKey),
+  @Membership.mem.{0, 0} Hibana.EndpointDelegation.EndpointKey (List.{0} Hibana.EndpointDelegation.EndpointKey)
+      (@List.instMembership.{0} Hibana.EndpointDelegation.EndpointKey) source.uses key →
+    @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) source.usedRoles key.role
 Hibana.EndpointDelegation.withOwner_other : ∀ (owners : Hibana.EndpointDelegation.OwnerMap)
   (key other : Hibana.EndpointDelegation.EndpointKey) (value : Hibana.EndpointDelegation.OwnerExpr),
   @Ne.{1} Hibana.EndpointDelegation.EndpointKey other key →
@@ -503,6 +514,20 @@ Hibana.RollContext.eventCount_plug_add : ∀ (context : Hibana.RollContext)
           (@List.take.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) index run.bindings)
           (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding previousEvent previous) →
         @LT.lt.{0} Nat instLTNat previousEvent event
+@Hibana.a_body_row_requires_its_internal_branch_evidence : ∀ {source : Hibana.CanonicalProgramSource}
+  {before : Hibana.ActorProgressObservation} {roll : Hibana.DecodedRollRow} {row : Hibana.DecodedActorRow}
+  {entries : List.{0} (Prod.{0, 0} Nat Nat)} {scope arm : Nat},
+  @Eq.{1} Bool (Hibana.sourceActorBodyChoicesKnown source before roll row (@List.nil.{0} Hibana.DecodedRollRow)) true →
+    @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Nat))) (Hibana.canonicalEventRoutePath? source row.actionId.event)
+        (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) entries) →
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) entries (@Prod.mk.{0, 0} Nat Nat scope arm) →
+        @Eq.{1} (Option.{0} Bool) (Hibana.sourceRollResetsRoute? source roll.scope scope) (@some.{0} Bool true) →
+          @Eq.{1} (Option.{0} Nat)
+            (@Option.map.{0, 0} Hibana.RouteArm Nat Hibana.encodeRouteArm (before.doneState.selected scope))
+            (@some.{0} Nat arm)
+@Hibana.a_borrow_prepared_for_a_parent_cannot_restart_only_its_child : ∀ {parent child : Nat},
+  @Eq.{1} Bool (Hibana.sourceRestartAllows (@some.{0} Nat parent) child) true → @Eq.{1} Nat parent child
 @Hibana.a_busy_borrow_cannot_begin_a_fresh_call : ∀ {cut : Hibana.PublicOperationCut}
   {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool (cut.matches image) true →
@@ -801,6 +826,16 @@ Hibana.RollContext.eventCount_plug_add : ∀ (context : Hibana.RollContext)
       (∀ (other : Nat),
         @Ne.{1} Nat other sample.event →
           @Eq.{1} Bool (sample.after.doneState.done other) (sample.before.doneState.done other))
+@Hibana.a_checked_preview_has_a_row_of_its_logical_view : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage} {slot : Hibana.OperationSlotObservation} {source : Nat},
+  @Eq.{1} Bool (cut.previewsMatch image) true →
+    @Membership.mem.{0, 0} Hibana.OperationSlotObservation (List.{0} Hibana.OperationSlotObservation)
+        (@List.instMembership.{0} Hibana.OperationSlotObservation) cut.slots slot →
+      @Eq.{1} (Option.{0} Nat) slot.offeredEvent (@some.{0} Nat source) →
+        @Exists.{1} Nat fun row =>
+          And (@LT.lt.{0} Nat instLTNat row image.eventCount)
+            (And (@Eq.{1} (Option.{0} Nat) (image.eventView? row) (@some.{0} Nat slot.view))
+              (@Eq.{1} (Option.{0} Nat) (image.eventEffIndex? row) (@some.{0} Nat source)))
 @Hibana.a_checked_receipt_retains_its_value_until_a_measured_source_boundary : ∀
   {sample : Hibana.ActorCommitObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {wire : Hibana.OwnedWireObservation} {session : Nat} {facts : Hibana.OwnedCommitFacts},
@@ -1081,6 +1116,32 @@ Hibana.RollContext.eventCount_plug_add : ∀ (context : Hibana.RollContext)
                                 (Not
                                   (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) later
                                     event))))))
+@Hibana.a_completed_source_body_has_its_current_rows : ∀ {source : Hibana.CanonicalProgramSource}
+  {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
+  {before : Hibana.ActorProgressObservation} {roll : Hibana.DecodedRollRow},
+  @Eq.{1} Bool (Hibana.sourceActorBodyComplete source data path before roll (@List.nil.{0} Hibana.DecodedRollRow))
+      true →
+    @Eq.{1} Bool
+      (@List.all.{0} Hibana.DecodedActorRow (data.activeRows path) fun row =>
+        @ite.{1} Bool
+          (@Eq.{1} Bool
+            ((@decide (@LE.le.{0} Nat instLENat roll.eventStart row.eventId) (roll.eventStart.decLe row.eventId)).and
+              (@decide
+                (@LT.lt.{0} Nat instLTNat row.eventId
+                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))
+                (row.eventId.decLt
+                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))))
+            true)
+          (instDecidableEqBool
+            ((@decide (@LE.le.{0} Nat instLENat roll.eventStart row.eventId) (roll.eventStart.decLe row.eventId)).and
+              (@decide
+                (@LT.lt.{0} Nat instLTNat row.eventId
+                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))
+                (row.eventId.decLt
+                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventStart roll.eventLength))))
+            true)
+          (before.doneState.done row.eventId) true)
+      true
 Hibana.a_completed_transfer_cannot_be_followed_by_the_old_holders_loan : let expanded :=
   (Hibana.body✝.seq Hibana.continuation✝).seq Hibana.body✝;
 have normalized :=
@@ -2180,6 +2241,21 @@ Hibana.a_covered_flow_preserves_its_input : ∀ (flow : Hibana.CausalFlowExpr) (
                                   (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding occurrence binding)))
                               (@Eq.{1} Hibana.EndpointDelegation.Payload binding.message.payload
                                 (Hibana.EndpointDelegation.Payload.endpoint resource))))
+Hibana.a_held_preview_keeps_its_source_branch : ∀ (source : Hibana.CanonicalProgramSource)
+  (choices : List.{0} (List.{0} (Prod.{0, 0} Nat Nat))) (before : Hibana.ActorProgressObservation)
+  (path : Hibana.EndpointDelegation.NormalizedPath) (scope arm : Nat) (entries : List.{0} (Prod.{0, 0} Nat Nat)),
+  @Eq.{1} Bool (Hibana.publicPreviewAgrees source choices before path) true →
+    @Membership.mem.{0, 0} (List.{0} (Prod.{0, 0} Nat Nat)) (List.{0} (List.{0} (Prod.{0, 0} Nat Nat)))
+        (@List.instMembership.{0} (List.{0} (Prod.{0, 0} Nat Nat))) choices entries →
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) entries (@Prod.mk.{0, 0} Nat Nat scope arm) →
+        @Eq.{1} (Option.{0} Hibana.RouteArm) (before.doneState.selected scope) (@none.{0} Hibana.RouteArm) →
+          @Eq.{1} Bool
+            (@BEq.beq.{0} (Option.{0} Nat) (@Option.instBEq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat))
+              (@Option.map.{0, 0} Hibana.RouteArm Nat Hibana.encodeRouteArm
+                (Hibana.sourcePathArm? source.markers path scope))
+              (@some.{0} Nat arm))
+            true
 @Hibana.a_joint_call_boundary_has_its_actual_future_boundary : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {resource : Hibana.EndpointDelegation.EndpointKey} {choreo : Hibana.Choreo}
   {events : List.{0} Hibana.OwnedCallHistory.OwnedCallEvent} {event : Hibana.OwnedCallHistory.OwnedCallEvent}
@@ -3425,6 +3501,21 @@ Hibana.a_lease_only_origin_does_not_cover_a_pending_issued_header : ∀ (old : N
                                                 Hibana.EndpointTransfer.Action.accept →
                                               @Exists.{1} Frame fun frame =>
                                                 @Hibana.TransferFrameLocated Frame View frame next))))))
+Hibana.a_nested_candidate_cannot_replace_a_held_parent_choice : ∀ (source : Hibana.CanonicalProgramSource)
+  (choices : List.{0} (List.{0} (Prod.{0, 0} Nat Nat))) (before : Hibana.ActorProgressObservation)
+  (path : Hibana.EndpointDelegation.NormalizedPath) (scope arm : Nat) (entries : List.{0} (Prod.{0, 0} Nat Nat)),
+  @Membership.mem.{0, 0} (List.{0} (Prod.{0, 0} Nat Nat)) (List.{0} (List.{0} (Prod.{0, 0} Nat Nat)))
+      (@List.instMembership.{0} (List.{0} (Prod.{0, 0} Nat Nat))) choices entries →
+    @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+        (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) entries (@Prod.mk.{0, 0} Nat Nat scope arm) →
+      @Eq.{1} (Option.{0} Hibana.RouteArm) (before.doneState.selected scope) (@none.{0} Hibana.RouteArm) →
+        @Eq.{1} Bool
+            (@BEq.beq.{0} (Option.{0} Nat) (@Option.instBEq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat))
+              (@Option.map.{0, 0} Hibana.RouteArm Nat Hibana.encodeRouteArm
+                (Hibana.sourcePathArm? source.markers path scope))
+              (@some.{0} Nat arm))
+            false →
+          @Eq.{1} Bool (Hibana.publicPreviewAgrees source choices before path) false
 Hibana.a_non_payload_view_adds_no_borrow_dependency : ∀ (current : Hibana.PublicOperationPhase) (resource : Nat)
   (sent : Option.{0} Nat),
   @Ne.{1} Hibana.PublicOperationPhase current Hibana.PublicOperationPhase.sendPayload →
@@ -3594,7 +3685,8 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
       (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
         (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
     @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
-      (Hibana.resetObservedChoices? (Hibana.canonicalProgramSource choreo) scope before.choices)
+      (Hibana.resetObservedChoices? (Hibana.canonicalProgramSource choreo) scope before.choices
+        (@List.nil.{0} Hibana.DecodedRollRow) (@List.nil.{0} Nat))
       (@some.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) base.choices)
 @Hibana.a_prepared_call_operation_has_its_next_committed_source_letter : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session actor previousPath pathIndex event : Nat}
@@ -3655,6 +3747,16 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                   word)))
                             (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
                         (@some.{0} Nat event))
+@Hibana.a_prepared_public_source_query_equals_fresh_preparation : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {before : Hibana.ActorProgressObservation}
+  {retained credits : List.{0} Nat} {borrow : Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))}
+  {query : Nat → Bool → List.{0} Nat → Option.{0} (List.{0} Nat)},
+  @Eq.{1} (Option.{0} (Nat → Bool → List.{0} Nat → Option.{0} (List.{0} Nat)))
+      (cut.sourceQueries? image choreo before retained credits borrow false)
+      (@some.{0} (Nat → Bool → List.{0} Nat → Option.{0} (List.{0} Nat)) query) →
+    ∀ (origin : Nat) (receive : Bool) (input : List.{0} Nat),
+      @Eq.{1} (Option.{0} (List.{0} Nat)) (query origin receive input)
+        (cut.sourceQueryCandidates? image choreo before retained credits borrow origin receive input)
 @Hibana.a_prepared_source_base_only_retains_existing_completion : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {before base : Hibana.ActorProgressObservation}
   {previousPath nextPath scope event required : Nat} {roll : Hibana.DecodedRollRow},
@@ -3737,6 +3839,30 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
                                 (@Hibana.SourceOrderGroup.rows (images actor) choreo group) actor records))
                             (@List.length.{0} Nat (@Hibana.SourceOrderGroup.rows (images actor) choreo group))))
                         (@some.{0} Nat event))
+@Hibana.a_preserved_child_cannot_supply_its_parent_route_choice : ∀ {source : Hibana.CanonicalProgramSource}
+  {before : Hibana.ActorProgressObservation} {roll : Hibana.DecodedRollRow} {row : Hibana.DecodedActorRow}
+  {entries : List.{0} (Prod.{0, 0} Nat Nat)} {preserved : List.{0} Hibana.DecodedRollRow} {scope arm : Nat},
+  @Eq.{1} Bool (Hibana.sourceActorBodyChoicesKnown source before roll row preserved) true →
+    @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Nat))) (Hibana.canonicalEventRoutePath? source row.actionId.event)
+        (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) entries) →
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) entries (@Prod.mk.{0, 0} Nat Nat scope arm) →
+        @Eq.{1} (Option.{0} Bool) (Hibana.sourceRollResetsRoute? source roll.scope scope) (@some.{0} Bool true) →
+          @Eq.{1} Bool
+              (@List.any.{0} Hibana.DecodedRollRow preserved fun child =>
+                @BEq.beq.{0} (Option.{0} Bool)
+                  (@Option.instBEq.{0} Bool (@instBEqOfDecidableEq.{0} Bool instDecidableEqBool))
+                  (Hibana.sourceRollResetsRoute? source child.scope scope) (@some.{0} Bool true))
+              false →
+            @Eq.{1} (Option.{0} Nat)
+              (@Option.map.{0, 0} Hibana.RouteArm Nat Hibana.encodeRouteArm (before.doneState.selected scope))
+              (@some.{0} Nat arm)
+@Hibana.a_preview_cannot_restrict_a_current_unbranched_operation : ∀ {source : Hibana.CanonicalProgramSource}
+  {choices : List.{0} (List.{0} (Prod.{0, 0} Nat Nat))} {before : Hibana.ActorProgressObservation}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {event : Nat},
+  @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat Nat))) (Hibana.canonicalEventRoutePath? source event)
+      (@some.{0} (List.{0} (Prod.{0, 0} Nat Nat)) (@List.nil.{0} (Prod.{0, 0} Nat Nat))) →
+    @Eq.{1} Bool (Hibana.publicCurrentPreviewAgrees source choices before path event) true
 @Hibana.a_projected_current_occurrence_has_actual_candidate_admission : ∀ {source : Hibana.EndpointDelegation.Source}
   {sample : Hibana.ActorAdmissionObservation} {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {previousPath : Nat} {data : Hibana.DecodedActorOrder} {path : Hibana.EndpointDelegation.NormalizedPath}
@@ -5490,6 +5616,16 @@ Hibana.a_retained_loan_can_resume_after_the_owner_preserving_choice : @Eq.{1} Bo
       (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.observedPoints✝)
       (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5))))))
   true
+Hibana.a_retained_outgoing_choice_still_requires_current_prerequisites : ∀ (source : Hibana.CanonicalProgramSource)
+  (rolls : List.{0} Hibana.DecodedRollRow) (image : Hibana.RustDescriptorImage) (choreo : Hibana.Choreo)
+  (retained : List.{0} Nat) (data : Hibana.DecodedActorOrder) (path : Hibana.EndpointDelegation.NormalizedPath)
+  (before : Hibana.ActorProgressObservation) (row : Hibana.DecodedActorRow),
+  @Ne.{1} Hibana.EndpointDelegation.Side row.actionId.side Hibana.EndpointDelegation.Side.receive →
+    @Eq.{1} Bool
+        ((Hibana.sourceOutgoingPriorChoicesKnown source rolls retained data path before row).and
+          (Hibana.sourceCurrentCandidateReady image choreo retained data path before row))
+        true →
+      @Eq.{1} Bool (Hibana.sourceRowReady data path before row) true
 @Hibana.a_retained_publication_preserves_its_source_and_wire : ∀ {entry : Hibana.SourceAcceptance}
   {record : Hibana.ActorCommitRecord} {choreo : Hibana.Choreo} {session : Nat},
   @Eq.{1} Bool (Hibana.retainedSendPublicationCheck entry record choreo session) true →
@@ -5521,6 +5657,21 @@ Hibana.a_retained_loan_can_resume_after_the_owner_preserving_choice : @Eq.{1} Bo
                         (@Prod.mk.{0, 0} Hibana.EndpointDelegation.Binding Hibana.EndpointDelegation.Side binding
                           Hibana.EndpointDelegation.Side.send))))
                   (@Eq.{1} Nat entry.sample.image.role binding.senderActor)))))
+@Hibana.a_retained_source_child_excludes_the_entering_operation : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {rolls : List.{0} Hibana.DecodedRollRow} {retained : List.{0} Nat}
+  {parent child : Hibana.DecodedRollRow} {entry : Nat},
+  @Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+      (@List.instMembership.{0} Hibana.DecodedRollRow)
+      (Hibana.sourceIndependentRetainedChildren data path rolls retained parent entry) child →
+    @Eq.{1} Bool
+      ((@decide (@LE.le.{0} Nat instLENat child.eventStart entry) (child.eventStart.decLe entry)).and
+          (@decide
+            (@LT.lt.{0} Nat instLTNat entry
+              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) child.eventStart child.eventLength))
+            (entry.decLt
+              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) child.eventStart
+                child.eventLength)))).not
+      true
 Hibana.a_roll_containing_both_receives_precedes_their_earlier_offset : ∀ (start stop earlier later : Nat),
   And (@LE.le.{0} Nat instLENat start earlier) (@LT.lt.{0} Nat instLTNat earlier stop) →
     And (@LE.le.{0} Nat instLENat start later) (@LT.lt.{0} Nat instLTNat later stop) →
@@ -5614,7 +5765,7 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
 @Hibana.a_source_choice_reset_only_retains_unreset_knowledge : ∀ {source : Hibana.CanonicalProgramSource}
   {body scope : Nat} {arm : Hibana.RouteArm} {before after : List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))},
   @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
-      (Hibana.resetObservedChoices? source body before)
+      (Hibana.resetObservedChoices? source body before (@List.nil.{0} Hibana.DecodedRollRow) (@List.nil.{0} Nat))
       (@some.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) after) →
     @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm)))
         (@List.find?.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))
@@ -5636,7 +5787,7 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
 @Hibana.a_source_choice_reset_preserves_outside_knowledge : ∀ {source : Hibana.CanonicalProgramSource}
   {body scope : Nat} {arm : Hibana.RouteArm} {before after : List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))},
   @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
-      (Hibana.resetObservedChoices? source body before)
+      (Hibana.resetObservedChoices? source body before (@List.nil.{0} Hibana.DecodedRollRow) (@List.nil.{0} Nat))
       (@some.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) after) →
     @Eq.{1} (Option.{0} Bool) (Hibana.sourceRollResetsRoute? source body scope) (@some.{0} Bool false) →
       @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm)))
@@ -8429,6 +8580,16 @@ Hibana.an_incoming_continuation_can_arrive_during_a_later_loan : @Eq.{1} Bool
     (∀ (earlier : Nat),
         @Eq.{1} Bool (source.before earlier event) true → @Ne.{1} Nat (receiver earlier) (sender event)) →
       @Eq.{1} Nat (sender event) owner
+@Hibana.an_unknown_prior_choice_cannot_certify_a_continuation : ∀ {selected : Nat → Option.{0} Hibana.RouteArm}
+  {current prior : List.{0} (Prod.{0, 0} Nat Nat)} {scope arm : Nat},
+  @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+      (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) prior (@Prod.mk.{0, 0} Nat Nat scope arm) →
+    @Eq.{1} Bool
+        (@List.any.{0} (Prod.{0, 0} Nat Nat) current fun entry =>
+          @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) (@Prod.fst.{0, 0} Nat Nat entry) scope)
+        false →
+      @Eq.{1} (Option.{0} Hibana.RouteArm) (selected scope) (@none.{0} Hibana.RouteArm) →
+        @Eq.{1} Bool (Hibana.sourcePriorChoicesKnown selected current prior) false
 @Hibana.an_unpublished_sender_header_need_not_name_local_authority : ∀ {View Frame : Type} (sender receiver : View)
   (outgoing returned : Frame),
   @Exists.{1} (Hibana.EndpointTransfer.Observation View Frame) fun state =>
@@ -9360,6 +9521,19 @@ Hibana.causal_scope_masks_cancel_for_nonparticipants : ∀ (facts leftSeed right
               @Ne.{1} Nat query sample.view →
                 @Eq.{1} (Option.{0} (Prod.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat))))
                   (Hibana.observedResourceTag? sample.after query) (Hibana.observedResourceTag? sample.before query))))
+Hibana.checked_roll_head_link_advances : ∀ (position target limit : Nat),
+  @LE.le.{0} Nat instLENat position target →
+    @LT.lt.{0} Nat instLTNat target limit →
+      And
+        (@LE.le.{0} Nat instLENat
+          (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) target
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+          limit)
+        (@LT.lt.{0} Nat instLTNat
+          (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) limit
+            (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) target
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
+          (@HSub.hSub.{0, 0, 0} Nat Nat Nat (@instHSub.{0} Nat instSubNat) limit position))
 @Hibana.checked_send_completion_has_its_exact_boundary : ∀ {sample : Hibana.SendCompletionObservation},
   @Eq.{1} Bool sample.check true → sample.Exact
 @Hibana.checked_source_handoff_boundary_is_its_own_acceptance_or_a_fault : ∀ {image : Hibana.RustDescriptorImage}
@@ -11513,6 +11687,10 @@ Hibana.first_ready_arm_record_is_exact : ∀ (arm : Hibana.RouteArm),
 Hibana.first_session_attach_binds_exactly : ∀ (rendezvous : Nat) (program : Hibana.ProgramImageIdentity),
   @Eq.{1} (Option.{0} Hibana.SessionBinding) (Hibana.bindSession? (@none.{0} Hibana.SessionBinding) rendezvous program)
     (@some.{0} Hibana.SessionBinding { rendezvous := rendezvous, program := program })
+Hibana.fixed_actor_reference_is_choice_independent : ∀ (columns : Hibana.DecodedProgramColumns)
+  (selected : Nat → Option.{0} Hibana.RouteArm) {reference : Nat},
+  @LT.lt.{0} Nat instLTNat reference (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
+    @Eq.{1} (Option.{0} Nat) (columns.selectedActor? selected reference) (@some.{0} Nat reference)
 @Hibana.fixed_array_schema_identity_excludes_builtin_scalar_domain : ∀ {width : Nat},
   @LT.lt.{0} Nat instLTNat (@OfNat.ofNat.{0} Nat (nat_lit 12) (instOfNatNat (nat_lit 12)))
     (Hibana.fixedArraySchemaIdentity width)
@@ -11801,6 +11979,18 @@ Hibana.initial_state_has_no_selected_arm : ∀ (conflict : Nat),
                   (@Hibana.EndpointTransfer.Execution View Frame following state))))
 Hibana.initial_transport_is_well_formed : ∀ (channel : Hibana.TransportChannel),
   (Hibana.TransportState.initial channel).WellFormed
+@Hibana.innermost_scope_detects_roll_entry : ∀ {Scope : Type} (rolls : List.{0} Scope) (contains : Scope → Nat → Prop)
+  (inner : Scope) (previous current : Nat),
+  @Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) rolls inner →
+    contains inner current →
+      (∀ (scope : Scope),
+          @Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) rolls scope →
+            contains scope current → ∀ (point : Nat), contains inner point → contains scope point) →
+        Iff
+          (@Exists.{1} Scope fun scope =>
+            And (@Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) rolls scope)
+              (And (contains scope current) (Not (contains scope previous))))
+          (Not (contains inner previous))
 Hibana.insert_erased_cursor_observation_length : ∀ (incoming : Hibana.ErasedCursorObservation)
   (rows : List.{0} Hibana.ErasedCursorObservation),
   @Eq.{1} Nat (@List.length.{0} Hibana.ErasedCursorObservation (Hibana.insertErasedCursorObservation incoming rows))
@@ -12626,6 +12816,8 @@ Hibana.offer_keys_with_same_entry_and_distinct_scope_are_distinct : ∀ (entry l
     @Ne.{1} Hibana.ActiveOfferKey { entry := entry, scope := leftScope } { entry := entry, scope := rightScope }
 Hibana.offer_source_predecessor_is_strict_at_equal_effects : ∀ (regions : List.{0} Hibana.ParallelRegion✝)
   (effect : Nat), @Eq.{1} Bool (Hibana.offerSourcePrecedes✝ regions effect effect) false
+@Hibana.offer_topology_binds_roll_offer_heads : ∀ {image : Hibana.RustDescriptorImage},
+  @Eq.{1} Bool image.roleOfferTopologyCoherent true → @Eq.{1} Bool image.roleRollOfferHeadsCoherent true
 Hibana.offered_receipt_blocks_second_poll : ∀ (before after : Hibana.TransportState) (frame : Hibana.TransportFrame),
   @Eq.{1} (Hibana.CarrierPoll Hibana.TransportBoundaryState)
     (Hibana.TransportBoundaryState.offered before frame after).pollReceive
@@ -12999,6 +13191,96 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
     @Eq.{1} (Option.{0} Hibana.TransportBoundaryState) (offered.resolve Hibana.ReceiptResolution.requeue)
         (@some.{0} Hibana.TransportBoundaryState restored) →
       @Eq.{1} Hibana.TransportBoundaryState restored current
+@Hibana.prepared_actor_body_queries_match_single_preparation : ∀ {image : Hibana.RustDescriptorImage}
+  {choreo : Hibana.Choreo} {before : Hibana.ActorProgressObservation}
+  {query : Nat → Nat → Nat → Nat → Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)}
+  {previous next scope event : Nat},
+  @Eq.{1}
+      (Option.{0}
+        (Nat → Nat → Nat → Nat → Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)))
+      (Hibana.observedActorBodyQueries? image choreo before (@List.nil.{0} Nat))
+      (@some.{0}
+        (Nat → Nat → Nat → Nat → Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
+        query) →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
+      (query previous next scope event) (Hibana.prepareObservedActorBody? image choreo before previous next scope event)
+@Hibana.prepared_actor_body_source_facts : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
+  {before base : Hibana.ActorProgressObservation} {previousPath nextPath scope event : Nat}
+  {roll : Hibana.DecodedRollRow},
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
+      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event)
+      (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
+        (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
+    @Exists.{1} Hibana.DecodedActorOrder fun data =>
+      @Exists.{1} Hibana.EndpointDelegation.NormalizedPath fun previous =>
+        @Exists.{1} Hibana.EndpointDelegation.NormalizedPath fun next =>
+          @Exists.{1} (List.{0} Hibana.DecodedRollRow) fun rows =>
+            @Exists.{1} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) fun choices =>
+              And
+                (@Eq.{1} (Option.{0} Hibana.DecodedActorOrder) (image.decodeActorOrder? choreo)
+                  (@some.{0} Hibana.DecodedActorOrder data))
+                (And
+                  (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+                    (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+                      Hibana.EndpointDelegation.NormalizedPath
+                      (fun as i =>
+                        @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+                      (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath) data.normalized.paths
+                      previousPath)
+                    (@some.{0} Hibana.EndpointDelegation.NormalizedPath previous))
+                  (And
+                    (@Eq.{1} (Option.{0} Hibana.EndpointDelegation.NormalizedPath)
+                      (@getElem?.{0, 0, 0} (List.{0} Hibana.EndpointDelegation.NormalizedPath) Nat
+                        Hibana.EndpointDelegation.NormalizedPath
+                        (fun as i =>
+                          @LT.lt.{0} Nat instLTNat i (@List.length.{0} Hibana.EndpointDelegation.NormalizedPath as))
+                        (@List.instGetElem?NatLtLength.{0} Hibana.EndpointDelegation.NormalizedPath)
+                        data.normalized.paths nextPath)
+                      (@some.{0} Hibana.EndpointDelegation.NormalizedPath next))
+                    (And
+                      (@Eq.{1} (Option.{0} (List.{0} Hibana.DecodedRollRow)) image.decodeRollRows?
+                        (@some.{0} (List.{0} Hibana.DecodedRollRow) rows))
+                      (And
+                        (@Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+                          (@List.instMembership.{0} Hibana.DecodedRollRow) rows roll)
+                        (And (@Eq.{1} Nat roll.scope scope)
+                          (And
+                            (@Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
+                              (Hibana.resetObservedChoices? (Hibana.canonicalProgramSource choreo) scope before.choices
+                                (@List.nil.{0} Hibana.DecodedRollRow) (@List.nil.{0} Nat))
+                              (@some.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) choices))
+                            (And
+                              (@Eq.{1} Hibana.ActorProgressObservation base
+                                (Hibana.resetObservedActor before roll choices (@List.nil.{0} Hibana.DecodedRollRow)))
+                              (And (@Eq.{1} Bool (image.actorOrderCheck choreo) true)
+                                (And (@Eq.{1} Bool (image.actorRollCheck choreo) true)
+                                  (And (@Eq.{1} Bool (image.actorRouteCheck choreo) true)
+                                    (And (@Eq.{1} Bool (before.metadataMatches image data.rows) true)
+                                      (And (@Eq.{1} Bool before.valid true)
+                                        (And (@LE.le.{0} Nat instLENat roll.eventStart event)
+                                          (And
+                                            (@LT.lt.{0} Nat instLTNat event
+                                              (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+                                                roll.eventStart roll.eventLength))
+                                            (And
+                                              (@Eq.{1} Bool
+                                                (Hibana.observedChoicesAgree (Hibana.canonicalProgramSource choreo)
+                                                  previous before)
+                                                true)
+                                              (And
+                                                (@Eq.{1} Bool
+                                                  (Hibana.observedChoicesAgree (Hibana.canonicalProgramSource choreo)
+                                                    next base)
+                                                  true)
+                                                (And
+                                                  (@Eq.{1} Bool
+                                                    (Hibana.sourceActorBodyComplete
+                                                      (Hibana.canonicalProgramSource choreo) data previous before roll
+                                                      (@List.nil.{0} Hibana.DecodedRollRow))
+                                                    true)
+                                                  (@Eq.{1} Bool
+                                                    (Hibana.observedSourcePrefixCheck data next before event)
+                                                    true))))))))))))))))))
 @Hibana.prepared_body_reentry_is_derived_before_commit : ∀ {sample : Hibana.ActorReentryCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {roll : Hibana.DecodedRollRow}
   {step : Hibana.ActorCommitObservation},
@@ -13091,6 +13373,11 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
       (Hibana.prepareLeaseAllocation state requiredTableSlots payloadBytes plannedImageFrontier payloadOffset)
       (@Except.ok.{0, 0} Hibana.LeaseAllocationFailure Hibana.LeaseAllocationPlan plan) →
     Hibana.endpointLeaseSlotCountRepresentable requiredTableSlots
+@Hibana.prepared_public_contract_queries_match_single_preparation : ∀ {cut : Hibana.PublicOperationCut}
+  {image : Hibana.RustDescriptorImage} {query : Nat → Bool → Option.{0} (List.{0} Nat)} {origin : Nat} {receive : Bool},
+  @Eq.{1} (Option.{0} (Nat → Bool → Option.{0} (List.{0} Nat))) (cut.contractQueries? image)
+      (@some.{0} (Nat → Bool → Option.{0} (List.{0} Nat)) query) →
+    @Eq.{1} (Option.{0} (List.{0} Nat)) (query origin receive) (cut.matchingContractRows? image origin receive)
 @Hibana.prepared_reentry_preserves_all_observed_resource_tags : ∀ {sample : Hibana.ActorReentryCommitObservation}
   {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo} {roll : Hibana.DecodedRollRow}
   {step : Hibana.ActorCommitObservation},
@@ -13159,6 +13446,17 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
       @Eq.{1} (Option.{0} Hibana.RouteArm) (preview scope) (@some.{0} Hibana.RouteArm chosen) →
         @Ne.{1} Nat (Hibana.encodeRouteArm chosen) arm →
           @Eq.{1} Bool (Hibana.routePathAllows path selected preview) false
+Hibana.previous_row_decides_new_interval_entry : ∀ (points : List.{0} Nat) (previous start stop : Nat),
+  @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) points previous →
+    (∀ (point : Nat),
+        @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) points point →
+          @LE.le.{0} Nat instLENat point previous) →
+      @LT.lt.{0} Nat instLTNat previous stop →
+        Iff
+          (∀ (point : Nat),
+            @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) points point →
+              Not (And (@LE.le.{0} Nat instLENat start point) (@LT.lt.{0} Nat instLTNat point stop)))
+          (@LT.lt.{0} Nat instLTNat previous start)
 Hibana.production_atom_only_event_capacity_exact : @Eq.{1} Nat Hibana.productionAtomOnlyEventCapacity
   (@OfNat.ofNat.{0} Nat (nat_lit 7281) (instOfNatNat (nat_lit 7281)))
 Hibana.production_cursor_accepts_terminal_event_count : Hibana.productionCursorPositionRepresentable
@@ -14249,6 +14547,44 @@ Hibana.resolver_select_never_rejects : ∀ (graph : Hibana.EventGraph) (state : 
                   (@List.head?.{0} View (@Hibana.EndpointTransfer.Observation.acceptedFutures View Frame after))
                   (@some.{0} View value))
                 (@Hibana.EndpointTransfer.Execution View Frame after state)))
+@Hibana.retained_source_child_rows_are_parallel_to_the_entering_operation : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {rolls : List.{0} Hibana.DecodedRollRow} {retained : List.{0} Nat}
+  {parent child : Hibana.DecodedRollRow} {entry : Nat},
+  @Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+      (@List.instMembership.{0} Hibana.DecodedRollRow)
+      (Hibana.sourceIndependentRetainedChildren data path rolls retained parent entry) child →
+    ∀ {row : Hibana.DecodedActorRow},
+      @Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+          (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) row →
+        @Eq.{1} Bool
+            ((@decide (@LE.le.{0} Nat instLENat child.eventStart row.eventId) (child.eventStart.decLe row.eventId)).and
+              (@decide
+                (@LT.lt.{0} Nat instLTNat row.eventId
+                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) child.eventStart child.eventLength))
+                (row.eventId.decLt
+                  (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) child.eventStart
+                    child.eventLength))))
+            true →
+          @Eq.{1} Bool
+            ((@List.contains.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                    (data.sourcePredecessors path entry) row.eventId).not.and
+              (@List.contains.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                  (data.sourcePredecessors path row.eventId) entry).not)
+            true
+Hibana.retaining_a_child_does_not_invent_an_unknown_choice : ∀ (source : Hibana.CanonicalProgramSource)
+  (scope route : Nat) (preserved : List.{0} Hibana.DecodedRollRow) (continuing : List.{0} Nat)
+  (after : List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))),
+  @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
+      (Hibana.resetObservedChoices? source scope
+        (@List.cons.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))
+          (@Prod.mk.{0, 0} Nat (Option.{0} Hibana.RouteArm) route (@none.{0} Hibana.RouteArm))
+          (@List.nil.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
+        preserved continuing)
+      (@some.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) after) →
+    @Eq.{1} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))) after
+      (@List.cons.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))
+        (@Prod.mk.{0, 0} Nat (Option.{0} Hibana.RouteArm) route (@none.{0} Hibana.RouteArm))
+        (@List.nil.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
 @Hibana.retire_session_exact : ∀ {pool next : Hibana.SessionPool} {sessionId : Nat},
   @Eq.{1} (Option.{0} Hibana.SessionPool) (pool.retire? sessionId) (@some.{0} Hibana.SessionPool next) →
     @Exists.{1} Hibana.GlobalConfig fun config =>
@@ -17507,6 +17843,11 @@ Hibana.without_session_preserves_other_session : ∀ (pool : Hibana.SessionPool)
     @Eq.{1} (Option.{0} Hibana.GlobalConfig) ((pool.withoutSession sessionId).session other) (pool.session other)
 @Hibana.without_session_preserves_well_formed : ∀ {pool : Hibana.SessionPool} {sessionId : Nat},
   pool.WellFormed → (pool.withoutSession sessionId).WellFormed
+Hibana.wrong_fixed_actor_cannot_be_an_endpoint_return : ∀ (columns : Hibana.DecodedProgramColumns)
+  (selected : Nat → Option.{0} Hibana.RouteArm) {reference owner : Nat} {present : Prop},
+  @LT.lt.{0} Nat instLTNat reference (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))) →
+    @Ne.{1} Nat reference owner →
+      Not (And present (@Eq.{1} (Option.{0} Nat) (columns.selectedActor? selected reference) (@some.{0} Nat owner)))
 Hibana.wrong_resolver_id_rejected : @Eq.{1} Bool
   (Hibana.checkProgramTrace Hibana.resolverProofChoreo✝ (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
     (@List.cons.{0} Hibana.TraceFrame

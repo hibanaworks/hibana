@@ -100,11 +100,21 @@ fn check_case(
     let mut checked = 0usize;
     let mut control = None;
     for script in 0..scripts {
-        let plan = read(&mut expected)?;
+        let mut plan = read(&mut expected)?;
         fields(&plan, 2)?;
         if number(plan.get("script"))? != script {
             return Err("missing, duplicate or reordered borrowed-scope script".into());
         }
+        // This shared plan also drives measured admission trials. Their exact
+        // inventory and results belong to the source-cut checker; this audit
+        // compares only the negative borrow/causality records emitted here.
+        let Json::Object(plan_fields) = &mut plan else {
+            unreachable!()
+        };
+        let Some(Json::Array(records)) = plan_fields.get_mut("probes") else {
+            return Err("invalid borrowed-scope probe inventory".into());
+        };
+        records.retain(|record| record.get("kind") != Some(&Json::String("admission".into())));
         let records = probes(&plan)?;
         checked = checked
             .checked_add(2 * records.len())
@@ -294,6 +304,32 @@ mod tests {
         ] {
             assert!(probes(&json::parse(&changed).unwrap()).is_err());
         }
+    }
+    #[test]
+    fn shared_plans_do_not_discard_admissions_to_satisfy_the_rejection_audit() {
+        let rejection = r#"{"kind":"causal","before":1,"occurrence":4,"actor":1,"role":3,"label":2,"accepted":false}"#;
+        let admission = r#"{"kind":"admission","at":1,"atReceive":true,"after":false,"occurrence":4,"actor":1,"role":3,"label":2,"receive":false,"choice":0}"#;
+        let expected = format!(
+            "{{\"name\":7,\"scripts\":1}}\n{{\"script\":0,\"probes\":[{admission},{rejection}]}}\n"
+        );
+        let actual = format!(
+            "{{\"name\":7,\"scripts\":1}}\n{{\"script\":0,\"reversePoll\":false,\"completed\":[],\"probes\":[{rejection}]}}\n{{\"script\":0,\"reversePoll\":true,\"completed\":[],\"probes\":[{rejection}]}}\n"
+        );
+        let case = json::parse(r#"{"name":7,"scripts":1,"probes":2}"#).unwrap();
+        assert_eq!(
+            check_case(Cursor::new(&expected), Cursor::new(&actual), &case)
+                .unwrap()
+                .0,
+            2
+        );
+        assert!(
+            check_case(
+                Cursor::new(&expected),
+                Cursor::new(actual.replace(rejection, "")),
+                &case
+            )
+            .is_err()
+        );
     }
     #[test]
     fn changed_or_missing_scope_observations_are_rejected() {

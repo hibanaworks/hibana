@@ -188,7 +188,7 @@ pub(crate) struct OperationIo<'r> {
     pub(in crate::endpoint) public_send_state: SendState<'r>,
 }
 
-#[cfg(all(test, hibana_repo_tests))]
+#[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
 impl OperationIo<'_> {
     /// Read the existing pending plan; this observation never prepares a send.
     pub(crate) fn proof_prepared_send(&self) -> Option<(usize, u8, u8)> {

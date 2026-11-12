@@ -45,6 +45,7 @@ where
     #[inline]
     fn map_send_preview_error(error: SendPreviewError) -> Poll<SendError> {
         match error {
+            SendPreviewError::Unavailable => Poll::Ready(SendError::OutOfOrder),
             SendPreviewError::OtherViewPending => Poll::Pending,
             SendPreviewError::Invariant => Poll::Ready(SendError::PhaseInvariant),
             SendPreviewError::OutOfOrder => Poll::Ready(SendError::OutOfOrder),
@@ -59,8 +60,9 @@ where
 
     /// Preview the current send transition without advancing the cursor.
     ///
-    /// A failed public preview is terminal. In particular, resolver rejection
-    /// cannot be retried as a different route decision for the same session.
+    /// A spent non-repeating borrowed-payload contract is rejected before
+    /// callbacks or I/O without faulting. Other preview errors remain terminal;
+    /// resolver rejection cannot become another decision for the same run.
     #[inline(never)]
     pub(crate) fn poll_send_preview(
         &mut self,
@@ -97,17 +99,14 @@ where
             let preview_result = {
                 let endpoint = &*self;
                 let mut committed_arm_for_scope = |scope| endpoint.selected_arm_for_scope(scope);
-                let mut preview_controller_arm_for_scope = |scope| {
-                    let lane =
-                        endpoint.lane_for_contract_or_offer(scope, target_label, target_payload);
-                    match endpoint.preview_controller_send_arm_for_scope(scope, lane) {
+                let mut preview_controller_arm_for_scope =
+                    |scope| match endpoint.preview_controller_send_arm_for_scope(scope) {
                         Ok(arm) => arm,
                         Err(error) => {
                             preview_error.set(Some(error));
                             None
                         }
-                    }
-                };
+                    };
                 let mut selected_arm_for_scope =
                     |scope| match endpoint.preview_send_arm_for_scope(scope) {
                         Ok(arm) => arm,
@@ -133,6 +132,23 @@ where
             }
             let (meta, cursor_index) = match preview_result {
                 Ok(preview) => preview,
+                Err(SendPreviewError::Unavailable)
+                    if matches!(target_payload, crate::eff::EventPayload::Wire(_))
+                        && self
+                            .progress
+                            .cursor
+                            .declared_send_candidates(self.public_header.role(), target_label)
+                            .any(|index| {
+                                self.permits_event(index)
+                                    && self
+                                        .progress
+                                        .cursor
+                                        .event_row_at(index)
+                                        .is_some_and(|row| row.atom().payload == target_payload)
+                            }) =>
+                {
+                    return Poll::Ready(Err(SendError::Unavailable));
+                }
                 Err(error) => match Self::map_send_preview_error(error) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(error) => return Poll::Ready(Err(error)),

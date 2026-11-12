@@ -1465,6 +1465,15 @@ async fn a_choice_wrapped_parallel_repeat_keeps_its_repeat_origin()
                 async {
                     async {
                         let label = a.offer().await?.label();
+                        assert_eq!(
+                            label,
+                            if choice == DecisionArm::Left {
+                                232
+                            } else {
+                                241
+                            },
+                            "a fresh outer visit must use its current resolver input"
+                        );
                         match label {
                             232 => {
                                 let [mut exchanges, mut tick] = a.par()?;
@@ -1541,6 +1550,157 @@ async fn a_choice_wrapped_parallel_repeat_keeps_its_repeat_origin()
         assert!(network.queue_is_empty());
     };
 
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_live_parallel_repeat_offers_the_ready_sibling_while_an_exchange_waits()
+-> core::result::Result<(), hibana::EndpointError> {
+    use core::{future::Future, pin::pin, task::Poll};
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+    type OtherWork = g::Msg<241, ()>;
+    type OtherAck = g::Msg<242, ()>;
+    type OtherTick = g::Msg<243, ()>;
+    let global = g::route(
+        g::par(
+            g::seq(g::send::<0, 1, Work>(), g::send::<1, 0, Ack>()).roll(),
+            g::send::<0, 2, Tick>(),
+        ),
+        g::par(
+            g::seq(g::send::<0, 1, OtherWork>(), g::send::<1, 0, OtherAck>()).roll(),
+            g::send::<0, 2, OtherTick>(),
+        ),
+    )
+    .resolve::<7>()
+    .roll();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<7>::decision_state(&(), |_| Ok(DecisionArm::Left)),
+    )
+    .unwrap();
+    let sid = SessionId::new(9299);
+    let mut a = rv0.enter(sid, &p0).unwrap();
+    let mut b = rv1.enter(sid, &p1).unwrap();
+    let mut c = rv2.enter(sid, &p2).unwrap();
+    for _ in 0..2 {
+        a.send::<Work>(&()).await?;
+        b.recv::<Work>().await?;
+        b.send::<Ack>(&()).await?;
+        a.recv::<Ack>().await?;
+    }
+    a.send::<Tick>(&()).await?;
+    c.recv::<Tick>().await?;
+    a.send::<Work>(&()).await?;
+    std::future::poll_fn(|cx| {
+        let mut offered = pin!(a.offer());
+        match offered.as_mut().poll(cx) {
+            Poll::Ready(Ok(branch)) => assert_eq!(branch.label(), 234),
+            Poll::Ready(Err(error)) => panic!("ready parallel sibling was rejected: {error:?}"),
+            Poll::Pending => panic!("ready parallel sibling was hidden behind the exchange"),
+        }
+        Poll::Ready(())
+    })
+    .await;
+    a.send::<Tick>(&()).await?;
+    c.recv::<Tick>().await?;
+    b.recv::<Work>().await?;
+    b.send::<Ack>(&()).await?;
+    a.recv::<Ack>().await?;
+    assert!(network.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_outgoing_tail_keeps_the_completed_parent_after_a_late_parallel_restart()
+-> core::result::Result<(), hibana::EndpointError> {
+    use hibana::runtime::resolver::{DecisionArm, ResolverRef};
+    type LeftHead = g::Msg<1, ()>;
+    type RightHead = g::Msg<2, ()>;
+    type Query = g::Msg<3, ()>;
+    type Answer = g::Msg<4, ()>;
+    type Rejected = g::Msg<5, ()>;
+    type Rework = g::Msg<6, ()>;
+    type Done = g::Msg<7, ()>;
+    type Visit = g::Msg<8, ()>;
+    type Stop = g::Msg<9, ()>;
+    type LeftDone = g::Msg<10, ()>;
+    let checked = || g::seq(g::send::<1, 2, Query>(), g::send::<2, 1, Answer>());
+    let review = g::route(
+        g::seq(
+            g::send::<0, 1, LeftHead>(),
+            g::seq(checked(), g::send::<1, 0, LeftDone>()),
+        ),
+        g::seq(
+            g::send::<0, 1, RightHead>(),
+            g::seq(
+                g::seq(
+                    checked(),
+                    g::seq(g::send::<1, 0, Rejected>(), g::send::<0, 1, Rework>()),
+                )
+                .roll(),
+                g::send::<0, 1, Done>(),
+            ),
+        ),
+    )
+    .resolve::<7>();
+    let global = g::seq(
+        g::par(review, g::send::<2, 0, Visit>()).roll(),
+        g::send::<2, 0, Stop>(),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let mut s0 = SessionKitStorage::uninit();
+    let mut s1 = SessionKitStorage::uninit();
+    let mut s2 = SessionKitStorage::uninit();
+    let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let rv1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let rv2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    rv0.set_resolver(
+        &p0,
+        ResolverRef::<7>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+    )
+    .unwrap();
+    let sid = SessionId::new(9300);
+    let mut a = rv0.enter(sid, &p0).unwrap();
+    let mut b = rv1.enter(sid, &p1).unwrap();
+    let mut c = rv2.enter(sid, &p2).unwrap();
+    for _ in 0..2 {
+        a.send::<RightHead>(&()).await?;
+        b.recv::<RightHead>().await?;
+        for _ in 0..2 {
+            b.send::<Query>(&()).await?;
+            c.recv::<Query>().await?;
+            c.send::<Answer>(&()).await?;
+            b.recv::<Answer>().await?;
+            b.send::<Rejected>(&()).await?;
+            a.recv::<Rejected>().await?;
+            a.send::<Rework>(&()).await?;
+            b.recv::<Rework>().await?;
+        }
+        a.send::<Done>(&()).await?;
+        b.recv::<Done>().await?;
+        c.send::<Visit>(&()).await?;
+        a.recv::<Visit>().await?;
+    }
+    c.send::<Stop>(&()).await?;
+    a.recv::<Stop>().await?;
+    assert!(network.queue_is_empty());
     Ok(())
 }
 

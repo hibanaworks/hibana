@@ -42,7 +42,6 @@ where
         if routes.len() == 0 {
             return;
         }
-        let route_lane = crate::invariant_some(delta.selected_route_lane());
         let mut idx = 0usize;
         while idx < routes.len() {
             let route_row = crate::invariant_some(routes.get(&self.progress.cursor, idx));
@@ -59,7 +58,6 @@ where
                 self.emit_route_arm_selection(
                     scope_id,
                     RouteArmToken::from_resolver(Arm::from_raw(selected_arm)),
-                    route_lane,
                 );
             }
             if self.arm_has_recv(scope_id, selected_arm) {

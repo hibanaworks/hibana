@@ -39,7 +39,44 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         event.body_reentry = self
             .borrowed_reentry_scope(index)
             .unwrap_or_else(crate::global::const_dsl::ScopeId::none);
-        self.progress.cursor.event_enabled(index, event, arms)
+        let enabled = self.progress.cursor.event_enabled(index, event, arms)?;
+        self.admit_enabled_entry_views(index, event, enabled)
+    }
+
+    fn admit_enabled_entry_views(
+        &self,
+        index: usize,
+        event: EventCommitMeta,
+        enabled: crate::global::typestate::EnabledEventCommit,
+    ) -> Result<
+        crate::global::typestate::EnabledEventCommit,
+        crate::global::typestate::EventAdmissionError,
+    > {
+        // Image validation proves that a nondelegated program has no entry
+        // resources. With no borrow epochs either, this preflight cannot fail.
+        if !self.context.program.has_actor_bindings() && !self.progress.cursor.has_borrow_epochs() {
+            return Ok(enabled);
+        }
+        // An incoming/local preview may wait for an existing receipt. An
+        // outgoing preview must already have its entry resources: borrowing
+        // this branch cannot perform the earlier return needed by that send.
+        match self.preflight_roll_entry_views(Some(super::CommitEventRow::new(
+            event.eff_index,
+            event.label,
+            event.origin,
+            super::CommitRow::new(event.scope, event.route_arm, event.lane),
+            enabled.progress_step(),
+        ))) {
+            Ok(_) => {}
+            Err(
+                crate::global::typestate::EventAdmissionError::OtherViewPending
+                | crate::global::typestate::EventAdmissionError::PredecessorPending
+                | crate::global::typestate::EventAdmissionError::PayloadPredecessorPending,
+            ) if self.operation.public_active_op == PublicActiveOp::Offer
+                && !self.progress.cursor.is_send_at(index) => {}
+            Err(error) => return Err(error),
+        }
+        Ok(enabled)
     }
 
     pub(crate) fn event_eligibility(
@@ -54,6 +91,18 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         self.progress
             .cursor
             .event_eligibility(row, body_reentry, arms)
+    }
+
+    /// Search needs admission, not the expensive classification of why a
+    /// rejected candidate waits. Both paths share the same custody preflight.
+    pub(in crate::endpoint::kernel) fn enabled_candidate(
+        &self,
+        row: LocalEventRow,
+        arms: &mut dyn FnMut(crate::global::const_dsl::ScopeId, EventArmView) -> Option<u8>,
+    ) -> Option<crate::global::typestate::EnabledEventCommit> {
+        let enabled = self.event_eligibility(row, arms).ok()?;
+        self.admit_enabled_entry_views(row.index(), row.commit_meta(), enabled)
+            .ok()
     }
 
     pub(crate) fn has_other_active_operations(&self) -> bool {
@@ -109,13 +158,13 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             return false;
         }
         let conflict = row.conflict();
-        self.event_eligibility(row, &mut |scope, view| match view {
+        self.enabled_candidate(row, &mut |scope, view| match view {
             EventArmView::Committed => self.selected_arm_for_scope(scope),
             EventArmView::Preview => {
                 previews(scope).or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
             }
         })
-        .is_ok()
+        .is_some()
     }
 
     pub(in crate::endpoint::kernel) fn view_event_admission(
@@ -177,12 +226,18 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 index,
                 source.start,
                 &mut |scope| self.selected_arm_for_scope(scope),
-            ) && !reentry
-                .is_some_and(|scope| self.context.program.roll_precedes(scope, event))
-                && !self
-                    .progress
-                    .cursor
-                    .retained_roll_continuation_after(index, source.clone())
+            ) && !reentry.is_some_and(|scope| {
+                // A completed origin lets this group start a fresh visit.
+                // Old child visits can still expose its sequential tail;
+                // those operations wait for this group's new join. They are
+                // alternatives to restarting, not independent siblings that
+                // must be included in the borrowed frontier.
+                self.context.program.roll_precedes(scope, event)
+                    || self.context.program.source_precedes(source.end - 1, event)
+            }) && !self
+                .progress
+                .cursor
+                .retained_roll_continuation_after(index, source.clone())
             {
                 return false;
             }

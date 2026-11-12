@@ -136,9 +136,9 @@ theorem actualCompletedTickSurvivesAZeroWriteGap :
     (firstMutation := {first_count}) (finalMutation := {first_count})
     (by decide) (by decide)
 "#,
-                initial_source = super::commit::observation_source(&initial),
-                first_source = super::commit::observation_source(&first),
-                second_source = super::commit::observation_source(&second),
+                initial_source = crate::endpoint::proof_snapshot::observation_source(&initial),
+                first_source = crate::endpoint::proof_snapshot::observation_source(&first),
+                second_source = crate::endpoint::proof_snapshot::observation_source(&second),
                 initial_count = initial.completion_mutations,
                 first_count = first.completion_mutations,
                 second_count = second.completion_mutations,

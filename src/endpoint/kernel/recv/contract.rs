@@ -1,5 +1,5 @@
 use crate::{
-    endpoint::kernel::core::{CommitEventRow, CommitRow, OperationKernel},
+    endpoint::kernel::core::OperationKernel,
     endpoint::{RecvError, RecvResult},
     global::{
         role_program::{
@@ -23,17 +23,9 @@ where
             return Err(EventAdmissionError::Invariant);
         }
         let conflict = self.progress.cursor.event_conflict_for_index(index);
-        let enabled = self.event_enabled(index, meta, &mut |scope, view| {
+        self.event_enabled(index, meta, &mut |scope, view| {
             self.selected_arm_for_recv_event(conflict, scope, view)
-        })?;
-        self.preflight_roll_entry_views(Some(CommitEventRow::new(
-            meta.eff_index,
-            meta.label,
-            meta.origin,
-            CommitRow::new(meta.scope, meta.route_arm, meta.lane),
-            enabled.progress_step(),
-        )))?;
-        Ok(enabled)
+        })
     }
 
     pub(in crate::endpoint::kernel::recv) fn live_recv_lanes<'lanes>(
@@ -114,7 +106,32 @@ where
                 expected,
                 actual: target_payload,
             }),
-            None => Err(blocked.unwrap_or(RecvError::PhaseInvariant)),
+            None => {
+                if let Some(error) = blocked {
+                    return Err(error);
+                }
+                // A known contract can be complete or belong to an unavailable
+                // source alternative. Distinguish it from a wrong fragment or
+                // an undeclared contract. This cold path shares the same source
+                // admission above and never changes the accepted lane set.
+                let declared_here = self
+                    .progress
+                    .cursor
+                    .declared_receive_candidates(self.public_header.role(), target_label)
+                    .any(|index| {
+                        self.permits_event(index)
+                            && self
+                                .progress
+                                .cursor
+                                .event_row_at(index)
+                                .is_some_and(|row| row.atom().payload == target_payload)
+                    });
+                Err(if declared_here {
+                    RecvError::Unavailable
+                } else {
+                    RecvError::PhaseInvariant
+                })
+            }
         }
     }
 }

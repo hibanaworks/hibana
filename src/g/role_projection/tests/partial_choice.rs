@@ -445,9 +445,9 @@ async fn a_service_uses_the_delegated_peer_without_knowing_its_physical_holder()
                           a_receive_pair_keeps_its_coherence_under_local_witness_changes\n    \
                             (sendPath := {path}) (receivePath := {other_path})\n    \
                             (a_concrete_receive_pair_has_coherent_local_witnesses peerWitnessPair{holder}CompatibleChecked) peerWitnessSender{holder}Checked peerWitnessReceiver{holder}OtherPathChecked\n",
-                        super::commit::observation_source(&sent.before),
-                        super::commit::observation_source(&received.before),
-                        super::commit::observation_source(&received.after),
+                        crate::endpoint::proof_snapshot::observation_source(&sent.before),
+                        crate::endpoint::proof_snapshot::observation_source(&received.before),
+                        crate::endpoint::proof_snapshot::observation_source(&received.after),
                         sid.raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(), sent.frame().payload(),
                         sid.raw(), sid.raw(), sid.raw(), sid.raw(), sid.raw(), sid.raw(),
                     ).unwrap();

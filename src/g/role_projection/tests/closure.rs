@@ -234,7 +234,7 @@ fn write_observations(
     for (name, snapshot) in snapshots {
         source.push_str(&std::format!(
             "def {name} : Hibana.ActorProgressObservation := {}\n\n",
-            super::commit::observation_source(snapshot),
+            crate::endpoint::proof_snapshot::observation_source(snapshot),
         ));
         source.push_str(&std::format!(
             "def {name}Mutations : Nat := {}\n\n",

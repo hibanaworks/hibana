@@ -16,6 +16,7 @@ pub(crate) struct ScopeFacts<const E: usize> {
     entries: [[u16; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
     route_count: usize,
     event_scopes: [ScopeId; E],
+    event_rolls: [u16; E],
     event_conflicts: [PackedEventConflict; E],
     order_heads: [u16; E],
     order_parents: [u16; E],
@@ -30,6 +31,7 @@ impl<const E: usize> ScopeFacts<E> {
             entries: [[u16::MAX; SCOPE_ORDINAL_COUNT]; SCOPE_KIND_COUNT],
             route_count: 0,
             event_scopes: [ScopeId::none(); E],
+            event_rolls: [u16::MAX; E],
             event_conflicts: [PackedEventConflict::none(); E],
             order_heads: [u16::MAX; E],
             order_parents: [u16::MAX; E],
@@ -111,7 +113,7 @@ impl<const E: usize> ScopeFacts<E> {
         }
         // Sweep source boundaries once for all roles. Entries at the same
         // boundary can arrive in either nesting order.
-        let mut active = [(0u16, u16::MAX, u16::MAX); E];
+        let mut active = [(0u16, u16::MAX, u16::MAX, u16::MAX); E];
         let mut depth = 0usize;
         let mut marker_index = 0usize;
         let mut event = 0usize;
@@ -146,7 +148,7 @@ impl<const E: usize> ScopeFacts<E> {
                         active[insert] = active[insert - 1];
                         insert -= 1;
                     }
-                    active[insert] = (marker_index as u16, u16::MAX, u16::MAX);
+                    active[insert] = (marker_index as u16, u16::MAX, u16::MAX, u16::MAX);
                     if matches!(
                         marker.scope_id.kind(),
                         Some(ScopeKind::Parallel | ScopeKind::Route)
@@ -189,15 +191,26 @@ impl<const E: usize> ScopeFacts<E> {
                         } else {
                             parent
                         };
+                        active[insert].3 = if matches!(
+                            markers.at(entry as usize).scope_id.kind(),
+                            Some(ScopeKind::Roll)
+                        ) {
+                            entry
+                        } else if insert == 0 {
+                            u16::MAX
+                        } else {
+                            active[insert - 1].3
+                        };
                         insert += 1;
                     }
                 }
                 marker_index += 1;
             }
             if depth != 0 {
-                let (entry, route, order) = active[depth - 1];
+                let (entry, route, order, roll) = active[depth - 1];
                 facts.order_heads[event] = order;
                 facts.event_scopes[event] = markers.at(entry as usize).scope_id;
+                facts.event_rolls[event] = roll;
                 if route != u16::MAX {
                     let route = markers.at(route as usize);
                     let Some(arm) = route.event.route_arm() else {
@@ -243,6 +256,20 @@ impl<const E: usize> ScopeFacts<E> {
         event: usize,
     ) -> ScopeId {
         self.event_scopes[event]
+    }
+
+    pub(in crate::global::role_program::image_impl) const fn event_roll_span(
+        &self,
+        source: &EffList<E>,
+        event: usize,
+    ) -> Option<(usize, usize)> {
+        let marker = self.event_rolls[event];
+        if marker == u16::MAX {
+            None
+        } else {
+            let marker = source.scope_markers().at(marker as usize);
+            Some((marker.offset(), marker.segment_end()))
+        }
     }
 
     pub(in crate::global::role_program::image_impl) const fn event_conflict(

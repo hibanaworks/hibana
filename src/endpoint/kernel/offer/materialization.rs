@@ -29,6 +29,75 @@ impl<'r, T> OperationKernel<'_, 'r, T>
 where
     T: Transport + 'r,
 {
+    /// Retain one exact, already enabled input without making a route choice.
+    /// Transport acceptance can call user code, so admission is repeated after
+    /// it returns; no readiness grant crosses that callback.
+    pub(super) fn prepare_ordinary_receive(
+        &mut self,
+        index: crate::global::typestate::StateIndex,
+        ingress: &mut OfferStagedIngress<'r>,
+    ) -> Poll<RecvResult<Option<ResolvedOfferEvent<'r>>>> {
+        let meta = self
+            .progress
+            .cursor
+            .try_recv_meta_at(index.as_usize())
+            .ok_or(RecvError::PhaseInvariant)?;
+        if meta.logical_role != self.public_header.role() || meta.origin.is_session() {
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        }
+        let metadata = CachedRecvMeta {
+            eff_index: meta.eff_index,
+            cursor_index: index,
+            peer: meta.peer,
+            label: meta.label,
+            origin: meta.origin,
+            lane: meta.lane,
+            flags: CachedRecvMeta::FLAG_RECV_STEP | CachedRecvMeta::FLAG_NEXT_PRESENT,
+        };
+        let payload = ingress.take_transport().ok_or(RecvError::PhaseInvariant)?;
+        let frame = self
+            .resolve_materialized_transport(BranchKind::WireRecv, metadata, payload)?
+            .ok_or(RecvError::PhaseInvariant)?;
+        self.reconcile_retirements();
+        if let Some(kind) = self.session_fault() {
+            frame.discard_uncommitted();
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
+        let enabled = match self.recv_event_enabled(index.as_usize(), meta.into()) {
+            Ok(enabled) => enabled,
+            Err(error) => {
+                let lane = frame.lane_idx();
+                let requeue = frame.requeue_on(self.port_for_lane(lane));
+                self.reconcile_retirements();
+                if let Some(kind) = self.session_fault() {
+                    return Poll::Ready(Err(RecvError::SessionFault(kind)));
+                }
+                requeue.map_err(RecvError::Transport)?;
+                return match error {
+                    EventAdmissionError::Invariant => Poll::Ready(Ok(None)),
+                    EventAdmissionError::OtherViewPending
+                    | EventAdmissionError::PredecessorPending
+                    | EventAdmissionError::PayloadPredecessorPending => Poll::Pending,
+                };
+            }
+        };
+        Poll::Ready(Ok(Some(ResolvedOfferEvent {
+            branch: MaterializedRouteBranch {
+                offered_frame: Some(OfferedFrame::new(frame)),
+                branch_meta: BranchMeta {
+                    lane_wire: meta.lane,
+                    cursor_index: index,
+                    eff_index: meta.eff_index,
+                    label: meta.label,
+                    frame_label: meta.frame_label,
+                    kind: BranchKind::WireRecv,
+                    choice: None,
+                },
+            },
+            enabled: Some(enabled),
+        })))
+    }
+
     #[inline(never)]
     pub(super) fn prepare_offer_event(
         &mut self,
@@ -103,17 +172,19 @@ where
             }
         }
         let branch_meta = BranchMeta {
-            scope_id: selection.scope_id,
-            selected_arm,
             lane_wire: preview_meta.lane,
             cursor_index: preview_meta.cursor_index,
             eff_index: preview_meta.eff_index,
             label: preview_meta.label,
             frame_label: preview_meta.eff_index.dense_ordinal() as u16,
             kind: branch_kind,
-            profile,
-            route_token,
-            route_arm_selection_commit_evidence,
+            choice: Some(super::commit_types::BranchChoice {
+                scope_id: selection.scope_id,
+                selected_arm,
+                profile,
+                route_token,
+                route_arm_selection_commit_evidence,
+            }),
         };
         Poll::Ready(Ok(Some(ResolvedOfferEvent {
             branch: MaterializedRouteBranch {

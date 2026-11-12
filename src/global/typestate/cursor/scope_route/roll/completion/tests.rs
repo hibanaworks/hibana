@@ -258,6 +258,142 @@ fn child_credit_accounts_for_a_siblings_retained_visit_at_the_actual_entry() {
 }
 
 #[test]
+fn retained_choice_completion_keeps_every_current_prerequisite_and_does_not_select_an_arm() {
+    let global = g::seq(
+        g::par(
+            g::route(
+                g::seq(
+                    g::send::<0, 1, g::Msg<1, ()>>(),
+                    g::send::<0, 1, g::Msg<2, ()>>(),
+                )
+                .roll(),
+                g::seq(
+                    g::send::<0, 1, g::Msg<3, ()>>(),
+                    g::send::<0, 1, g::Msg<4, ()>>(),
+                )
+                .roll(),
+            ),
+            g::send::<0, 2, g::Msg<5, ()>>(),
+        )
+        .roll(),
+        g::send::<0, 2, g::Msg<6, ()>>(),
+    );
+    let program = project::<0>(&global);
+    with_rows(program.role_image_ref(), |cursor| {
+        assert_eq!(cursor.local_steps_len(), 6);
+        let route = program.role_image_ref().route_scope_by_slot(0).unwrap();
+        let stop = cursor.event_row_at(5).unwrap().commit_meta();
+        let inside = cursor.event_row_at(3).unwrap().commit_meta();
+        for retained in [false, true] {
+            for choice in [None, Some(0), Some(1)] {
+                for bits in 0..32_u32 {
+                    // One bit per source operation and then the parent roll's
+                    // completion; the two child completion bits remain clear.
+                    cursor.completed_event_words_mut()[0] = bits | (u32::from(retained) << 6);
+                    let words = cursor.completed_event_words().to_vec();
+                    let left = bits & 0b00011 == 0b00011;
+                    let right = bits & 0b01100 == 0b01100;
+                    let branch = match choice {
+                        Some(0) => left,
+                        Some(1) => right,
+                        None => (left && right) || (retained && (left || right)),
+                        _ => unreachable!(),
+                    };
+                    let selected = |scope| if scope == route { choice } else { None };
+                    assert_eq!(
+                        cursor
+                            .event_enabled(5, stop, &mut |scope, _| selected(scope))
+                            .is_ok(),
+                        branch && bits & 0b10000 != 0,
+                        "outside: retained={retained}, choice={choice:?}, bits={bits:05b}",
+                    );
+                    if bits & 0b01000 == 0 {
+                        assert_eq!(
+                            cursor
+                                .event_enabled(3, inside, &mut |scope, _| selected(scope))
+                                .is_ok(),
+                            choice != Some(0) && bits & 0b00100 != 0,
+                            "inside: retained={retained}, choice={choice:?}, bits={bits:05b}",
+                        );
+                    }
+                    assert_eq!(cursor.completed_event_words(), words);
+                    assert_eq!(selected(route), choice);
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn nested_retained_choice_completion_matches_the_independent_boolean_tree() {
+    let left = g::seq(
+        g::send::<0, 1, g::Msg<1, ()>>(),
+        g::route(
+            g::seq(
+                g::send::<0, 1, g::Msg<2, ()>>(),
+                g::send::<0, 1, g::Msg<3, ()>>(),
+            ),
+            g::send::<0, 1, g::Msg<4, ()>>(),
+        ),
+    );
+    let right = g::seq(
+        g::send::<0, 1, g::Msg<5, ()>>(),
+        g::send::<0, 1, g::Msg<6, ()>>(),
+    );
+    let global = g::seq(
+        g::par(g::route(left, right), g::send::<0, 2, g::Msg<7, ()>>()).roll(),
+        g::send::<0, 2, g::Msg<8, ()>>(),
+    );
+    let program = project::<0>(&global);
+    with_rows(program.role_image_ref(), |cursor| {
+        assert_eq!(cursor.local_steps_len(), 8);
+        let outer = program.role_image_ref().route_scope_by_slot(0).unwrap();
+        let inner = program.role_image_ref().route_scope_by_slot(1).unwrap();
+        let stop = cursor.event_row_at(7).unwrap().commit_meta();
+        for retained in [false, true] {
+            for first in [None, Some(0), Some(1)] {
+                for second in [None, Some(0), Some(1)] {
+                    for bits in 0..128_u32 {
+                        cursor.completed_event_words_mut()[0] = bits | (u32::from(retained) << 8);
+                        let choose = |choice, left, right| match choice {
+                            Some(0) => left,
+                            Some(1) => right,
+                            None if retained => left || right,
+                            None => left && right,
+                            _ => unreachable!(),
+                        };
+                        let nested =
+                            choose(second, bits & 0b0000110 == 0b0000110, bits & 0b0001000 != 0);
+                        let branch = choose(
+                            first,
+                            bits & 1 != 0 && nested,
+                            bits & 0b0110000 == 0b0110000,
+                        );
+                        let before = cursor.completed_event_words().to_vec();
+                        assert_eq!(
+                            cursor
+                                .event_enabled(7, stop, &mut |scope, _| {
+                                    if scope == outer {
+                                        first
+                                    } else if scope == inner {
+                                        second
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .is_ok(),
+                            branch && bits & 0b1000000 != 0,
+                            "retained={retained}, outer={first:?}, inner={second:?}, bits={bits:07b}",
+                        );
+                        assert_eq!(cursor.completed_event_words(), before);
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[test]
 fn retained_predecessor_ranges_match_independent_source_intervals() {
     let global = g::seq(
         g::par(

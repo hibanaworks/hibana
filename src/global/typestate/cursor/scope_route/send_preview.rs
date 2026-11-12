@@ -290,13 +290,13 @@ impl EventCursor {
             && self.route_scope_reentry(scope_id)
             && let Some(arm) = (ctx.committed_arm_for_scope)(scope_id)
             && let Some(lane) = self.send_preview_lane_at(*idx)
-            && self.node_event_done_for_lane(*idx, lane)
             && let Some(body) =
                 self.complete_roll_body_scope_for_index(*idx, ctx.committed_arm_for_scope)
             && !self.route_scope_contained_in_roll_scope(scope_id, body)
         {
-            // Entering a child visit retains the enclosing choice. The outer
-            // resolver runs only when the candidate enters its own roll again.
+            // A child's fresh choice can target an unused arm, so the entry
+            // need not itself be done. The completed reset body determines
+            // which enclosing choice survives the new child visit.
             *ctx.preview_route_arm = Some(SendPreviewRouteArm {
                 lane,
                 scope: scope_id,
@@ -430,40 +430,40 @@ impl EventCursor {
         idx: &mut usize,
         ctx: &mut SendPreviewDecisionContext<'_>,
     ) -> Result<(), SendPreviewError> {
-        let scope_id = match self.send_preview_controller_scope_at_for_decision(*idx) {
-            Some(scope_id) => Some(scope_id),
-            None => self
-                .enclosing_route_scope_rows_at(*idx)
-                .map(|region| region.scope()),
-        };
-        let Some(scope_id) = scope_id else {
-            return Ok(());
-        };
+        // Follow the sealed ancestry from outside in. An outer selection may
+        // relocate the candidate to another subtree; its processed ancestor
+        // prefix stays the same, and the next row comes from the new chain.
+        // This also avoids evaluating a resolver in an inactive child arm.
+        for depth in 0..self.route_chain_bound() {
+            let Some(scope_id) = self.send_preview_scope_at_depth_for_decision(*idx, depth) else {
+                return Ok(());
+            };
+            let at_route_start = self
+                .route_scope_rows(scope_id)
+                .is_some_and(|region| *idx == region.start());
+            let unlabeled =
+                !self.is_send_at(*idx) && !self.is_recv_at(*idx) && !self.is_local_action_at(*idx);
+            let at_decision = at_route_start || unlabeled;
 
-        let at_route_start = self
-            .route_scope_rows(scope_id)
-            .is_some_and(|region| *idx == region.start());
-        let unlabeled =
-            !self.is_send_at(*idx) && !self.is_recv_at(*idx) && !self.is_local_action_at(*idx);
-        let at_decision = at_route_start || unlabeled;
-
-        if self.contains_route_controller(scope_id)
-            && self.machine().route_controller_role(scope_id) == ctx.role
-        {
-            return self.send_preview_apply_controller_route_decision_for_contract(
-                idx,
-                scope_id,
-                at_decision,
-                ctx,
-            );
+            if self.contains_route_controller(scope_id)
+                && self.machine().route_controller_role(scope_id) == ctx.role
+            {
+                self.send_preview_apply_controller_route_decision_for_contract(
+                    idx,
+                    scope_id,
+                    at_decision,
+                    ctx,
+                )?;
+            } else {
+                self.send_preview_apply_observer_route_decision_for_contract(
+                    idx,
+                    scope_id,
+                    at_decision,
+                    ctx,
+                );
+            }
         }
-        self.send_preview_apply_observer_route_decision_for_contract(
-            idx,
-            scope_id,
-            at_decision,
-            ctx,
-        );
-        Ok(())
+        Err(SendPreviewError::Invariant)
     }
 
     #[inline(never)]

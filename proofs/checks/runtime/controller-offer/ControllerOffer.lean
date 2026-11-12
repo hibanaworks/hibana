@@ -65,6 +65,18 @@ theorem an_eligible_scope_does_not_admit_its_blocked_descendant :
 #print axioms a_resolver_candidate_is_the_admitted_entry
 #print axioms an_eligible_scope_does_not_admit_its_blocked_descendant
 
+/-- Cursor eligibility alone does not admit a resolver entry. Custody of
+the enclosing roll's entry resources is part of the same predicate. -/
+theorem a_resolver_entry_requires_current_custody
+    (entries : List ResolverEntry) (cursor custody : ResolverEntry → Bool)
+    (row : ResolverEntry)
+    (selected : firstAdmitted entries (fun entry => cursor entry && custody entry) = some row) :
+    cursor row = true ∧ custody row = true := by
+  have admitted := (a_resolver_candidate_is_the_admitted_entry entries _ row selected).2
+  simpa using admitted
+
+#print axioms a_resolver_entry_requires_current_custody
+
 /-- A committed outgoing choice can proceed without a frame. Among candidates
 with the same local readiness, preserve transport/controller ordering. -/
 def offerPriority (base : Nat) (locallyReady unmade : Bool) : Nat :=

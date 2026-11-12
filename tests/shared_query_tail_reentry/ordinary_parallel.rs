@@ -4,6 +4,7 @@ use core::{
     pin::pin,
     task::Poll,
 };
+use hibana::g::Message;
 use std::{
     sync::{
         Arc,
@@ -77,10 +78,16 @@ async fn normal_parallel_input_is_not_route_evidence_on_roll_reentry()
                     .await;
                 }
                 a.send::<Data>(&round).await.unwrap();
+                let preview = offer.as_mut().await.unwrap();
+                assert_eq!(preview.label(), Data::LOGICAL_LABEL);
+                drop(preview);
+            }
+            {
+                let mut permit = pin!(b.recv::<Permit>());
                 let wakes = Arc::new(WakeCount::default());
                 let waker = Waker::from(wakes.clone());
                 let mut observed_cx = Context::from_waker(&waker);
-                assert!(offer.as_mut().poll(&mut observed_cx).is_pending());
+                assert!(permit.as_mut().poll(&mut observed_cx).is_pending());
                 assert_eq!(
                     wakes.0.load(Ordering::Relaxed),
                     0,
@@ -88,11 +95,11 @@ async fn normal_parallel_input_is_not_route_evidence_on_roll_reentry()
                 );
                 for _ in 0..4 {
                     poll_fn(|cx| {
-                        match offer.as_mut().poll(cx) {
+                        match permit.as_mut().poll(cx) {
                             Poll::Pending => {}
                             Poll::Ready(Err(error)) => panic!("round {round}: {error:?}"),
-                            Poll::Ready(Ok(branch)) => {
-                                panic!("round {round}: label {}", branch.label())
+                            Poll::Ready(Ok(())) => {
+                                panic!("round {round}: ordinary input authorized Permit")
                             }
                         }
                         Poll::Ready(())
@@ -100,13 +107,16 @@ async fn normal_parallel_input_is_not_route_evidence_on_roll_reentry()
                     .await;
                 }
                 assert!(
-                    crate::in_process::timeout(std::time::Duration::from_millis(1), offer.as_mut())
-                        .await
-                        .is_err(),
-                    "ordinary input is not a route preview"
+                    crate::in_process::timeout(
+                        std::time::Duration::from_millis(1),
+                        permit.as_mut()
+                    )
+                    .await
+                    .is_err(),
+                    "ordinary input does not authorize an unrelated route receive"
                 );
                 async {
-                    async { offer.as_mut().await?.recv::<Permit>().await };
+                    async { permit.as_mut().await };
 
                     async {
                         crate::in_process::sleep(std::time::Duration::from_millis(1)).await;
@@ -204,26 +214,32 @@ async fn completed_other_lane_preserves_fresh_ordinary_input()
             c.recv::<Last>().await.unwrap();
             {
                 let mut offer = pin!(b.offer());
+                let preview = offer.as_mut().await.unwrap();
+                assert_eq!(preview.label(), Data::LOGICAL_LABEL);
+                drop(preview);
+            }
+            {
+                let mut other = pin!(b.recv::<OtherIndependent>());
                 poll_fn(|cx| {
-                    match offer.as_mut().poll(cx) {
+                    match other.as_mut().poll(cx) {
                         Poll::Pending => {}
                         Poll::Ready(Err(error)) => {
                             panic!("round {round}: ordinary input returned {error:?}")
                         }
-                        Poll::Ready(Ok(branch)) => {
-                            panic!("round {round}: ordinary input previewed {}", branch.label())
+                        Poll::Ready(Ok(())) => {
+                            panic!("round {round}: ordinary input authorized OtherIndependent")
                         }
                     }
                     Poll::Ready(())
                 })
                 .await;
                 assert!(
-                    crate::in_process::timeout(std::time::Duration::from_millis(1), offer.as_mut())
+                    crate::in_process::timeout(std::time::Duration::from_millis(1), other.as_mut())
                         .await
                         .is_err()
                 );
                 async {
-                    async { offer.as_mut().await?.recv::<OtherIndependent>().await };
+                    async { other.as_mut().await };
 
                     async {
                         crate::in_process::sleep(std::time::Duration::from_millis(1)).await;

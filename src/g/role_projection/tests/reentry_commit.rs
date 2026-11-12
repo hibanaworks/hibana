@@ -83,8 +83,8 @@ pub(super) fn write_observations(
              ({{ {name} with scope := {wrong_scope} }} : \
              Hibana.ActorReentryCommitObservation).check reentryActor{actor} reentryCommitChoreo = false := by\n  decide\n\n",
             entry.view,
-            super::commit::observation_source(before),
-            super::commit::observation_source(after),
+            crate::endpoint::proof_snapshot::observation_source(before),
+            crate::endpoint::proof_snapshot::observation_source(after),
         ));
         count += 1;
     }

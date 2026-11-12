@@ -1,7 +1,4 @@
-use super::{
-    Arm, CursorInvariantError, OperationKernel, ReentryScopeLiveness, ScopeId, StateIndex,
-    Transport, emit, events,
-};
+use super::{Arm, OperationKernel, ScopeId, Transport, emit, events};
 use crate::global::role_program::ROLE_IMAGE_ROUTE_SCOPE_CAPACITY;
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -56,10 +53,6 @@ where
                 _ => crate::invariant(),
             }
         }
-    }
-
-    pub(crate) fn is_reentry_route(&self, scope: ScopeId) -> bool {
-        self.progress.cursor.route_scope_reentry(scope)
     }
 
     pub(crate) fn selected_arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
@@ -147,12 +140,13 @@ where
         scope: ScopeId,
     ) -> Option<u8> {
         let from_branch = |branch: &super::BranchMeta| {
-            if branch.scope_id == scope {
-                Some(branch.selected_arm)
+            let choice = branch.choice?;
+            if choice.scope_id == scope {
+                Some(choice.selected_arm)
             } else {
                 self.progress
                     .cursor
-                    .route_scope_conflict_arm_for_scope(branch.scope_id, scope)
+                    .route_scope_conflict_arm_for_scope(choice.scope_id, scope)
             }
         };
         let mut selected = self
@@ -241,34 +235,5 @@ where
             .with_arg0(self.context.sid.raw())
             .with_arg1(packed);
         emit(port.tap(), event);
-    }
-    pub(in crate::endpoint::kernel) fn active_reentry_offer_for_lane(
-        &self,
-        lane_idx: usize,
-    ) -> Option<(ScopeId, StateIndex)> {
-        if lane_idx >= self.progress.cursor.logical_lane_count() {
-            return None;
-        }
-        let scope =
-            match self
-                .progress
-                .decision_state
-                .active_reentry_scope_for_lane(lane_idx, |scope| {
-                    if !self.is_reentry_route(scope) {
-                        return Ok(ReentryScopeLiveness::NotReentry);
-                    }
-                    let Some(arm) = self.selected_arm_for_scope(scope) else {
-                        return Ok(ReentryScopeLiveness::Incomplete);
-                    };
-                    Ok(if self.reentrant_selected_arm_complete(scope, arm) {
-                        ReentryScopeLiveness::Complete
-                    } else {
-                        ReentryScopeLiveness::Incomplete
-                    })
-                }) {
-                Ok(scope) => scope?,
-                Err(CursorInvariantError::INVARIANT) => crate::invariant(),
-            };
-        self.progress.cursor.active_reentry_offer_entry(scope)
     }
 }

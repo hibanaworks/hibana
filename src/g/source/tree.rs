@@ -33,16 +33,25 @@ pub struct Message {
 #[derive(Clone, Copy, Debug)]
 pub struct Summary {
     events: usize,
+    sequential: bool,
+    used_roles: [u64; (u8::MAX as usize + 1).div_ceil(u64::BITS as usize)],
     transferred_roles: [u64; (u8::MAX as usize + 1).div_ceil(u64::BITS as usize)],
 }
 
 impl Summary {
-    const fn pair(left: &Source<'_>, right: &Source<'_>) -> Self {
+    const fn pair(left: &Source<'_>, right: &Source<'_>, sequential: bool) -> Self {
         Self {
             events: match left.event_count().checked_add(right.event_count()) {
                 Some(events) => events,
                 None => panic!("source event count overflow"),
             },
+            sequential,
+            used_roles: [
+                left.used_role_word(0) | right.used_role_word(0),
+                left.used_role_word(1) | right.used_role_word(1),
+                left.used_role_word(2) | right.used_role_word(2),
+                left.used_role_word(3) | right.used_role_word(3),
+            ],
             transferred_roles: [
                 left.transfer_role_word(0) | right.transfer_role_word(0),
                 left.transfer_role_word(1) | right.transfer_role_word(1),
@@ -69,11 +78,15 @@ pub enum Source<'a> {
 
 impl<'a> Source<'a> {
     pub const fn seq(left: &'a Self, right: &'a Self) -> Self {
-        Self::Seq(left, right, Summary::pair(left, right))
+        Self::Seq(
+            left,
+            right,
+            Summary::pair(left, right, left.is_sequential() && right.is_sequential()),
+        )
     }
 
     pub const fn par(left: &'a Self, right: &'a Self) -> Self {
-        Self::Par(left, right, Summary::pair(left, right))
+        Self::Par(left, right, Summary::pair(left, right, false))
     }
 
     pub const fn route(left: &'a Self, right: &'a Self, resolver: Option<u16>) -> Self {
@@ -81,7 +94,7 @@ impl<'a> Source<'a> {
             left,
             right,
             resolver,
-            summary: Summary::pair(left, right),
+            summary: Summary::pair(left, right, false),
         }
     }
 
@@ -90,6 +103,13 @@ impl<'a> Source<'a> {
             body,
             Summary {
                 events: body.event_count(),
+                sequential: body.is_sequential(),
+                used_roles: [
+                    body.used_role_word(0),
+                    body.used_role_word(1),
+                    body.used_role_word(2),
+                    body.used_role_word(3),
+                ],
                 transferred_roles: [
                     body.transfer_role_word(0),
                     body.transfer_role_word(1),
@@ -120,7 +140,6 @@ impl<'a> Source<'a> {
 
     /// Strict order comes from seq, never from enumeration, par, or two
     /// different route arms. Roll contributes its single-visit body order.
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     pub const fn before(&self, first: usize, second: usize) -> bool {
         if first >= second {
             return false;
@@ -208,7 +227,27 @@ impl<'a> Source<'a> {
         }
     }
 
+    /// Within one source visit, every earlier event precedes every later one.
+    /// A parallel split or choice always ends such a contiguous sequence.
+    pub const fn is_sequential(&self) -> bool {
+        match self {
+            Self::Send(_) => true,
+            Self::Seq(_, _, summary)
+            | Self::Par(_, _, summary)
+            | Self::Route { summary, .. }
+            | Self::Roll(_, summary) => summary.sequential,
+        }
+    }
+
     pub const fn uses(&self, key: EndpointKey) -> bool {
+        // Role absence is sufficient to exclude the full key. Presence still
+        // needs the component-aware leaf comparison; this is no permission.
+        if self.used_role_word(key.role as usize / u64::BITS as usize)
+            & (1 << (key.role as usize % u64::BITS as usize))
+            == 0
+        {
+            return false;
+        }
         match self {
             Self::Send(message) => {
                 message.from.same(key)
@@ -219,6 +258,30 @@ impl<'a> Source<'a> {
             | Self::Par(left, right, _)
             | Self::Route { left, right, .. } => left.uses(key) || right.uses(key),
             Self::Roll(body, _) => body.uses(key),
+        }
+    }
+
+    const fn used_role_word(&self, word: usize) -> u64 {
+        match self {
+            Self::Send(message) => {
+                let mut used = 0;
+                if message.from.role as usize / u64::BITS as usize == word {
+                    used |= 1 << (message.from.role as usize % u64::BITS as usize);
+                }
+                if message.to.role as usize / u64::BITS as usize == word {
+                    used |= 1 << (message.to.role as usize % u64::BITS as usize);
+                }
+                if let Payload::Endpoint(key) = message.payload
+                    && key.role as usize / u64::BITS as usize == word
+                {
+                    used |= 1 << (key.role as usize % u64::BITS as usize);
+                }
+                used
+            }
+            Self::Seq(_, _, summary)
+            | Self::Par(_, _, summary)
+            | Self::Route { summary, .. }
+            | Self::Roll(_, summary) => summary.used_roles[word],
         }
     }
 

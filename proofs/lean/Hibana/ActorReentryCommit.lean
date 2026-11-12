@@ -96,46 +96,264 @@ theorem observed_entry_header_requires_issued_resource
 
 def resetObservedActor
     (snapshot : ActorProgressObservation) (roll : DecodedRollRow)
-    (choices : List (Nat × Option RouteArm)) : ActorProgressObservation :=
+    (choices : List (Nat × Option RouteArm))
+    (preserved : List DecodedRollRow := []) : ActorProgressObservation :=
   { snapshot with
     choices
     steps := snapshot.steps.zipIdx.map fun (step, event) =>
-      { step with done := if roll.eventStart ≤ event &&
-          event < roll.eventStart + roll.eventLength then false else step.done } }
+      { step with done := if preserved.any (fun child => child.eventStart ≤ event &&
+          event < child.eventStart + child.eventLength) then step.done
+        else if roll.eventStart ≤ event && event < roll.eventStart + roll.eventLength
+          then false else step.done } }
+
+/-- A child which keeps running retains both its internal choices and the
+enclosing branch which admitted that child. This preserves existing knowledge;
+it cannot supply a choice absent from the observed cut. -/
+def sourceChildRetainsRoute (source : CanonicalProgramSource)
+    (child : DecodedRollRow) (route : Nat) : Bool :=
+  sourceRollResetsRoute? source child.scope route == some true ||
+    (source.markers.find? (fun marker =>
+      marker.scope == 8192 + child.scope && marker.tag % 4 == 0)).any (fun marker =>
+        (canonicalEventRoutePath? source marker.offset).any (fun entries =>
+          entries.any (fun entry => entry.1 == route)))
 
 def resetObservedChoices?
     (source : CanonicalProgramSource) (scope : Nat)
-    (choices : List (Nat × Option RouteArm)) : Option (List (Nat × Option RouteArm)) :=
+    (choices : List (Nat × Option RouteArm)) (preserved : List DecodedRollRow := [])
+    (continuing : List Nat := []) :
+    Option (List (Nat × Option RouteArm)) :=
   choices.mapM fun (route, arm) => do
     let reset ← sourceRollResetsRoute? source scope route
-    pure (route, if reset then none else arm)
+    pure (route, if preserved.any (fun child =>
+      sourceRollResetsRoute? source child.scope route == some true ||
+        (continuing.contains child.scope && sourceChildRetainsRoute source child route)) then arm
+        else if reset then none else arm)
+
+theorem retaining_a_child_does_not_invent_an_unknown_choice
+    (source : CanonicalProgramSource) (scope route : Nat)
+    (preserved : List DecodedRollRow) (continuing : List Nat)
+    (after : List (Nat × Option RouteArm))
+    (reset : resetObservedChoices? source scope [(route, none)] preserved continuing = some after) :
+    after = [(route, none)] := by
+  cases routeAt : sourceRollResetsRoute? source scope route with
+  | none => simp [resetObservedChoices?, routeAt] at reset
+  | some value =>
+      simpa [resetObservedChoices?, routeAt] using reset.symm
+
+/-- Completed children from an earlier visit cannot establish an unknown
+choice inside this body. A surrounding choice lies outside the body's reset
+and may instead be learned by its next incoming operation. -/
+def sourceActorBodyChoicesKnown (source : CanonicalProgramSource)
+    (before : ActorProgressObservation) (roll : DecodedRollRow)
+    (row : DecodedActorRow) (preserved : List DecodedRollRow := []) : Bool :=
+  match canonicalEventRoutePath? source row.actionId.event with
+  | none => false
+  | some entries => entries.all fun (scope, arm) =>
+      match sourceRollResetsRoute? source roll.scope scope with
+      | none => false
+      | some false => true
+      | some true => if preserved.any (fun child =>
+          sourceRollResetsRoute? source child.scope scope == some true) then true
+        else (before.doneState.selected scope).map encodeRouteArm == some arm
+
+/-- Completion of the current source body includes its own branch evidence.
+Retaining a completed inner body does not supply its parent's new choice. -/
+def sourceActorBodyComplete (source : CanonicalProgramSource)
+    (data : DecodedActorOrder) (path : NormalizedPath)
+    (before : ActorProgressObservation) (roll : DecodedRollRow)
+    (preserved : List DecodedRollRow := []) : Bool :=
+  (data.activeRows path).all (fun row =>
+    if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
+    then preserved.any (fun child => child.eventStart ≤ row.eventId &&
+      row.eventId < child.eventStart + child.eventLength) || before.doneState.done row.eventId else true) &&
+  (data.activeRows path).all (fun row =>
+    if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
+    then sourceActorBodyChoicesKnown source before roll row preserved else true)
+
+/-- A completed child may keep its current work while an independent parallel
+entry begins its parent. An entry inside that child, or sequentially ordered
+with any of its participating rows, cannot spend that historical completion.
+The relation is derived from the source order, not the runtime's ready bit. -/
+def sourceIndependentRetainedChildren (data : DecodedActorOrder) (path : NormalizedPath)
+    (rolls : List DecodedRollRow) (retained : List Nat)
+    (parent : DecodedRollRow) (entry : Nat) : List DecodedRollRow :=
+  if retained.isEmpty then [] else rolls.filter fun child =>
+    retained.contains child.scope && child.scope != parent.scope &&
+    parent.eventStart ≤ child.eventStart &&
+    child.eventStart + child.eventLength ≤ parent.eventStart + parent.eventLength &&
+    (parent.eventStart != child.eventStart || parent.eventLength != child.eventLength ||
+      parent.scope < child.scope) &&
+    !(child.eventStart ≤ entry && entry < child.eventStart + child.eventLength) &&
+    (data.activeRows path).any (fun row => child.eventStart ≤ row.eventId &&
+      row.eventId < child.eventStart + child.eventLength) &&
+    (data.activeRows path).all (fun row =>
+      if child.eventStart ≤ row.eventId && row.eventId < child.eventStart + child.eventLength
+      then !(data.sourcePredecessors path entry).contains row.eventId &&
+        !(data.sourcePredecessors path row.eventId).contains entry else true) &&
+    (data.activeRows path).any (·.eventId == entry)
+
+theorem a_retained_source_child_excludes_the_entering_operation
+    {data : DecodedActorOrder} {path : NormalizedPath} {rolls : List DecodedRollRow}
+    {retained : List Nat} {parent child : DecodedRollRow} {entry : Nat}
+    (member : child ∈ sourceIndependentRetainedChildren data path rolls retained parent entry) :
+    (!(child.eventStart ≤ entry && entry < child.eventStart + child.eventLength)) = true := by
+  unfold sourceIndependentRetainedChildren at member
+  split at member
+  next empty => simp at member
+  next nonempty =>
+    have allowed := (List.mem_filter.mp member).2
+    simp only [Bool.and_eq_true, and_assoc] at allowed
+    exact allowed.2.2.2.2.2.1
+
+theorem retained_source_child_rows_are_parallel_to_the_entering_operation
+    {data : DecodedActorOrder} {path : NormalizedPath} {rolls : List DecodedRollRow}
+    {retained : List Nat} {parent child : DecodedRollRow} {entry : Nat}
+    (member : child ∈ sourceIndependentRetainedChildren data path rolls retained parent entry)
+    {row : DecodedActorRow} (active : row ∈ data.activeRows path)
+    (inside : (child.eventStart ≤ row.eventId &&
+      row.eventId < child.eventStart + child.eventLength) = true) :
+    (!(data.sourcePredecessors path entry).contains row.eventId &&
+      !(data.sourcePredecessors path row.eventId).contains entry) = true := by
+  unfold sourceIndependentRetainedChildren at member
+  split at member
+  next empty => simp at member
+  next nonempty =>
+    have allowed := (List.mem_filter.mp member).2
+    simp only [Bool.and_eq_true, and_assoc] at allowed
+    have ready := List.all_eq_true.mp allowed.2.2.2.2.2.2.2.1 row active
+    simp only [Bool.and_eq_true] at inside
+    simpa only [if_pos inside] using ready
+
+theorem a_completed_source_body_has_its_current_rows
+    {source : CanonicalProgramSource} {data : DecodedActorOrder} {path : NormalizedPath}
+    {before : ActorProgressObservation} {roll : DecodedRollRow}
+    (complete : sourceActorBodyComplete source data path before roll = true) :
+    (data.activeRows path).all (fun row =>
+      if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
+      then before.doneState.done row.eventId else true) = true :=
+  (Bool.and_eq_true_iff.mp complete).1
+
+theorem a_body_row_requires_its_internal_branch_evidence
+    {source : CanonicalProgramSource} {before : ActorProgressObservation}
+    {roll : DecodedRollRow} {row : DecodedActorRow} {entries : List (Nat × Nat)}
+    {scope arm : Nat} (known : sourceActorBodyChoicesKnown source before roll row = true)
+    (memberships : canonicalEventRoutePath? source row.actionId.event = some entries)
+    (member : (scope, arm) ∈ entries)
+    (internal : sourceRollResetsRoute? source roll.scope scope = some true) :
+    (before.doneState.selected scope).map encodeRouteArm = some arm := by
+  simp only [sourceActorBodyChoicesKnown, memberships] at known
+  have one := List.all_eq_true.mp known (scope, arm) member
+  simpa [internal] using one
+
+theorem a_preserved_child_cannot_supply_its_parent_route_choice
+    {source : CanonicalProgramSource} {before : ActorProgressObservation}
+    {roll : DecodedRollRow} {row : DecodedActorRow} {entries : List (Nat × Nat)}
+    {preserved : List DecodedRollRow} {scope arm : Nat}
+    (known : sourceActorBodyChoicesKnown source before roll row preserved = true)
+    (memberships : canonicalEventRoutePath? source row.actionId.event = some entries)
+    (member : (scope, arm) ∈ entries)
+    (internal : sourceRollResetsRoute? source roll.scope scope = some true)
+    (outside : preserved.any (fun child =>
+      sourceRollResetsRoute? source child.scope scope == some true) = false) :
+    (before.doneState.selected scope).map encodeRouteArm = some arm := by
+  simp only [sourceActorBodyChoicesKnown, memberships] at known
+  have one := List.all_eq_true.mp known (scope, arm) member
+  simpa [internal, outside] using one
 
 /-- Derive a prospective body's source base before any successful operation
 or publication. No post-operation snapshot, frame, or guessed ready bit is an
 input. Resource headers and public-call borrows are separate checks. -/
+def observedActorBodyQueries?
+    (image : RustDescriptorImage) (choreo : Choreo) (before : ActorProgressObservation)
+    (credits : List Nat := []) :
+    Option (Nat → Nat → Nat → Nat → Option (DecodedRollRow × ActorProgressObservation)) := do
+  let data ← image.decodeActorOrder? choreo
+  let rolls ← image.decodeRollRows?
+  let source := canonicalProgramSource choreo
+  if image.actorOrderCheck choreo && image.actorRollCheck choreo &&
+      image.actorRouteCheck choreo && before.metadataMatches image data.rows && before.valid then
+    pure fun previousPath nextPath scope event => do
+      let previous ← data.normalized.paths[previousPath]?
+      let next ← data.normalized.paths[nextPath]?
+      let roll ← resolveUnique? (rolls.filter fun row => row.scope == scope)
+      let preserved := sourceIndependentRetainedChildren data previous rolls credits roll event
+      let continuing := preserved.filterMap fun child =>
+        if (data.activeRows previous).any (fun row => child.eventStart ≤ row.eventId &&
+            row.eventId < child.eventStart + child.eventLength && !before.doneState.done row.eventId)
+        then some child.scope else none
+      let choices ← resetObservedChoices? source scope before.choices preserved continuing
+      let base := resetObservedActor before roll choices preserved
+      if roll.eventStart ≤ event && event < roll.eventStart + roll.eventLength &&
+          observedChoicesAgree source previous before &&
+          observedChoicesAgree source next base &&
+          sourceActorBodyComplete source data previous before roll preserved &&
+          observedSourcePrefixCheck data next before event then
+        some (roll, base)
+      else none
+  else none
+
 def prepareObservedActorBody?
     (image : RustDescriptorImage) (choreo : Choreo) (before : ActorProgressObservation)
     (previousPath nextPath scope event : Nat) : Option (DecodedRollRow × ActorProgressObservation) := do
-    let data ← image.decodeActorOrder? choreo
-    let previous ← data.normalized.paths[previousPath]?
-    let next ← data.normalized.paths[nextPath]?
-    let rolls ← image.decodeRollRows?
-    let roll ← resolveUnique? (rolls.filter fun row => row.scope == scope)
-    let source := canonicalProgramSource choreo
-    let choices ← resetObservedChoices? source scope before.choices
-    let base := resetObservedActor before roll choices
-    if image.actorOrderCheck choreo && image.actorRollCheck choreo &&
-        image.actorRouteCheck choreo && before.metadataMatches image data.rows &&
-        before.valid &&
-        roll.eventStart ≤ event && event < roll.eventStart + roll.eventLength &&
-        observedChoicesAgree source previous before &&
-        observedChoicesAgree source next base &&
-        (data.activeRows previous).all (fun row =>
-          if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
-          then before.doneState.done row.eventId else true) &&
-        observedSourcePrefixCheck data next before event then
-      some (roll, base)
-    else none
+  let query ← observedActorBodyQueries? image choreo before
+  query previousPath nextPath scope event
+
+theorem prepared_actor_body_queries_match_single_preparation
+    (prepared : observedActorBodyQueries? image choreo before = some query) :
+    query previous next scope event =
+      prepareObservedActorBody? image choreo before previous next scope event := by
+  simp [prepareObservedActorBody?, prepared]
+
+theorem prepared_actor_body_source_facts
+    {image : RustDescriptorImage} {choreo : Choreo} {before base : ActorProgressObservation}
+    {previousPath nextPath scope event : Nat} {roll : DecodedRollRow}
+    (prepared : prepareObservedActorBody? image choreo before
+      previousPath nextPath scope event = some (roll, base)) :
+    ∃ data previous next rows choices,
+      image.decodeActorOrder? choreo = some data ∧
+      data.normalized.paths[previousPath]? = some previous ∧
+      data.normalized.paths[nextPath]? = some next ∧
+      image.decodeRollRows? = some rows ∧ roll ∈ rows ∧ roll.scope = scope ∧
+      resetObservedChoices? (canonicalProgramSource choreo) scope before.choices = some choices ∧
+      base = resetObservedActor before roll choices ∧
+      image.actorOrderCheck choreo = true ∧ image.actorRollCheck choreo = true ∧
+      image.actorRouteCheck choreo = true ∧ before.metadataMatches image data.rows = true ∧
+      before.valid = true ∧ roll.eventStart ≤ event ∧ event < roll.eventStart + roll.eventLength ∧
+      observedChoicesAgree (canonicalProgramSource choreo) previous before = true ∧
+      observedChoicesAgree (canonicalProgramSource choreo) next base = true ∧
+      sourceActorBodyComplete (canonicalProgramSource choreo) data previous before roll = true ∧
+      observedSourcePrefixCheck data next before event = true := by
+  unfold prepareObservedActorBody? at prepared
+  obtain ⟨query, queryAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  unfold observedActorBodyQueries? at queryAt
+  obtain ⟨data, dataAt, queryAt⟩ := Option.bind_eq_some_iff.mp queryAt
+  obtain ⟨rows, rowsAt, queryAt⟩ := Option.bind_eq_some_iff.mp queryAt
+  dsimp only at queryAt
+  split at queryAt
+  next qualified =>
+    cases Option.some.inj queryAt
+    dsimp only at prepared
+    obtain ⟨previous, previousAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+    obtain ⟨next, nextAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+    obtain ⟨chosen, chosenAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+    obtain ⟨choices, choicesAt, allowed⟩ := Option.bind_eq_some_iff.mp prepared
+    split at allowed
+    next checked =>
+      have same := Option.some.inj allowed
+      cases same
+      have filtered : roll ∈ rows.filter (fun row => row.scope == scope) := by
+        rw [resolveUnique?_eq_some_iff.mp chosenAt]
+        exact List.mem_singleton_self _
+      have member := List.mem_filter.mp filtered
+      simp only [Bool.and_eq_true, and_assoc] at qualified checked
+      obtain ⟨order, ranges, routes, metadata, valid⟩ := qualified
+      obtain ⟨start, stop, previousAgrees, nextAgrees, complete, entryReady⟩ := checked
+      exact ⟨data, previous, next, rows, choices, dataAt, previousAt, nextAt,
+        rowsAt, member.1, beq_iff_eq.mp member.2, choicesAt, rfl, order, ranges,
+        routes, metadata, valid, of_decide_eq_true start, of_decide_eq_true stop,
+        previousAgrees, nextAgrees, complete, entryReady⟩
+    next rejected => simp at allowed
+  next rejected => simp at queryAt
 
 def ActorReentryCommitObservation.prepared?
     (sample : ActorReentryCommitObservation) (image : RustDescriptorImage)
@@ -234,20 +452,10 @@ theorem a_prepared_body_has_its_source_choice_reset
     (prepared : prepareObservedActorBody? image choreo before
       previousPath nextPath scope event = some (roll, base)) :
     resetObservedChoices? (canonicalProgramSource choreo) scope before.choices = some base.choices := by
-  unfold prepareObservedActorBody? at prepared
-  obtain ⟨data, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨previous, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨nextPath, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨rows, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨chosen, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨choices, choicesAt, allowed⟩ := Option.bind_eq_some_iff.mp prepared
-  dsimp only at allowed
-  split at allowed
-  next guarded =>
-    have same := Option.some.inj allowed
-    cases same
-    exact choicesAt
-  next rejected => simp at allowed
+  obtain ⟨_, _, _, _, choices, _, _, _, _, _, _, choicesAt, reset, _⟩ :=
+    prepared_actor_body_source_facts prepared
+  rw [reset]
+  exact choicesAt
 
 private theorem source_body_base_facts
     {image : RustDescriptorImage} {choreo : Choreo} {before base : ActorProgressObservation}
@@ -258,29 +466,9 @@ private theorem source_body_base_facts
       ∃ rows choices, image.decodeRollRows? = some rows ∧ roll ∈ rows ∧
         base = resetObservedActor before roll choices ∧
         roll.eventStart ≤ event ∧ event < roll.eventStart + roll.eventLength := by
-  unfold prepareObservedActorBody? at prepared
-  obtain ⟨data, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨previous, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨nextPath, _, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨rows, rowsAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨chosen, chosenAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
-  obtain ⟨choices, _, allowed⟩ := Option.bind_eq_some_iff.mp prepared
-  dsimp only at allowed
-  split at allowed
-  next guarded =>
-    have same := Option.some.inj allowed
-    cases same
-    have member : roll ∈ rows := by
-      have singleton := resolveUnique?_eq_some_iff.mp chosenAt
-      have filtered : roll ∈ rows.filter (fun row => row.scope == scope) := by
-        rw [singleton]
-        simp
-      exact (List.mem_filter.mp filtered).1
-    simp only [Bool.and_eq_true, and_assoc] at guarded
-    obtain ⟨_, ranges, _, _, _, start, stop, _, _, _, _⟩ := guarded
-    exact ⟨ranges, rows, choices, rowsAt, member, rfl,
-      of_decide_eq_true start, of_decide_eq_true stop⟩
-  next rejected => simp at allowed
+  obtain ⟨_, _, _, rows, choices, _, _, _, rowsAt, member, _, _, reset, _, ranges,
+    _, _, _, start, stop, _⟩ := prepared_actor_body_source_facts prepared
+  exact ⟨ranges, rows, choices, rowsAt, member, reset, start, stop⟩
 
 /-- A prospective body reset preserves the same actor-local first fault. It
 cannot turn a failed run into a fresh live one merely by selecting a new visit. -/

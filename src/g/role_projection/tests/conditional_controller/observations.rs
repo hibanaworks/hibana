@@ -64,8 +64,8 @@ pub(super) fn write(
             let next_path = usize::from(outer_arm) * 2 + arm;
             let sample = std::format!("{role}Visit{visit}");
             let image_name = std::format!("{role}Image");
-            let before_source = super::super::commit::observation_source(before);
-            let after_source = super::super::commit::observation_source(after);
+            let before_source = crate::endpoint::proof_snapshot::observation_source(before);
+            let after_source = crate::endpoint::proof_snapshot::observation_source(after);
             if let Some(scope) = before.steps[event].reentry_scope {
                 assert!(visit > 0);
                 let previous_arm = usize::from([41, 43, 42, 44, 45][visit - 1] % 2 == 0);

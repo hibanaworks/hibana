@@ -123,7 +123,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 }
 
 impl<'p, 'r, const ROLE: u8> ParallelEndpoint<'p, 'r, ROLE> {
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) fn proof_tag(&self) -> super::proof_snapshot::ViewTagObservation {
         super::proof_snapshot::operation_tag(
             self.borrowed.ptr,

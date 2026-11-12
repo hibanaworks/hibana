@@ -15,6 +15,7 @@ use core::ops::ControlFlow;
 pub(super) struct ProjectedOfferFrontier {
     pub(super) incoming: [LaneWord; LANE_SET_VIEW_WORDS],
     pub(super) candidate: Option<OfferScopeSelection>,
+    pub(super) ready_without_input: bool,
 }
 
 fn offer_priority(base: u8, locally_ready: bool, unmade: bool) -> u8 {
@@ -63,6 +64,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         outcome?;
         Ok(ProjectedOfferFrontier {
             incoming,
+            // Ready evidence and a controller's resolver can also be used
+            // before an input arrives. A passive waiting receive cannot.
+            ready_without_input: selected.is_some_and(|(priority, _)| priority >= 6),
             candidate: selected.map(|(_, candidate)| candidate),
         })
     }
@@ -143,13 +147,13 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         previews: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let conflict = row.conflict();
-        self.event_eligibility(row, &mut |scope, view| match view {
+        self.enabled_candidate(row, &mut |scope, view| match view {
             EventArmView::Committed => self.selected_arm_for_scope(scope),
             EventArmView::Preview => {
                 previews(scope).or_else(|| self.selected_arm_for_recv_event(conflict, scope, view))
             }
         })
-        .is_ok()
+        .is_some()
     }
 
     fn for_each_projected_offer_step(
@@ -163,16 +167,37 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             &mut dyn FnMut(ScopeId) -> Option<u8>,
         ) -> ControlFlow<()>,
     ) {
+        // Candidate sources can name suffixes of the same compiled alternative
+        // chain. Merge with the last fully visited chain instead of admitting
+        // its rows again. Both cursors only move forward; no progress is saved.
+        let mut previous_chain = None;
         let mut yield_entry = |mut index, lane, previews: &mut dyn FnMut(ScopeId) -> Option<u8>| {
+            let seed = index;
+            let mut previous = previous_chain
+                .filter(|&(previous_lane, _)| previous_lane == lane)
+                .map(|(_, seed)| seed);
+            let mut added = false;
             loop {
-                if let Some(row) = self.projected_offer_row(index, lane) {
-                    visit(row, lane, previews)?;
+                while let Some(before) = previous.filter(|&before| before < index) {
+                    previous = self
+                        .progress
+                        .cursor
+                        .next_offer_lane_alternative(before, previews);
+                }
+                if previous != Some(index) {
+                    added = true;
+                    if let Some(row) = self.projected_offer_row(index, lane) {
+                        visit(row, lane, previews)?;
+                    }
                 }
                 let Some(next) = self
                     .progress
                     .cursor
                     .next_offer_lane_alternative(index, previews)
                 else {
+                    if added {
+                        previous_chain = Some((lane, seed));
+                    }
                     return ControlFlow::Continue(());
                 };
                 index = next;
@@ -198,8 +223,30 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             if !self.owns_lane(lane) {
                 continue;
             }
+            for index in self
+                .progress
+                .cursor
+                .roll_offer_heads(self.public_header.role(), lane as u8)
+            {
+                if yield_entry(index, lane as u8, previews).is_break() {
+                    continue 'lanes;
+                }
+            }
             let head = self.progress.cursor.index_for_lane_step(lane);
             if let Some(index) = head {
+                // A completed row can head a retained enclosing visit while
+                // a parallel child is still active. Whole-arm completion is
+                // not required for that row's ordinary reentry admission.
+                if self
+                    .progress
+                    .cursor
+                    .node_event_done_for_lane(index, lane as u8)
+                    && self.progress.cursor.logical_role_at(index)
+                        == Some(self.public_header.role())
+                    && yield_entry(index, lane as u8, previews).is_break()
+                {
+                    continue;
+                }
                 if let Some(candidate) = self.progress.cursor.offer_lane_head(
                     self.public_header.role(),
                     lane,
@@ -218,61 +265,8 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                         continue 'lanes;
                     }
                 }
-                // The next visit can first use a lane absent from the previous
-                // arm's history. Its raw head still locates that completed
-                // choice; keep it alongside the ordinary continuation above.
-                if let Some(entry) = self.foreign_reentry_offer_seed(index, lane as u8, previews) {
-                    let _ = yield_entry(entry, lane as u8, previews);
-                }
-            }
-            if let Some((_, entry)) = self.active_reentry_offer_for_lane(lane) {
-                let index = entry.as_usize();
-                if self.progress.cursor.logical_role_at(index) == Some(self.public_header.role())
-                    && self.progress.cursor.event_lane_at(index) == Some(lane as u8)
-                {
-                    let _ = yield_entry(index, lane as u8, previews);
-                } else if let Some(index) =
-                    self.foreign_reentry_offer_seed(index, lane as u8, previews)
-                {
-                    let _ = yield_entry(index, lane as u8, previews);
-                }
             }
         }
-    }
-
-    // A seed can be actor-wide, or a lane first used by the next visit's arm.
-    // Resolve its first visible entry once; later alternatives follow the
-    // compiled links. No committed choice or lane head changes here.
-    fn foreign_reentry_offer_seed(
-        &self,
-        index: usize,
-        lane: u8,
-        previews: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
-        let mut next = None;
-        self.progress
-            .cursor
-            .visit_route_arms_for_index(index, |scope, _| {
-                if previews(scope).is_some() {
-                    return;
-                }
-                for arm in 0..2 {
-                    if let Some(entry) = self.progress.cursor.route_arm_view_lane_entry(
-                        scope,
-                        arm,
-                        self.public_header.role(),
-                        lane,
-                    ) && (entry > index
-                        || (entry == index
-                            && self.is_reentry_route(scope)
-                            && self.selected_arm_for_scope(scope).is_some()))
-                        && next.is_none_or(|current| entry < current)
-                    {
-                        next = Some(entry);
-                    }
-                }
-            });
-        next
     }
 
     fn consider_offer_candidate(
@@ -324,7 +318,17 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         } else {
             1
         };
-        let candidate_row = if controller && dynamic && live_arm.is_none() {
+        // Both selection and readiness priority read this same immutable cut.
+        // A completed route can require a source-head search, so do it once
+        // for this row rather than repeating it for priority below.
+        let intent = if row.direction() != RoleLocalDirection::Recv
+            || (controller && dynamic && live_arm.is_none())
+        {
+            self.committed_offer_intent(scope, index)
+        } else {
+            None
+        };
+        let candidate_row = if controller && dynamic && live_arm.is_none() && intent.is_none() {
             let Some(entry) = self.resolver_offer_entry(scope, previews) else {
                 return Ok(());
             };
@@ -340,9 +344,12 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         // a speculative repeat receive must not hide it. Actual ingress is
         // selected separately, before this projected candidate is used.
         let locally_ready = candidate_row.direction() != RoleLocalDirection::Recv
-            && self
-                .committed_offer_intent(scope, candidate_row.index())
-                .is_some();
+            && if candidate_row.index() == index {
+                intent.is_some()
+            } else {
+                self.committed_offer_intent(scope, candidate_row.index())
+                    .is_some()
+            };
         let priority = offer_priority(
             priority,
             locally_ready,

@@ -37,6 +37,7 @@ import Hibana.ActorMutationCoverage
 import Hibana.ActorMeasuredExecution
 import Hibana.ActorReentryCommit
 import Hibana.ActorCandidateAdmission
+import Hibana.PublicCandidateAdmission
 import Hibana.ActorOccurrenceHistory
 import Hibana.SendAdmission
 import Hibana.FifoOccurrenceOrigin

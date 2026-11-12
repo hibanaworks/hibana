@@ -222,10 +222,14 @@ impl<const N: usize> RoleImageBytes<N> {
 
     pub(super) const fn write_route_topology<const E: usize>(
         &mut self,
-        scopes: &projection::ScopeFacts<E>,
+        source: (
+            &crate::global::const_dsl::EffList<E>,
+            &projection::ScopeFacts<E>,
+        ),
         operations: &super::super::OperationIndex<E>,
         columns: RoleImageColumns,
     ) {
+        let (source, scopes) = source;
         let columns = &columns;
         let count = columns.events.len as usize;
         let successors = columns.lane_successors().start;
@@ -237,12 +241,9 @@ impl<const N: usize> RoleImageBytes<N> {
             self.write_u16(successors + step * 2, next[lane]);
             next[lane] = step as u16;
         }
-        if columns.route_scopes.len == 0 {
-            return;
-        }
         let predecessors = columns.view_predecessors().start;
         let mut step = 0;
-        while step < columns.events.len as usize {
+        while columns.route_scopes.len != 0 && step < columns.events.len as usize {
             self.write_u16(predecessors + step * 2, operations.predecessor(step));
             step += 1;
         }
@@ -252,7 +253,44 @@ impl<const N: usize> RoleImageBytes<N> {
             self.write_u16(permutation + step * 2, operations.view_lane_at(step));
             step += 1;
         }
-        self.write_offer_alternatives(operations, scopes, columns);
+        if columns.route_scopes.len != 0 {
+            self.write_offer_alternatives(operations, scopes, columns);
+        }
+        if columns.roll_scopes.len != 0 {
+            let heads = columns.roll_offer_heads().start;
+            let mut next = u16::MAX;
+            let mut key = u32::MAX;
+            let mut slot = count;
+            while slot != 0 {
+                slot -= 1;
+                let step = operations.view_lane_at(slot) as usize;
+                let current_key = operations.view_lane_key(step);
+                if current_key != key {
+                    next = u16::MAX;
+                    key = current_key;
+                }
+                let effect = operations.row(step).event.eff_index as usize;
+                if let Some((start, end)) = scopes.event_roll_span(source, effect) {
+                    let previous = if slot == 0 {
+                        None
+                    } else {
+                        let step = operations.view_lane_at(slot - 1) as usize;
+                        if operations.view_lane_key(step) == key {
+                            Some(operations.row(step).event.eff_index as usize)
+                        } else {
+                            None
+                        }
+                    };
+                    if match previous {
+                        None => true,
+                        Some(before) => before < start || before >= end,
+                    } {
+                        next = slot as u16;
+                    }
+                }
+                self.write_u16(heads + slot * 2, next);
+            }
+        }
         let entries = columns.route_entry_steps().start;
         let mut arm = 0;
         while arm < columns.route_arms.len as usize {

@@ -34,7 +34,7 @@ pub(super) fn write_observations(
         writeln!(
             source,
             "def asyncCut{index} : ActorProgressObservation := {}\n",
-            super::super::super::super::commit::observation_source(snapshot)
+            crate::endpoint::proof_snapshot::observation_source(snapshot)
         )
         .unwrap();
     }

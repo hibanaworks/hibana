@@ -440,7 +440,17 @@ pub(crate) struct RoleImageColumns {
 impl RoleImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(&self) -> usize {
-        self.offer_alternative_outer().end
+        self.roll_offer_heads().end
+    }
+
+    pub(crate) const fn roll_offer_heads(&self) -> core::ops::Range<usize> {
+        let start = self.offer_alternative_outer().end;
+        let len = if self.roll_scopes.len == 0 {
+            0
+        } else {
+            self.events.len as usize * 2
+        };
+        start..start + len
     }
 
     pub(crate) const fn offer_alternative_heads(&self) -> core::ops::Range<usize> {
@@ -490,13 +500,7 @@ impl RoleImageColumns {
 
     pub(crate) const fn view_lane_index(&self) -> core::ops::Range<usize> {
         let start = self.view_predecessors().end;
-        start
-            ..start
-                + if self.route_scopes.len == 0 {
-                    0
-                } else {
-                    self.events.len as usize * 2
-                }
+        start..start + self.events.len as usize * 2
     }
 
     pub(crate) const fn route_index(&self) -> core::ops::Range<usize> {

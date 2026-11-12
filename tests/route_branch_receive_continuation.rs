@@ -5,14 +5,92 @@ pub mod in_process;
 use common::TestTransport;
 use core::{cell::Cell, future::poll_fn, pin::pin, task::Poll};
 use hibana::{
-    Endpoint, EndpointError, g,
+    Endpoint, EndpointError,
+    g::{self, Message},
     runtime::{
         SessionKitStorage,
         ids::SessionId,
         program::project,
         resolver::{DecisionArm, ResolverError, ResolverRef},
+        tap,
     },
 };
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_offer_previews_required_input_roll_reentry_and_the_final_continuation()
+-> core::result::Result<(), hibana::EndpointError> {
+    type Item = g::Msg<4, u64>;
+    type End = g::Msg<5, u64>;
+    let global = g::seq(g::send::<0, 1, Item>().roll(), g::send::<0, 1, End>());
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    for visits in 1..=4 {
+        let network = TestTransport::new();
+        let mut slab0 = [0; 16384];
+        let mut slab1 = [0; 16384];
+        let mut s0 = SessionKitStorage::uninit();
+        let mut s1 = SessionKitStorage::uninit();
+        let rv0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+        let rv1 = s1.init().rendezvous(&mut slab1, network).unwrap();
+        let sid = SessionId::new(974);
+        let mut sender = rv0.enter(sid, &p0).unwrap();
+        let mut receiver = rv1.enter(sid, &p1).unwrap();
+        let mut records = rv1.tap();
+        for visit in 0..visits {
+            while records.next().is_some() {}
+            {
+                let mut preview = pin!(receiver.offer());
+                poll_fn(|cx| {
+                    assert!(preview.as_mut().poll(cx).is_pending());
+                    Poll::Ready(())
+                })
+                .await;
+            }
+            sender.send::<Item>(&visit).await?;
+            let preview = receiver.offer().await?;
+            assert_eq!(preview.label(), Item::LOGICAL_LABEL);
+            drop(preview);
+            assert!(
+                records.by_ref().all(|record| !matches!(
+                    record.id(),
+                    tap::ENDPOINT_SEND
+                        | tap::ENDPOINT_RECV
+                        | tap::ROUTE_ARM_SELECTION
+                        | tap::SCOPE_REENTRY
+                )),
+                "ordinary preview and drop must not commit or choose a branch"
+            );
+            let preview = receiver.offer().await?;
+            let value = preview
+                .recv::<Item>()
+                .await
+                .expect("ordinary preview commit");
+            assert_eq!(value, visit);
+            assert_eq!(
+                records
+                    .by_ref()
+                    .filter(|record| record.id() == tap::ENDPOINT_RECV)
+                    .count(),
+                1
+            );
+        }
+        sender.send::<End>(&77).await?;
+        let preview = receiver.offer().await?;
+        assert_eq!(preview.label(), End::LOGICAL_LABEL);
+        drop(preview);
+        assert_eq!(
+            receiver
+                .recv::<End>()
+                .await
+                .expect("typed final after dropping ordinary preview"),
+            77
+        );
+        sender.send::<Item>(&88).await?;
+        assert_eq!(receiver.offer().await?.recv::<Item>().await?, 88);
+    }
+    Ok(())
+}
 
 #[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]

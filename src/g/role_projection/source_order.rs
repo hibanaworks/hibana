@@ -704,7 +704,7 @@ impl<const E: usize> SourceOrder<'_, E> {
             | LocalAction::Local {
                 eff_index, lane, ..
             } => (eff_index.dense_ordinal(), lane),
-            #[cfg(all(test, hibana_repo_tests))]
+            #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
             LocalAction::Terminate => crate::invariant(),
         }
     }

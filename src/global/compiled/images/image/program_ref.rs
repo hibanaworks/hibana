@@ -338,22 +338,22 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
     pub(crate) const fn role_count(&self) -> usize {
         self.facts.max_role as usize + 1
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) const fn proof_atom_count(&self) -> usize {
         self.columns.atom_count()
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) const fn proof_blob_len(&self) -> usize {
         self.columns.blob_len()
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) const fn proof_byte_at(&self, offset: usize) -> u8 {
         self.byte_at(offset)
     }

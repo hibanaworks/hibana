@@ -8,6 +8,12 @@ structure OperationSlotObservation where
   view : Nat
   lane : Nat
   phase : PublicOperationPhase
+  /-- A retained offer can survive an idle operation lease. Its source event
+  is copied separately from committed choices and from the current phase. -/
+  offeredEvent : Option Nat := none
+  /-- The actual materialized choice, distinct from all route ancestors of
+  the previewed source row. Neither field is a committed operation. -/
+  offeredChoice : Option (Nat × Nat) := none
   deriving Repr, DecidableEq
 
 /-- Copied from the actual operation handle. A slot itself does not store the
@@ -100,6 +106,65 @@ def PublicOperationCut.matches (cut : PublicOperationCut) (image : RustDescripto
 
 def PublicOperationCut.targetPhase? (cut : PublicOperationCut) : Option PublicOperationPhase :=
   (cut.slots.find? fun slot => slot.key == (cut.target.view, cut.target.lane)).map (·.phase)
+
+/-- Static identity of each retained preview, including idle slots. A valid
+preview is not evidence that its event committed or is still enabled. -/
+def PublicOperationCut.previewsMatch (cut : PublicOperationCut) (image : RustDescriptorImage) : Bool :=
+  cut.slots.all fun slot =>
+    match slot.offeredEvent with
+    | none => true
+    | some source => (List.range image.eventCount).any fun row =>
+        image.eventView? row == some slot.view && image.eventEffIndex? row == some source
+
+theorem a_checked_preview_has_a_row_of_its_logical_view
+    {cut : PublicOperationCut} {image : RustDescriptorImage} {slot : OperationSlotObservation}
+    {source : Nat} (checked : cut.previewsMatch image = true) (member : slot ∈ cut.slots)
+    (preview : slot.offeredEvent = some source) :
+    ∃ row, row < image.eventCount ∧ image.eventView? row = some slot.view ∧
+      image.eventEffIndex? row = some source := by
+  have rowAt := List.all_eq_true.mp checked slot member
+  simp only [preview] at rowAt
+  obtain ⟨row, present, fields⟩ := List.any_eq_true.mp rowAt
+  simp only [Bool.and_eq_true, beq_iff_eq] at fields
+  exact ⟨row, List.mem_range.mp present, fields.1, fields.2⟩
+
+/-- A typed call names a public label, schema and direction, not a peer or a
+particular source occurrence. `origin` supplies that contract; all matching
+aliases inside the actual borrow remain candidates. This deliberately does
+not decide source progress, resolver inputs, payload custody or transport. -/
+def PublicOperationCut.contractQueries? (cut : PublicOperationCut)
+    (image : RustDescriptorImage) : Option (Nat → Bool → Option (List Nat)) := do
+  let atoms ← image.decodeAtoms?
+  let rows ← (List.range image.eventCount).mapM fun row => do
+    let view ← image.eventView? row
+    let source ← image.eventEffIndex? row
+    let lane ← image.eventLane? row
+    let action ← image.eventAction? row
+    pure (row, view, source, lane, action)
+  pure fun origin receive => do
+    let requested ← atoms.find? fun atom => atom.effIndex == origin
+    pure (rows.filterMap fun (row, view, source, lane, action) =>
+      let direction := match action with
+        | .recv .. => receive
+        | .send .. => !receive
+        | .local .. => !receive || cut.slots.any (fun slot =>
+            slot.view == view && slot.lane == lane && slot.offeredEvent == some source)
+      if view == cut.target.view && action.label == requested.label &&
+          action.schema == requested.schema && direction &&
+          decide (cut.target.start ≤ source ∧ source < cut.target.stop) &&
+          cut.target.ownedLanes.contains lane then some row else none)
+
+def PublicOperationCut.matchingContractRows? (cut : PublicOperationCut)
+    (image : RustDescriptorImage) (origin : Nat) (receive : Bool) : Option (List Nat) := do
+  let query ← cut.contractQueries? image
+  query origin receive
+
+theorem prepared_public_contract_queries_match_single_preparation
+    {cut : PublicOperationCut} {image : RustDescriptorImage}
+    {query : Nat → Bool → Option (List Nat)} {origin : Nat} {receive : Bool}
+    (prepared : cut.contractQueries? image = some query) :
+    query origin receive = cut.matchingContractRows? image origin receive := by
+  simp [PublicOperationCut.matchingContractRows?, prepared]
 
 /-- Local fresh-call guard only. Session fault, source readiness, payload
 ownership and availability of the actual future are separate obligations. -/

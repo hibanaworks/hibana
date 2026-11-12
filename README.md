@@ -298,6 +298,12 @@ receive. A branch with parallel work can have several enabled operations.
 A successful send or receive through the preview runs that operation and
 advances the protocol. Reading or dropping the preview does not.
 
+`offer()` can also preview an enabled incoming operation outside a choice,
+including a repeated input or its later continuation. Dropping this input
+preview returns its frame to the transport without retaining branch knowledge.
+An executable outgoing choice keeps priority; an arrived choice message also
+precedes an ordinary input. Use `recv::<M>()` when the incoming type is known.
+
 Adding `.resolve::<ID>()` to a choice connects it to a **resolver**, a local
 application function that selects a branch. This changes how the choice is
 made, but does not bypass other roles' projection checks or send the decision
@@ -409,7 +415,7 @@ change sender.
 | --- | --- |
 | `Endpoint::send::<M>(&payload)` | Advances after the transport accepts the permitted message |
 | `Endpoint::recv::<M>()` | Validates the permitted message and returns its decoded payload |
-| `Endpoint::offer()` | Returns a branch preview without advancing |
+| `Endpoint::offer()` | Previews a branch or enabled input without advancing |
 | `RouteBranch::label()` | Returns the logical message label of the previewed operation |
 | `RouteBranch::send` / `recv` | Consumes the preview and executes that operation |
 
@@ -610,7 +616,9 @@ and restart policy.
 | Compiled global protocol | 65,535 bytes |
 | Packed local columns | 65,535 bytes per column; separate columns have separate limits |
 | Local route lookup index | Up to 16,384 additional bytes per role |
-| Local offer lookup data | 10 bytes per local event and 8 per local route, when routes are present |
+| Local view/lane lookup index | 2 bytes per local event, in flash |
+| Additional route offer lookup data | 8 bytes per local event and 8 per local route, when routes are present |
+| Local repetition offer index | 2 bytes per local event, when repetitions are present |
 | Local lane successors | 2 bytes per local event |
 | Global scope lookup index | Up to 102,852 additional bytes per protocol |
 | Global route lookup index | Up to 16,384 additional bytes per protocol |

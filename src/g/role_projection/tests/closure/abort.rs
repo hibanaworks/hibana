@@ -138,7 +138,7 @@ fn write(
         source.push_str(&std::format!(
             "def {name} : Hibana.ActorProgressObservation := {}\n\n\
              def {name}Mutations : Nat := {}\n\n",
-            super::super::commit::observation_source(snapshot),
+            crate::endpoint::proof_snapshot::observation_source(snapshot),
             snapshot.completion_mutations,
         ));
     }

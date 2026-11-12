@@ -29,8 +29,8 @@ trap hibana_restore_ui_diagnostic_width EXIT
 # UI diagnostics include source snippets from the selected compiler's core.
 rustup component add rust-src --toolchain "$TOOLCHAIN"
 
-cargo +"$TOOLCHAIN" test --locked --workspace --exclude hibana-ci-tests --all-targets -- --test-threads=1
 cargo +"$TOOLCHAIN" clippy --locked --workspace --exclude hibana-ci-tests --all-targets -- -D warnings
+cargo +"$TOOLCHAIN" test --locked --workspace --exclude hibana-ci-tests --all-targets -- --test-threads=1
 # --all-targets excludes doctests; check the public examples exactly once.
 RUSTDOCFLAGS=-Dwarnings cargo +"$TOOLCHAIN" test --locked -p hibana --doc
 RUSTDOCFLAGS=-Dwarnings cargo +"$TOOLCHAIN" doc --locked -p hibana --no-deps --document-private-items

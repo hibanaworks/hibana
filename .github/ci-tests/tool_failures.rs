@@ -1,7 +1,7 @@
 use std::{path::PathBuf, process::Command};
 
 #[test]
-fn protocol_oracle_cache_tracks_model_inputs_and_artifact_integrity() {
+fn protocol_oracle_cache_tracks_source_content_and_artifact_integrity() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let script = r#"
 set -euo pipefail
@@ -12,7 +12,14 @@ trap 'rm -r -- "$scratch"' EXIT
 mkdir -p "$scratch/.github/scripts/lib" "$scratch/.github/ci-tests" "$scratch/proofs/lean"
 cp "$1" "$scratch/.github/scripts/build_protocol_checker.sh"
 printf '// fixture\n' > "$scratch/.github/ci-tests/endpoint_conformance.lean"
-printf '// model\n' > "$scratch/.github/ci-tests/protocol_shapes.lean"
+cat > "$scratch/.github/ci-tests/protocol_shapes.lean" <<'MODEL'
+-- model fixture
+def main (args : List String) : IO UInt32 := do
+  checkGuardedModel
+  let (inputPath, outputPath, selected) := parse args
+  runPopulation
+MODEL
+printf '// public-cut codec\n' > "$scratch/.github/ci-tests/protocol_shape_cuts.lean"
 printf 'fixture-toolchain\n' > "$scratch/proofs/lean/lean-toolchain"
 printf '#!/bin/sh\nexit 73\n' > "$scratch/.github/scripts/lib/lean_audit_tool.sh"
 git -C "$scratch" init --quiet
@@ -21,20 +28,22 @@ git -C "$scratch" config user.email 'cache-test@example.invalid'
 git -C "$scratch" add .
 git -C "$scratch" commit --quiet -m model
 original="$(git -C "$scratch" rev-parse HEAD)"
+printf 'def pendingModel := true\n' > "$scratch/proofs/lean/Pending.lean"
 cached="$scratch/target/protocol-checker"
 mkdir -p "$cached"
-(cd "$scratch" && git ls-files -z | xargs -0 shasum -a 256 --) > "$cached/source.sha256"
+(cd "$scratch" && git ls-files --cached --others --exclude-standard -z -- .github proofs/lean | \
+  perl -0777 -ne 'print "$_\0" for sort split /\0/' | xargs -0 shasum -a 256 --) > "$cached/source.sha256"
 printf '%s\n' "$original" > "$cached/revision.txt"
 platform="$(uname -sm)"
 printf '%s\n' "$platform" > "$cached/platform.txt"
 printf '#!/bin/sh\nexit 0\n' > "$cached/protocol-shapes"
 chmod +x "$cached/protocol-shapes"
-for file in guarded-reentry.log resumption-controls.tsv input-controls.tsv; do
-  printf 'validated fixture\n' > "$cached/$file"
-done
-(cd "$cached" && shasum -a 256 protocol-shapes guarded-reentry.log \
-  resumption-controls.tsv input-controls.tsv > binary.sha256)
+printf 'validated fixture\n' > "$cached/guarded-reentry.log"
+(cd "$cached" && shasum -a 256 protocol-shapes guarded-reentry.log > binary.sha256)
 build="$scratch/.github/scripts/build_protocol_checker.sh"
+[[ "$(bash "$build" --check)" == "$cached/protocol-shapes" ]]
+git -C "$scratch" add proofs/lean/Pending.lean
+git -C "$scratch" commit --quiet -m 'publish identical pending model'
 [[ "$(bash "$build" --check)" == "$cached/protocol-shapes" ]]
 printf 'unrelated documentation\n' > "$scratch/README.md"
 git -C "$scratch" add README.md
@@ -46,20 +55,22 @@ git -C "$scratch" commit --quiet -m documentation
 printf 'another platform\n' > "$cached/platform.txt"
 if bash "$build" --check > "$scratch/rejected.log" 2>&1; then exit 1; fi
 printf '%s\n' "$platform" > "$cached/platform.txt"
-for file in protocol-shapes resumption-controls.tsv; do
+for file in protocol-shapes guarded-reentry.log; do
   cp "$cached/$file" "$scratch/original-artifact"
   printf 'corrupted\n' >> "$cached/$file"
   if bash "$build" --check > "$scratch/rejected.log" 2>&1; then exit 1; fi
   cp "$scratch/original-artifact" "$cached/$file"
 done
-cp "$scratch/.github/ci-tests/protocol_shapes.lean" "$scratch/original-model"
-printf '// changed model\n' >> "$scratch/.github/ci-tests/protocol_shapes.lean"
-if bash "$build" --check > "$scratch/rejected.log" 2>&1; then exit 1; fi
-status=0
-bash "$build" > "$scratch/rebuild.log" 2>&1 || status=$?
-[[ "$status" == 73 ]]
-cp "$scratch/original-model" "$scratch/.github/ci-tests/protocol_shapes.lean"
-[[ "$(bash "$build" --check)" == "$cached/protocol-shapes" ]]
+for model in protocol_shapes.lean protocol_shape_cuts.lean; do
+  cp "$scratch/.github/ci-tests/$model" "$scratch/original-model"
+  printf '// changed model\n' >> "$scratch/.github/ci-tests/$model"
+  if bash "$build" --check > "$scratch/rejected.log" 2>&1; then exit 1; fi
+  status=0
+  bash "$build" > "$scratch/rebuild.log" 2>&1 || status=$?
+  [[ "$status" == 73 ]]
+  cp "$scratch/original-model" "$scratch/.github/ci-tests/$model"
+  [[ "$(bash "$build" --check)" == "$cached/protocol-shapes" ]]
+done
 "#;
     let output = Command::new("bash")
         .args(["-c", script, "protocol-oracle-cache-test"])

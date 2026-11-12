@@ -61,6 +61,8 @@ mod symmetry;
 mod syntax;
 #[path = "protocol_shape_paths.rs"]
 mod syntax_paths;
+#[path = "protocol_shape_witness.rs"]
+mod witness;
 use population::{Count, Population};
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -332,6 +334,27 @@ impl Protocol {
                 b.resolver_choices(path, out);
             }
             Self::Roll(body) => body.resolver_choices(path, out),
+        }
+    }
+
+    fn message_selected_events(&self, out: &mut BTreeSet<u8>) {
+        match self {
+            Self::Route(..) => {
+                let mut messages = Vec::new();
+                self.messages(&mut messages);
+                for message in messages {
+                    let Self::Message { event, .. } = message else {
+                        unreachable!()
+                    };
+                    out.insert(*event);
+                }
+            }
+            Self::Seq(a, b) | Self::Par(a, b) | Self::Resolved(a, b, _) => {
+                a.message_selected_events(out);
+                b.message_selected_events(out);
+            }
+            Self::Roll(body) => body.message_selected_events(out),
+            Self::Message { .. } => {}
         }
     }
 
@@ -972,12 +995,33 @@ impl CatalogOrigin {
         matches!(self, Self::Syntax | Self::Representatives | Self::Contexts)
     }
 
-    fn compilation_width(self) -> usize {
-        match self {
+    fn compilation_units(self, localsides: &[String], common_bytes: usize) -> Vec<&[String]> {
+        let width = match self {
             Self::Syntax => 1,
             Self::Contexts => 8,
             Self::Templates | Self::Representatives => 32,
+        };
+        // Cases vary greatly in emitted borrow/probe code. A count
+        // alone put 4–11 MiB into one native input and exceeded the process
+        // memory guard. Bound source bytes too, retaining every whole case.
+        let byte_limit = 2 * 1024 * 1024;
+        let mut units = Vec::new();
+        let mut start = 0;
+        while start < localsides.len() {
+            let mut stop = start;
+            let mut bytes = common_bytes;
+            while stop < localsides.len() && stop - start < width {
+                let next = bytes.saturating_add(localsides[stop].len());
+                if stop > start && next > byte_limit {
+                    break;
+                }
+                bytes = next;
+                stop += 1;
+            }
+            units.push(&localsides[start..stop]);
+            start = stop;
         }
+        units
     }
 }
 
@@ -1777,7 +1821,7 @@ fn emit_cases(
     fs::write(
         output.join("catalog-scope.txt"),
         format!(
-            "{description}\nexact_syntax_population={total_cases}\nmessage_contract_assignments=distinct,reuse-first,reuse-last\ncontract_assignment_scope=choice_entries_distinct;identical_assignments_deduplicated\nemitted_candidates={}\nnamespace={namespace}\n",
+            "{description}\nexact_syntax_population={total_cases}\nmessage_contract_assignments=distinct,reuse-first,reuse-last,shared-entry,shared-peer-entry\ncontract_assignment_scope=protected_entries_for_reuse;shared_resolved_heads_across_peers_and_nesting;shared_same_peer_nested_heads;identical_assignments_deduplicated\nemitted_candidates={}\nnamespace={namespace}\n",
             cases.len()
         ),
     )?;
@@ -1824,11 +1868,6 @@ fn emit_cases(
     )?;
     let trace_directory = output.join("traces");
     fs::create_dir_all(&trace_directory)?;
-    let root_manifest = fs::read_to_string(root.join("Cargo.toml"))?;
-    let runtime_dependency = root_manifest
-        .lines()
-        .find(|line| line.starts_with("hibana-runtime = "))
-        .ok_or("the core must select its scoped runtime explicitly")?;
     fs::write(
         output.join("Cargo.toml"),
         format!(
@@ -1841,7 +1880,6 @@ autolib = false
 [workspace]
 [dependencies]
 hibana = {{ path = {root:?} }}
-{runtime_dependency}
 [profile.dev]
 opt-level = 1
 debug = 0
@@ -2032,7 +2070,8 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     }
     fs::write(negative_root.join("inventory.tsv"), negative_inventory)?;
     let mut source = format!(
-        "#![cfg(test)]\n#![forbid(long_running_const_eval)]\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n#[path={:?}]\nmod probe_data;\n#[path={:?}]\npub mod in_process;\n",
+        "const PROTOCOL_SOURCE_DIR: &str = {:?};\n#[path={:?}]\nmod in_memory;\n#[path={:?}]\nmod planned_json;\n#[path={:?}]\nmod probe_data;\n#[path={:?}]\npub mod in_process;\n",
+        output.canonicalize()?,
         root.join("examples/support/in_memory.rs"),
         root.join(".github/ci-tests/kani_json.rs"),
         root.join(".github/ci-tests/protocol_shape_probe_data.rs"),
@@ -2108,6 +2147,9 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     let script_directory = output.join("scripts");
     fs::create_dir_all(&script_directory)?;
     let mut script_paths = BTreeSet::new();
+    let witness_directory = output.join("source-witnesses");
+    fs::create_dir_all(&witness_directory)?;
+    let mut witness_paths = BTreeSet::new();
     let mut trace_paths = BTreeSet::new();
     let mut local_rejection_probes = 0usize;
     let mut rejected = 0;
@@ -2180,7 +2222,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         let start = source.len();
         writeln!(
             source,
-            "#[hibana_runtime::main(in_process::InProcess::default())]\n#[test]\nasync fn shape_{case}() -> Result<(),hibana::EndpointError> {{"
+            "#[hibana_runtime::main(in_process::InProcess::default())]\n#[test]\nasync fn shape_{case}() -> Result<(),TrialError> {{"
         )?;
         for m in &messages {
             let Protocol::Message {
@@ -2243,7 +2285,21 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         source.push_str(&local);
         let script_path = script_directory.join(format!("{case}.jsonl"));
         plans.write_scripts(std::io::BufWriter::new(fs::File::create(&script_path)?))?;
+        plans.write_witnesses(
+            *owner,
+            std::io::BufWriter::new(fs::File::create(
+                witness_directory.join(format!("{case}.witness.jsonl")),
+            )?),
+        )?;
+        plans.write_query_witnesses(
+            *owner,
+            std::io::BufWriter::new(fs::File::create(
+                witness_directory.join(format!("{case}.query-witness.jsonl")),
+            )?),
+        )?;
         script_paths.insert(script_path);
+        witness_paths.insert(witness_directory.join(format!("{case}.witness.jsonl")));
+        witness_paths.insert(witness_directory.join(format!("{case}.query-witness.jsonl")));
         let scope_path = scope_directory.join(format!("{case}.jsonl"));
         let (script_count, scope_count) = scope_probes::write_inventory(
             &plans,
@@ -2260,9 +2316,12 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         if delegated_cases.contains(case) {
             delegated_concurrent_runs += script_count;
         }
+        let mut message_selected_events = BTreeSet::new();
+        global.message_selected_events(&mut message_selected_events);
         writeln!(
             source,
-            "qualify(programs,Scenario{{resolver_count:{resolvers},id:{case},name:\"{word}/service={service}/owner={owner}\",messages:&["
+            "qualify(programs,Scenario{{resolver_count:{resolvers},id:{case},name:\"{word}/service={service}/owner={owner}\",message_selected_events:&{:?},messages:&[",
+            message_selected_events.into_iter().collect::<Vec<_>>(),
         )?;
         for m in &messages {
             let Protocol::Message {
@@ -2294,10 +2353,11 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         }
         let trace_path = trace_directory.join(format!("{case}.txt"));
         write_if_changed(&trace_path, &trace_data)?;
-        trace_paths.insert(trace_path);
+        trace_paths.insert(trace_path.clone());
         writeln!(
             source,
-            "],traces:include_str!(\"../traces/{case}.txt\"),expected_traces:{},prefix_visits:{},completed_plan_words:&completed_plan_words}}).await;\nOk(())\n}}",
+            "],traces:include_str!({:?}),expected_traces:{},prefix_visits:{},completed_plan_words:&completed_plan_words}}).await;\nOk(())\n}}",
+            trace_path.canonicalize()?,
             traces.len(),
             global.prefix_visits(),
         )?;
@@ -2308,11 +2368,16 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
             concurrent_traces += traces.len();
         }
     }
-    // Separate rustc invocations keep generated async types within the local
-    // memory guard. Every case remains in the same Cargo test invocation.
-    let mut manifest = fs::read_to_string(output.join("Cargo.toml"))?;
+    // Each input is compiled into the canonical core's generated-test module.
+    // This shares passive internal observations without a production API or
+    // rewriting any Endpoint call. The runner executes every emitted unit.
+    let mut native_inputs = Vec::new();
     let mut paths = BTreeSet::new();
-    for (unit, cases) in localsides.chunks(origin.compilation_width()).enumerate() {
+    for (unit, cases) in origin
+        .compilation_units(&localsides, source.len())
+        .into_iter()
+        .enumerate()
+    {
         let name = format!("shapes_{unit}");
         let path = if unit == 0 {
             "src/lib.rs".to_owned()
@@ -2322,7 +2387,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         let destination = output.join(&path);
         write_if_changed(&destination, &format!("{source}{}", cases.concat()))?;
         paths.insert(destination);
-        writeln!(manifest, "\n[[test]]\nname={name:?}\npath={path:?}")?;
+        native_inputs.push(path);
     }
     for entry in fs::read_dir(output.join("src"))? {
         let entry = entry?;
@@ -2332,7 +2397,10 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
             fs::remove_file(entry.path())?;
         }
     }
-    fs::write(output.join("Cargo.toml"), manifest)?;
+    fs::write(
+        output.join("native-inputs.json"),
+        serde_json::to_string(&native_inputs)?,
+    )?;
     for entry in fs::read_dir(scope_directory)? {
         let path = entry?.path();
         if !scope_paths.contains(&path) {
@@ -2342,6 +2410,12 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
     for entry in fs::read_dir(script_directory)? {
         let path = entry?.path();
         if !script_paths.contains(&path) {
+            fs::remove_file(path)?;
+        }
+    }
+    for entry in fs::read_dir(witness_directory)? {
+        let path = entry?.path();
+        if !witness_paths.contains(&path) {
             fs::remove_file(path)?;
         }
     }
@@ -2396,6 +2470,82 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
 #[cfg(test)]
 mod population_tests {
     use super::*;
+
+    #[test]
+    fn an_ancestor_resolver_does_not_choose_intrinsic_descendant_messages() {
+        let message = |event| Protocol::Message {
+            from: 0,
+            to: 1,
+            event,
+            contract: event,
+            owned: false,
+        };
+        let source = Protocol::Resolved(
+            Box::new(Protocol::Route(Box::new(message(0)), Box::new(message(1)))),
+            Box::new(message(2)),
+            0,
+        );
+        let mut intrinsic = BTreeSet::new();
+        source.message_selected_events(&mut intrinsic);
+        assert_eq!(intrinsic, BTreeSet::from([0, 1]));
+        let mut paths = BTreeMap::new();
+        source.resolver_choices(&mut Vec::new(), &mut paths);
+        assert_eq!(paths[&0], [(0, false)]);
+        assert_eq!(paths[&1], [(0, false)]);
+        assert_eq!(paths[&2], [(0, true)]);
+        // The already completed contract populations have no partially
+        // resolved path. Their original stronger assertion is unchanged.
+        for rank in 0..contracts::COUNT {
+            let mut source = contracts::protocol(rank);
+            syntax::number(&mut source);
+            let mut intrinsic = BTreeSet::new();
+            source.message_selected_events(&mut intrinsic);
+            let mut paths = BTreeMap::new();
+            source.resolver_choices(&mut Vec::new(), &mut paths);
+            for event in intrinsic {
+                assert!(paths[&event].is_empty(), "contract population {rank}");
+            }
+        }
+    }
+
+    #[test]
+    fn compilation_units_preserve_all_cases_and_isolate_oversized_inputs() {
+        let cases = vec![
+            "a".repeat(1_400_000),
+            "b".repeat(1_400_000),
+            "c".repeat(200_000),
+            "d".repeat(4_000_000),
+            "e".repeat(10_000),
+        ];
+        let units = CatalogOrigin::Templates.compilation_units(&cases, 100_000);
+        assert_eq!(
+            units.iter().map(|unit| unit.len()).collect::<Vec<_>>(),
+            [1, 2, 1, 1]
+        );
+        assert!(units.into_iter().flatten().eq(cases.iter()));
+        assert!(
+            CatalogOrigin::Templates
+                .compilation_units(&[], 100_000)
+                .is_empty()
+        );
+        for origin in [
+            CatalogOrigin::Syntax,
+            CatalogOrigin::Contexts,
+            CatalogOrigin::Representatives,
+        ] {
+            let expected = match origin {
+                CatalogOrigin::Syntax => vec![1, 1, 1, 1, 1],
+                CatalogOrigin::Contexts | CatalogOrigin::Representatives => vec![1, 2, 1, 1],
+                CatalogOrigin::Templates => unreachable!(),
+            };
+            let units = origin.compilation_units(&cases, 100_000);
+            assert_eq!(
+                units.iter().map(|unit| unit.len()).collect::<Vec<_>>(),
+                expected
+            );
+            assert!(units.into_iter().flatten().eq(cases.iter()));
+        }
+    }
 
     #[test]
     fn mandatory_frontiers_already_cover_the_additional_scripts_and_scope_probes() {
@@ -2455,7 +2605,6 @@ mod population_tests {
         ));
         fs::create_dir(&output).unwrap();
         let diagnostic = output.join("diagnostics.tsv");
-        fs::write(&diagnostic, "0\trejected:ProjectionDiagnostic { problem: ParallelOwnershipConflict, role: Some(3), scope: None, controller: None, arms: None, first: None, second: None }\n").unwrap();
         let cases =
             syntax_cases(4, "530088924298496412096565703640493".parse().unwrap(), 1).unwrap();
         let source = &cases.cases[0].4;
@@ -2470,6 +2619,10 @@ mod population_tests {
                 .iter()
                 .any(|(kind, _)| *kind == "ParallelOwnershipConflict")
         );
+        let count = contracts::variants(source).len();
+        let diagnostics: String = (0..count).map(|case| format!(
+            "{case}\trejected:ProjectionDiagnostic {{ problem: ParallelOwnershipConflict, role: Some(3), scope: None, controller: None, arms: None, first: None, second: None }}\n")).collect();
+        fs::write(&diagnostic, diagnostics).unwrap();
         let result = emit_cases(
             root,
             output.clone(),
@@ -2482,14 +2635,21 @@ mod population_tests {
         fs::remove_dir_all(output).unwrap();
         assert_eq!(
             result.unwrap(),
-            "syntax_0\tparallel endpoint delegation conflicts with another use; role=3; help: keep the transfer and dependent resource operations in sequence\n"
+            (0..count).map(|case|format!("syntax_{case}\tparallel endpoint delegation conflicts with another use; role=3; help: keep the transfer and dependent resource operations in sequence\n")).collect::<String>()
         );
     }
 
     #[test]
     fn contract_aliases_do_not_inherit_a_different_rejection_for_the_same_source() {
         let catalog = contract_cases(template_cases(2, 1, 32));
-        let source = &catalog.cases.iter().find(|case| case.0 == 4869).unwrap().4;
+        let distinct = 1217 * contracts::VARIANTS;
+        let reused = distinct + 1;
+        let source = &catalog
+            .cases
+            .iter()
+            .find(|case| case.0 == reused)
+            .unwrap()
+            .4;
         let reasons = catalog
             .negative_sources
             .values()
@@ -2503,14 +2663,18 @@ mod population_tests {
             ])
         );
         assert_eq!(
-            catalog.expected_rejections.get(&4869),
+            catalog.expected_rejections.get(&reused),
             Some(&"ParallelSelector")
         );
         assert_eq!(
-            catalog.expected_rejections.get(&4868),
+            catalog.expected_rejections.get(&distinct),
             Some(&"MissingBranchKnowledge")
         );
-        assert!(catalog.negative_sources.contains_key("contracts_4868_0"));
+        assert!(
+            catalog
+                .negative_sources
+                .contains_key(&format!("contracts_{distinct}_0"))
+        );
     }
 
     #[test]

@@ -1,10 +1,108 @@
 // Observe actual I/O overlap and completion without choosing protocol steps.
+fn operation_state_json(cut: &crate::endpoint::proof_snapshot::OperationCutSnapshot) -> String {
+    let target = crate::endpoint::proof_snapshot::operation_cut_json(cut);
+    let progress = crate::endpoint::proof_snapshot::observation_json(&cut.actor);
+    let reentry = cut.target.reentry
+        .map(|(scope, epoch, current)| format!("[{scope},[{epoch},{current}]]"))
+        .unwrap_or_else(|| "null".into());
+    format!("{{\"cut\":{target},\"progress\":{progress},\"borrowReentry\":{reentry},\"retainedRolls\":{:?},\"creditedRolls\":{:?}}}", cut.actor.retained_rolls, cut.actor.credited_rolls)
+}
+
+// A whole-handle trial returns passive input evidence alongside its outcome.
+// The tap commits reconstruct the fixture FIFO; they never drive an Endpoint.
+struct WholeCallObservation {
+    cut: crate::endpoint::proof_snapshot::OperationCutSnapshot,
+    // The actual successful preview before Drop, distinct from the following
+    // typed-call cut. Ordinary input previews need not remain parked.
+    preview: Option<crate::endpoint::proof_snapshot::OperationCutSnapshot>,
+    commits: Vec<[u64; 4]>,
+    payload_available: bool,
+    prefix: Vec<u16>,
+    prefix_inputs: Vec<Vec<u16>>,
+    input: Vec<u16>,
+    // Actual result metadata, used only by the offer-availability assertion.
+    // It is deliberately absent from the independent permission check's input.
+    committed_source: Option<u16>,
+}
+
+struct WholeCutWriter {
+    ids: std::collections::BTreeMap<String, usize>,
+    output: std::io::BufWriter<std::fs::File>,
+}
+impl WholeCutWriter {
+    fn new(case: usize) -> Self {
+        let directory = observation_root().join("whole-operation-states");
+        std::fs::create_dir_all(&directory).unwrap();
+        Self {
+            ids: Default::default(),
+            output: std::io::BufWriter::new(std::fs::File::create(directory.join(format!("{case}.jsonl"))).unwrap()),
+        }
+    }
+
+    fn record(&mut self, observation: Option<WholeCallObservation>) -> String {
+        use std::io::Write;
+        let Some(observation) = observation else { return "null".into(); };
+        let state = operation_state_json(&observation.cut);
+        let preview = observation.preview.as_ref().map(operation_state_json);
+        let fields = format!("\"commits\":{:?},\"payloadAvailable\":{},\"prefix\":{:?},\"prefixChoices\":{:?},\"input\":{:?}", observation.commits, observation.payload_available, observation.prefix, observation.prefix_inputs, observation.input);
+        let key = format!("{state},{fields},{preview:?}");
+        let id = if let Some(&id) = self.ids.get(&key) { id } else {
+            let id = self.ids.len();
+            let preview = preview.map_or_else(|| "null".into(), |state| format!("{{\"id\":{id},{}", &state[1..]));
+            writeln!(self.output, "{{\"state\":{{\"id\":{id},{},{fields},\"preview\":{preview}}}", &state[1..]).unwrap();
+            self.ids.insert(key, id);
+            id
+        };
+        id.to_string()
+    }
+
+    fn finish(mut self) {
+        use std::io::Write;
+        assert!(!self.ids.is_empty(), "whole trials recorded no actual call cuts");
+        self.output.flush().unwrap();
+    }
+}
+
 #[derive(Default)]
 struct PendingCalls {
     calls: std::cell::RefCell<std::collections::BTreeSet<ObservedCall>>,
     completed: std::cell::RefCell<Vec<(u8, u8, u8, bool)>>,
+    // Actual successful par() calls: actor/view, group and part source bounds,
+    // source-script occurrence and the completed-call cut. Observation only.
+    borrows: std::cell::RefCell<Vec<[usize; 8]>>,
     overlapped: std::cell::Cell<bool>,
     scope_rejections: std::cell::RefCell<Vec<LocalProbe>>,
+    admission: std::cell::RefCell<Option<MeasuredAdmission>>,
+}
+
+// A measured trial ends through the runtime's ordinary error propagation so
+// that siblings are cancelled in place. This error controls the test trial,
+// never the protocol, the Endpoint's authority or an application participant.
+enum TrialError {
+    Endpoint(hibana::EndpointError),
+    Measured,
+}
+impl From<hibana::EndpointError> for TrialError {
+    fn from(error: hibana::EndpointError) -> Self {
+        Self::Endpoint(error)
+    }
+}
+impl core::fmt::Debug for TrialError {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Endpoint(error) => error.fmt(fmt),
+            Self::Measured => fmt.write_str("measured scoped admission"),
+        }
+    }
+}
+struct MeasuredAdmission {
+    probe: LocalProbe,
+    prefix_records: usize,
+    prefix_borrows: usize,
+    prefix_calls: usize,
+    outcome: Outcome,
+    error_utf8: Vec<u8>,
+    cut: crate::endpoint::proof_snapshot::OperationCutSnapshot,
 }
 
 use probe_data::LocalProbe;
@@ -16,7 +114,7 @@ fn observation_root() -> std::path::PathBuf {
             assert!(root.is_absolute(), "observation directory must be absolute");
             root
         }
-        None => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        None => std::path::PathBuf::from(PROTOCOL_SOURCE_DIR),
     }
 }
 
@@ -162,21 +260,37 @@ impl<R: std::io::BufRead> ScopePlans<R> {
         let Some(Json::Array(records)) = input.get("probes") else {
             panic!("missing scope-plan probes")
         };
-        let probes = records
+        let probes: Vec<_> = records
             .iter()
             .map(|record| {
                 let Json::Object(fields) = record else {
                     panic!("expected scope probe object")
                 };
-                assert!(
-                    !Self::boolean(record, "accepted"),
-                    "a scope plan must request rejection"
-                );
+                if !matches!(record.get("kind"),Some(Json::String(kind)) if kind=="admission") {
+                    assert!(
+                        !Self::boolean(record, "accepted"),
+                        "a scope plan must request rejection"
+                    );
+                }
                 let occurrence = Self::field(record, "occurrence");
                 let actor = Self::field(record, "actor").try_into().unwrap();
                 let role = Self::field(record, "role").try_into().unwrap();
                 let label = Self::field(record, "label").try_into().unwrap();
                 match record.get("kind") {
+                    Some(Json::String(kind)) if kind == "admission" => {
+                        assert_eq!(fields.len(), 10, "unknown admission probe field");
+                        LocalProbe::Admission {
+                            at: Self::field(record, "at").try_into().unwrap(),
+                            at_receive: Self::boolean(record, "atReceive"),
+                            after: Self::boolean(record, "after"),
+                            occurrence,
+                            actor,
+                            role,
+                            label,
+                            receive: Self::boolean(record, "receive"),
+                            choice: Self::field(record, "choice"),
+                        }
+                    }
                     Some(Json::String(kind)) if kind == "borrow" => {
                         assert_eq!(fields.len(), 9, "unknown borrow probe field");
                         let Some(Json::Array(group)) = record.get("group") else {
@@ -210,6 +324,14 @@ impl<R: std::io::BufRead> ScopePlans<R> {
                 }
             })
             .collect();
+        assert_eq!(
+            probes
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            probes.len(),
+            "duplicate scoped probe coordinates"
+        );
         self.next += 1;
         probes
     }
@@ -271,6 +393,40 @@ fn scope_plan_loading_keeps_each_source_visit_and_both_schedules() {
     }
 }
 
+#[test]
+fn scoped_admission_plans_preserve_the_call_cut_and_reject_malformed_coordinates() {
+    let probe = LocalProbe::Admission {
+        at: 2,
+        at_receive: true,
+        after: false,
+        occurrence: 7,
+        actor: 1,
+        role: 3,
+        label: 5,
+        receive: false,
+        choice: 9,
+    };
+    let line = probe.json();
+    let load = |records: &str| {
+        let text =
+            format!("{{\"name\":7,\"scripts\":1}}\n{{\"script\":0,\"probes\":[{records}]}}\n");
+        let mut input = ScopePlans::new(text.as_bytes(), 7, 1);
+        let probes = input.next(0);
+        input.finish();
+        probes
+    };
+    assert_eq!(load(&line), [probe]);
+    for malformed in [
+        format!("{line},{line}"),
+        line.replace("\"after\":false", "\"after\":0"),
+        line.replace("\"atReceive\":true,", ""),
+        line.replace("\"actor\":1", "\"actor\":256"),
+        line.replace("\"receive\":false", "\"receive\":false,\"accepted\":true"),
+    ] {
+        assert!(std::panic::catch_unwind(|| load(&malformed)).is_err());
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ObservedCall {
     Message(u8, u8, u8, bool),
@@ -278,17 +434,47 @@ enum ObservedCall {
 }
 
 // Read the logical role from the actual Endpoint type, including par borrows.
-trait ObservedEndpointRole {
+trait ObservedEndpoint {
     const ROLE: u8;
+    /// The live target must use InMemoryTransport, between executor polls.
+    unsafe fn operation_cut(&self) -> crate::endpoint::proof_snapshot::OperationCutSnapshot;
 }
-impl<const ROLE: u8> ObservedEndpointRole for Endpoint<'_, ROLE> {
+impl<const ROLE: u8> ObservedEndpoint for Endpoint<'_, ROLE> {
     const ROLE: u8 = ROLE;
+    unsafe fn operation_cut(&self) -> crate::endpoint::proof_snapshot::OperationCutSnapshot {
+        // SAFETY: the caller establishes the original concrete transport.
+        unsafe {
+            crate::endpoint::proof_snapshot::view_tag(self).operation_cut::<InMemoryTransport>()
+        }
+    }
 }
-impl<const ROLE: u8> ObservedEndpointRole for hibana::ParallelEndpoint<'_, '_, ROLE> {
+impl<const ROLE: u8> ObservedEndpoint for hibana::ParallelEndpoint<'_, '_, ROLE> {
     const ROLE: u8 = ROLE;
+    unsafe fn operation_cut(&self) -> crate::endpoint::proof_snapshot::OperationCutSnapshot {
+        // SAFETY: the caller establishes the original concrete transport.
+        unsafe { self.proof_tag().operation_cut::<InMemoryTransport>() }
+    }
 }
-fn observation_role<E: ObservedEndpointRole>(_: &E) -> u8 {
+fn observation_role<E: ObservedEndpoint>(_: &E) -> u8 {
     E::ROLE
+}
+
+// Serialize the actual immutable resident data, without deriving operations.
+fn write_operation_image<const ROLE: u8>(program: &RoleProgram<ROLE>, case: usize) {
+    let image = crate::global::compiled::images::RoleDescriptorRef::from_resident(
+        program.role_image_ref(),
+    );
+    let data = crate::test_support::lean_descriptor::descriptor_json(image);
+    let directory = observation_root().join("operation-images");
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join(format!("{case}-{}.json", image.role()));
+    match std::fs::read_to_string(&path) {
+        Ok(previous) => assert_eq!(previous, data, "one actor has different resident images"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::write(path, data).unwrap();
+        }
+        Err(error) => panic!("cannot preserve operation image: {error}"),
+    }
 }
 impl ObservedCall {
     fn actor(self) -> u8 {

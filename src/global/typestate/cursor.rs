@@ -6,7 +6,7 @@ use super::facts::{
     ARM_SHARED, InboundFrameKey, LocalDependency, LocalMeta, PackedEventConflict,
     PassiveArmChildFact, RecvMeta, RouteScopeRows, SendMeta, StateIndex, state_index_to_usize,
 };
-#[cfg(all(test, hibana_repo_tests))]
+#[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
 use super::facts::{LocalAction, LocalNode};
 use crate::runtime_core::layout::u32_word_count;
 use crate::{
@@ -65,6 +65,7 @@ impl CursorInvariantError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SendPreviewError {
+    Unavailable,
     Invariant,
     OutOfOrder,
     OtherViewPending,
@@ -176,7 +177,7 @@ impl EventCursorMachine {
         self.event_program().node_len()
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     fn node(&self, idx: usize) -> LocalNode {
         self.event_program().node(idx)
     }
@@ -331,7 +332,7 @@ pub(crate) struct EventCursorState {
     completed_event_words: *mut u32,
     /// Qualification-only observation. It never authorizes or schedules an
     /// operation and is absent from production storage and generated images.
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
     completion_mutations: u64,
 }
 
@@ -377,7 +378,7 @@ impl EventCursorState {
             core::ptr::addr_of_mut!((*dst).current_step_label_codes)
                 .write(current_step_label_codes);
             core::ptr::addr_of_mut!((*dst).completed_event_words).write(completed_event_words);
-            #[cfg(any(kani, all(test, hibana_repo_tests)))]
+            #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
             core::ptr::addr_of_mut!((*dst).completion_mutations).write(0);
             let mut lane_idx = 0usize;
             while lane_idx < logical_lane_count {
@@ -589,7 +590,7 @@ impl EventCursor {
 
     #[inline(always)]
     fn write_completion_bit(&mut self, index: usize, completed: bool) {
-        #[cfg(any(kani, all(test, hibana_repo_tests)))]
+        #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
         self.record_completion_mutation();
         let count = self
             .machine()
@@ -609,7 +610,7 @@ impl EventCursor {
         }
     }
 
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
     fn record_completion_mutation(&mut self) {
         self.state_mut().completion_mutations = self
             .state()
@@ -618,7 +619,7 @@ impl EventCursor {
             .expect("qualification mutation count exhausted");
     }
 
-    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    #[cfg(any(kani, all(test, any(hibana_repo_tests, hibana_generated_protocols))))]
     pub(crate) fn completion_mutations(&self) -> u64 {
         self.state().completion_mutations
     }

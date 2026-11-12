@@ -200,7 +200,7 @@ async fn source_ready_rows_match_actual_admission_across_a_parallel_owned_visit(
                          (Hibana.sourceRowReady data path {name}.snapshot row = true →\n        \
                          Hibana.sourceRowViewsIssued path {name}.snapshot row = true) :=\n  \
                          Hibana.accepted_actor_admission_has_exact_source_readiness {name}Checked\n\n",
-                        super::commit::observation_source(&snapshot),
+                        crate::endpoint::proof_snapshot::observation_source(&snapshot),
                         snapshot.retained_rolls,
                     ));
                 source.push_str(&std::format!(
@@ -380,8 +380,8 @@ theorem everyReadyRowHasItsSourceDerivedInitialIssueOrReceipt
                          before := {}\n    after := {}\n  }}\n  \
                          wire := {{\n    session := {}\n    lane := {}\n    sender := {}\n    receiver := {}\n    \
                          frameLabel := {}\n    payload := {payload:?}\n  }} }}\n\n",
-                        super::commit::observation_source(before),
-                        super::commit::observation_source(after),
+                        crate::endpoint::proof_snapshot::observation_source(before),
+                        crate::endpoint::proof_snapshot::observation_source(after),
                         header.session().raw(),
                         header.lane(),
                         header.source_role(),
@@ -564,7 +564,7 @@ theorem actualSourceReadyReturnDerivesItsReceipt :
             ] {
                 source.push_str(&std::format!(
                     "def {name} : Hibana.ActorProgressObservation := {}\n\n",
-                    super::commit::observation_source(snapshot),
+                    crate::endpoint::proof_snapshot::observation_source(snapshot),
                 ));
             }
             let owner_send_event = owner_initial

@@ -100,9 +100,6 @@ where
         &mut self,
         state: &mut OfferState<'r>,
     ) -> Poll<RecvResult<Option<u8>>> {
-        if !self.progress.cursor.has_route_scopes() {
-            return Poll::Ready(Err(RecvError::PhaseInvariant));
-        }
         state.execution = OfferExecution::Selecting {
             frontier_visited: self.progress.frontier_state.empty_frontier_visit_set(),
         };
@@ -169,18 +166,105 @@ where
                 return Poll::Pending;
             }
             Ok(Some(ObservedIngressSelection::Branch(selection))) => selection,
-            Ok(Some(ObservedIngressSelection::OrdinaryReceive(lane))) => {
+            Ok(Some(ObservedIngressSelection::OrdinaryReceive(index))) => {
                 let mut ingress = state.take_carried_ingress();
-                let payload = crate::invariant_some(ingress.take_transport());
-                if let Err(error) = self.requeue_transport_frame(payload) {
-                    state.discard_terminal();
-                    return Poll::Ready(Err(error));
+                let OfferExecution::Selecting { frontier_visited } = &state.execution else {
+                    crate::invariant();
+                };
+                // Ordinary input supplies no route knowledge. Preserve an
+                // independently runnable choice instead of letting an unrelated
+                // queued input hide it, as the route-only offer already did.
+                let frontier = match self.read_projected_offer_frontier(frontier_visited, None) {
+                    Ok(frontier) => frontier,
+                    Err(error) => {
+                        ingress.discard_terminal();
+                        return Poll::Ready(Err(error));
+                    }
+                };
+                if frontier.ready_without_input {
+                    let payload = crate::invariant_some(ingress.take_transport());
+                    let lane = payload.lane_wire();
+                    self.requeue_transport_frame(payload)?;
+                    let (word, bit) = lane_word_index(usize::from(lane));
+                    inspected_lanes[word] |= bit;
+                    return Poll::Ready(Ok(None));
                 }
-                // Ordinary input remains on its transport direction until
-                // recv consumes it. Do not inspect it twice in this poll.
-                let (word, bit) = lane_word_index(usize::from(lane));
+                // Keep the first ordinary frame local while inspecting the
+                // remaining ready directions once. An arrived route input
+                // still wins; ordinary data neither selects nor hides it.
+                let ordinary_lane = crate::invariant_some(ingress.transport_lane_wire());
+                let (word, bit) = lane_word_index(usize::from(ordinary_lane));
                 inspected_lanes[word] |= bit;
-                return Poll::Ready(Ok(None));
+                loop {
+                    let other = match self.poll_any_active_offer_transport_frame(
+                        &mut state.pending_recv,
+                        cx,
+                        inspected_lanes,
+                        &frontier.incoming,
+                    ) {
+                        Poll::Ready(Ok(Some(frame))) => frame,
+                        Poll::Ready(Ok(None)) | Poll::Pending => break,
+                        Poll::Ready(Err(error)) => {
+                            ingress.discard_terminal();
+                            return Poll::Ready(Err(error));
+                        }
+                    };
+                    let lane = other.lane_wire();
+                    let (word, bit) = lane_word_index(usize::from(lane));
+                    inspected_lanes[word] |= bit;
+                    let mut next = OfferStagedIngress::empty();
+                    next.stage_transport(other);
+                    let OfferExecution::Selecting { frontier_visited } = &mut state.execution
+                    else {
+                        crate::invariant();
+                    };
+                    let selection = self.select_scope(
+                        Some(lane),
+                        next.transport_frame_key(),
+                        next.transport_observation(
+                            self.context.sid.raw(),
+                            self.public_header.role(),
+                        ),
+                        frontier_visited,
+                        None,
+                    );
+                    match selection {
+                        Ok(Some(ObservedIngressSelection::Branch(_))) => {
+                            let payload = crate::invariant_some(ingress.take_transport());
+                            if let Err(error) = self.requeue_transport_frame(payload) {
+                                next.discard_terminal();
+                                return Poll::Ready(Err(error));
+                            }
+                            state.carry_ingress(next);
+                            return Poll::Ready(Ok(None));
+                        }
+                        Ok(_) => {
+                            if let Err(error) = self.requeue_transport_frame(crate::invariant_some(
+                                next.take_transport(),
+                            )) {
+                                ingress.discard_terminal();
+                                return Poll::Ready(Err(error));
+                            }
+                        }
+                        Err(error) => {
+                            next.discard_terminal();
+                            ingress.discard_terminal();
+                            return Poll::Ready(Err(error));
+                        }
+                    }
+                }
+                return match self.prepare_ordinary_receive(index, &mut ingress) {
+                    Poll::Ready(Ok(Some(event))) => {
+                        Poll::Ready(Ok(Some(self.produce_branch(event))))
+                    }
+                    Poll::Ready(Ok(None)) => Poll::Ready(Ok(None)),
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Err(error)) => {
+                        ingress.discard_terminal();
+                        state.discard_terminal();
+                        Poll::Ready(Err(error))
+                    }
+                };
             }
             Ok(Some(ObservedIngressSelection::PendingReceive(lane))) => {
                 let mut ingress = state.take_carried_ingress();

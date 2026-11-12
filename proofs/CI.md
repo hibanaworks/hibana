@@ -10,7 +10,7 @@ possible protocol, payload, visit count or transport failure.
 | Projection and source rules | The complete checked Lean model inventory, standalone implementation theorems, theorem types and axiom boundaries; native projection and malformed-image tests |
 | Finite public protocol conformance | Every constructor-budget-2 catalog shard, and every shared-message-contract catalog entry and variant |
 | Missing or extra runtime permission | Every next-operation probe at every prefix of each catalog's finite scripts; complete probe and schedule inventories; no runtime-only or model-only discrepancy |
-| Detection of known defects | Native Endpoint regressions and the resolver, parked preview, reentry, receive, prefix and shrinking sensitivity controls |
+| Detection of known defects | Native Endpoint regressions, complete generated operation matrices, malformed-record controls and failure-preserving shrinking |
 | Critical memory boundaries | Strict-provenance Miri for runtime ownership, borrowed Transport handles, initial issuance, real resource Endpoint joins and fault/cancellation ownership |
 | Physical and portable cost constraints | Host and embedded no_std builds, forbidden long const evaluation, existing layout/allocation tests and portable work-count budgets on macOS and ARM Linux |
 | Actual long consumer programs | Required macOS ChoreoFix integration: build the pinned 6E, codebase and 16E real globals and localsides, including all projections of the 1,586-event review source; drive 1H concurrent delegated commits and 16E two-resource processing with the real WASI guest. Every compiled host selects this candidate core and keeps forbidden long const evaluation. |
@@ -33,11 +33,10 @@ capacity regression. Stopped 6E audit attempts remain unqualified evidence.
 
 `protocol-shape-partitions ci-matrix` is the sole CI assignment source for
 generated conformance. It assigns the complete budget-2 population across all
-32 shards and every shared-contract source. Five full contract populations also
-serve as the positive side of the required sensitivity controls; the controls
-assignment owns these populations instead of duplicating their execution in
-separate jobs. This gives 43 ordinary assignments without removing any contract
-source, variant or script.
+32 shards and every shared-contract source. Every shared-contract population has
+its own assignment, alongside the 32 constructor shards and the common controls
+assignment, with every source, variant and script executed once. There is no
+old-implementation rebuild job.
 Its tests reject missing or duplicate assignments. Catalog sizes are
 shared with the generator rather than copied into workflow inputs.
 `check_protocol_ci.sh ID [SEED]` obtains that ID's canonical assignment and runs
@@ -57,143 +56,202 @@ Embedded profiling builds run once in the no_std gate for both supported ARM
 targets, rather than being repeated on both host jobs.
 
 Each CI run compiles the shared public conformance oracle once for its selected
-source revision and host platform. Every assignment verifies the oracle's binary hash, source-input
-hashes, source revision and platform before using it. Missing or mismatched
-artifacts fail the job. All eleven model-omission controls run once while building
-that oracle, before any generated population starts. Their implementation inputs
-and result tables are sealed with it. The model logs and patches are archived;
-the compiled Lean build tree is not transferred to consumers. No population job
-installs Lean or rebuilds a matching oracle. Runtime-only mutants receive a copy
-of that same sealed oracle and verify its source inputs, revision and platform;
-their Cargo targets remain separate. Each source still gets its own
-compiler diagnostics, real Endpoint execution, oracle comparison and structural
-observation controls. The four synthetic accepted-bit mutations (initial and
-continuation, false admission and false rejection) run once in the required
-controls assignment, on its resolver-occurrence catalog. They use the same
-compiled checker and complete probe inventory. Repeating those comparisons for
-every population only recomputed unchanged source witnesses; it did not exercise
-a different comparison rule. Source-dependent schedule and history controls
-remain attached to every population.
+source and host platform. Every assignment verifies its binary and complete
+source-input hashes before use. Missing or mismatched artifacts fail the job.
+Every new binary runs the fifteen guarded source cases. The normal Lean audit
+checks the source-model theorems and their proof boundaries.
+Each source keeps its compiler diagnostics, real Endpoint executions, model
+comparison and source-dependent record, schedule and history controls. Four
+accepted-bit mutations (initial and continuation, false admission and false
+rejection) run once in contracts-2. They alter test observations, not production
+code, and use the same compiled checker and complete query inventory.
 The source-model theorems and their axiom checks run in this same oracle job,
 reusing its Lean imports. The Rust job does not install Lean and rebuild those
 same modules. Local `run_ci_gates.sh` still checks both parts; `--rust` names
 only the Rust part that CI assigns separately.
 The build cache is an optimization of the same checker, not another oracle.
 
-Admission observations use one JSONL query header per source and one record
-per exact (prefix, recorded resolver history). Each record contains an answer
-for every header query in order, including each parked-preview result. The
-checker derives the complete query matrix and prefix inventory independently
-from the source; wrong matrices, missing/duplicate histories, short/extra answer
-rows, malformed data and unfinished files fail closed. No outcome is deduplicated.
-Observed answer rows and their model answers are held only in bounded query
-batches; the independently derived prefix inventory remains resident.
-General Lean theorems preserve every expanded question/answer and show that
-query batching retains the original source comparator's results. The process
-runner moves the first partition's immutable observations instead of making
-two full-size copies; all subsequent partitions must match it byte-for-byte.
-The replay checker shares immutable source preparation and repeated prefixes. Each cached replay carries a Lean
-equality to fresh replay; general theorems preserve every query and the whole
-candidate family. Query inputs are prepared once, and an empty candidate state
-reuses the previous answer row instead of constructing another all-false row.
-Neither caching nor query batching removes source candidates or scripts.
-Every semantic prefix class retains the complete next-call query matrix.
-Input histories are enumerated modulo input opacity, rather than multiplying
-arbitrary unused bits at every operation. The logical sender at a resolved
-source scope's entry controls its resolver. All controller views keep every
-input pattern, even after a choice becomes known. The native driver checks every callback's controller
-logical view, including after delegation; a physical actor's other view does
-not grant resolver authority. It also independently checks every declared
-controller against the first source message that belongs to its resolved scope.
+Admission observations retain every query at every independently derived script prefix and recorded resolver history. Missing, duplicate, malformed, foreign or unfinished inventories fail closed. A word proves that its prefix has a finite source execution; it does not identify the next roll visit. Both whole Endpoint calls and actual parallel-borrow calls therefore use the same PublicCandidateAdmission source predicate at their measured call cut. A whole-handle cut is taken after a successful parked offer, before its typed call. The evidence keeps the exact resolver inputs, preview source identity, borrow region, retained completion, actor progress and immutable resident image. The source checker derives matching public contracts and prerequisites; it never consumes a Rust readiness verdict. The shared Lean fixture FIFO reconstructs accepted packets from actual commits. Completion eligibility is compared for every measured call; Pending versus an error is a separate runtime obligation. An absent affine handle is recorded as unavailable, rather than counted as a rejected operation.
 
-For other views, earlier input vectors are normalized to the empty vector.
-The source checker independently derives that view classification and validates
-that no possible transition enters a fresh resolver before erasing any input.
-General Lean theorems preserve the complete state trace, final replay state and
-history length for arbitrary inputs and source plans. All source scripts and
-public operation orders remain; every next-call input pattern is still executed.
-Histories containing only empty vectors or retained controller inputs are
-already canonical. A general theorem justifies returning those histories
-without replaying the source-candidate family at every completed-script cut.
-Readiness indexes for that family are prepared only by branches that use them.
-The shared oracle is keyed by its complete model/build inputs and platform,
-with binary/control checksums checked on reuse. The recorded revision remains
-its original build provenance; an unrelated commit does not rebuild the model.
-Input-sensitive histories remain distinct, including the outcome-distinguishing
-history-removal control. Reported counts are actual Endpoint probes over these
-semantic prefix classes, not counts multiplied by unused input variations.
-This relies on resolver input being opaque to the kernel except through its
-registered callback, as in the driver. It is not a refinement proof of arbitrary
-Rust code or arbitrary side effects of application callbacks.
+The successful preview is observed before its borrow is dropped, separately
+from that post-Drop typed-call cut. The checker verifies that Drop releases
+only the target operation lease, preserving all progress, custody, route choices
+and repetition credits. An ordinary input clears its preview row and requeues
+the frame; an actual choice may retain its knowledge. Its exact pre-Drop source
+row is checked against the same source predicate, without treating the absence
+of a retained ordinary preview as an absent successful offer.
 
-Source-occurrence lookup is prepared once per witness, and the resumption
-table receives shared source-domain and unfolding-scope values explicitly.
-The order predicate retains subtree counts in closures rather than recounting
-the expanded source for every dependency pair. Each dependency row lazily
-remembers the prerequisite prefix actually inspected; readiness stops at the
-first missing predecessor and reuses that prefix for later queries. It neither
-builds the full quadratic matrix nor repeats uncached pair comparisons.
-Physical actors are resolved lazily once per point and shared across dependency
-comparisons, rather than rescanning bindings for both ends of every pair.
-Per-point resumption conditions are prepared lazily, only after causal readiness
-succeeds. General theorems equate the cached counts, order and readiness to the
-original source definitions, including all predecessor and resumption conditions.
-Answer rows use arrays, so reusing an empty candidate's row does not traverse
-every probe merely to check its length. These representations remain equal to
-the original source-readiness and list-query specifications.
-Each prefix computes its observation bits once for the whole group of questions.
-Send and receive frontiers are evaluated lazily, once per direction, and shared
-by all resolver-input questions at that prefix. A query with an existing positive
-witness does not force a frontier. The grouped path and individual calls use
-the same binding step; general Lean theorems equate every resulting query answer
-and preserve the whole candidate family. Prefix-only questions do not check
-operation readiness. A periodic counter reports considered witnesses and does
-not change the result or population.
-Large witness inventories are split into disjoint contiguous batches in one
-guarded oracle process. Pure Lean tasks evaluate the batches on the native
-worker pool and merge every answer by disjunction. General append and task
-theorems preserve the entire inventory and all answers for any split depth;
-an executable guarded-roll fixture also compares serial and split evaluation.
-Task continuations join results without blocking workers. The same aggregate
-descendant-memory limit applies, and an exhausted budget is not a result.
-Each source runs in a fresh native worker, sequentially, so its allocator and
-task-pool workspace are released before the next source's preparation. The
-parent validates the complete input and observation inventory, executes every
-source through the same comparator, checks each returned source identity and
-aggregates all counts. Workers receive the original input and observation
-paths; no candidate, probe, script or source variant is removed. Their reports
-are not population certificates. Only the parent emits the complete population
-summary, after every worker succeeds, under the same descendant-memory guard.
-Observation mutations stream one history group at a time. They alter a single
-answer or remove/duplicate a group while preserving every other record, including
-other histories of the same word. Immutable baselines are linked into each
-control directory; mutations replace their own file and never modify the shared
-baseline. A real-file regression verifies this isolation. Temporary mutation
-data is released before starting the checker. All source-dependent negative
-controls still use the complete original source and observation population.
-The oracle build executes its fifteen fixed source-cut regressions once and
-archives their log with the binary hash. Normal population invocations do not
-repeat them. Their mutation controls retain the explicit regression entry.
-Sensitivity captures stay in their own baseline or mutant source root; an
-outer population-output override cannot redirect both to the same directory.
-Syntax samples and shrink attempts own separate capture roots, including repeat
-tests of the final reduced source. The shrink control runs its weakened model
-as a supplemental invocation of the same sealed oracle, before that trial's
-observations are retired. A supplemental failure retains the trial instead of
-deleting data that another checker still needs.
-The controls assignment prepares its passing populations once. Every subsequent
-production mutation verifies that baseline's completed-run and verdict hashes,
-source content, revision and generated inputs before using it. A missing or
-mismatched baseline fails instead of selecting another checkout or rebuilding a
-different positive case. An existing population directory cannot be overwritten.
-Generated tests use the executable inventory from their initial Cargo build,
-with binary hashes checked before and after execution. A second Cargo build
-only to enumerate the same executables is removed. Successful populations
-discard their private build targets and consumed temporary admission arrays.
-Their sources, inputs, binary hashes, complete successful execution traces,
-checker verdicts, negative-control rejection logs and hashes of retired arrays
-remain. Partition copies are removed after their contents have been combined
-and checked. Failed populations retain their debugging evidence.
+For an actual call returning `EndpointError::is_unavailable()`, both generated
+drivers also require the post-call operation cut to equal the pre-call cut and
+the capture to remain unchanged. This checks progress, custody, fault and parked
+previews on the actual target, including parallel borrows. It is a finite Rust
+state comparison, separate from the Lean permission predicate. Native and Miri
+regressions additionally continue through the next valid communication with a
+queued frame, a parked preview and a returned owned Endpoint. This recoverable
+pre-I/O rejection covers declared receives and completed borrowed-payload sends
+outside repeating source bodies. A wrong fragment or a failed owned send remains
+terminal. This is distinct from an absent affine handle and from a terminal
+error after communication starts. The generated trial still ends after
+its probe; it does not execute the application's shell-request dispatch.
+
+Actual localsides execute every finite source script in both poll orders, including real parallel borrows and owned Endpoint moves. Their completed-call records are checked against SourceUnfolding and source execution. Scoped questions are taken on those actual handles, with the same preceding calls, borrows and capture. The common source-cut checker compares all measured positive and negative outcomes. Its fixture-head theorem preserves the earliest matching lane packet and the full wire label. This is finite conformance and checked metadata/cut correspondence, not a refinement proof for arbitrary Rust histories.
+
+A public message label can occur in both source arms. The generated driver
+requires the observed preview to permit its planned word; it does not infer a
+unique source arm from that label. Actual occurrences, resolver histories and
+every measured permission remain independently checked from the captures.
+The contract catalog includes nested choices with different first peers and
+reused ordinary or affine payloads. Send preparation follows the sealed route
+ancestry from outer to inner, without invoking an inactive child's resolver.
+The nested-roll population also switches a child into a previously unused arm
+after its parent body completed. This must retain the parent's selected arm
+until an actual enclosing restart; an unused row's completion bit cannot decide
+which roll is being reentered. Native stateful callbacks additionally reject a
+second invocation of the same fresh decision during one send preparation.
+
+The whole-call checker shares decoded passive states using the same complete
+content key already used by query preparation. Original context IDs remain
+consecutive and individually consumed; prefix histories, input, payload
+availability and FIFO evidence are retained for every context. Only the
+inventory ID is absent from the state key. A wrong-ID record is an executable
+rejection control. This storage sharing does not reduce the input population.
+
+The passive cut distinguishes retained historical completion from an unconsumed
+child-completion credit. Both copy existing kernel data; neither authorizes an
+operation. A credited child can retain current work only when the entering
+operation is outside that child and source order makes it independent of every
+participating child row. Its internal choices may remain. A still-running
+child also retains its known enclosing choice; a completed child permits a
+fresh enclosing decision. Neither can supply an unknown parent choice.
+A preview of a prospective visit does not overwrite
+the current visit's choice for an independent continuation. The complete cut,
+including these credits, is part of the cache key; every original state and
+query is still checked. Old observations without the credit field are rejected,
+rather than guessed or silently upgraded.
+
+A typed send can select an intrinsic route that `offer()` alone cannot choose.
+An ancestor resolver does not determine a nested intrinsic branch. Required
+offer-availability assertions therefore cover resolver-controlled paths without
+such a message-selected ancestor. This does not omit any typed-operation query;
+all successful parked previews still receive the same source-cut check.
+The previewed source row itself must be a source candidate, independently of
+whether the following typed call succeeds. Assignment 18 keeps the original
+carrier live after a failed-result roll transfers its entry resource onward;
+an obsolete result must not be published by `offer()`. The source model already
+requires the entry resource's issued header when preparing another visit.
+Assignment 19 retains an unconsumed return in the continuation. Its preview
+can name the next choice before that receipt; its typed call must still wait
+for, or first perform, the receipt. Preview eligibility and call completion
+are distinct source questions. A completed old return cannot stand in for an
+outstanding one. Existing native regressions also keep the independent-view
+wait and the same-view rejection cases.
+Assignment 20 combines a resolver at a repeated entry, actual resource return,
+and an incoming continuation after that repeated prefix. Its generated
+localsides start the continuation's `offer()` before the peer sends and retain
+that same Future across Pending until the input arrives. A cancelled one-poll
+probe or a successful preview with an already queued frame does not cover this
+schedule. Four contract variants and eight source scripts run in both poll
+orders. The separate two-resource Endpoint regression also tests one, two and
+four failed visits, with input queued before the offer and after it is Pending.
+This extra availability assertion identifies the successful send through its
+actual 16-bit committed source record, rather than the alias used to name the
+public call. That result metadata is not supplied to the independent permission
+checker.
+When a typed choice entry precedes a parallel borrow, its cut belongs to that
+actual entry handle. Its occurrence comes from the scheduled message leaf,
+not the parallel group's canonical first row. Owned-payload queries use the
+entry's current source scope rather than the later borrowed child.
+
+The cut also records the materialized preview's actual scope and arm. An active
+`RouteBranch` retains its exact source entry. An idle typed send reuses a parked
+preview only while that entry remains enabled; otherwise it searches matching
+operations with the held choice and its source ancestors. Other calls share
+those choices without inventing knowledge of deeper choices. A nested send
+cannot replace an uncommitted held parent decision by calling its resolver
+again. Native regressions and the generated catalog compare these source rules
+with actual Endpoint completions.
+A receive preview does not imply that its packet arrived: it can name a
+prospective repeated operation. Receive availability is checked against the
+commit-derived fixture FIFO, whose earliest matching packet cannot be skipped.
+Source candidate membership does not infer a buffered packet from preview
+metadata. The recorded source 64 return-Endpoint continuation exercises this
+distinction after two inner visits and a retained receive preview.
+
+Offer candidate discovery includes a sealed forward index of repetition entries
+for each logical view and lane. Entries remain discoverable after a containing
+choice and its ordinary tail have completed. The index adds two flash bytes per
+local row only in images with both routes and repetitions; it adds no mutable
+progress or caller storage. Serialization uses cached innermost source spans.
+The image constructor independently derives head membership from the compiled
+source and checks every forward link. Native tests compare enumeration with a
+raw all-scope/all-prior-row scan and reject every bit mutation of the indexed
+topology. Ordinary operation admission still decides whether each candidate is
+currently legal. `DescriptorTopology.lean` proves the innermost-scope reduction,
+the immediate-predecessor interval test and forward traversal bounds; it does
+not claim refinement of the complete Rust discovery loop.
+The ordinary shared-contract assignment 17 requires independently validated
+delayed-parent schedule witnesses in both poll orders. A header-only coverage
+report cannot qualify that assignment.
+
+The same capture tool can additionally pass the saved histories to a qualified EPF executable with --epf. It proposes finite source witnesses and requires EPF to recheck each successful history. A missing witness remains unresolved and fails that requested qualification; it is never interpreted as proof that the global is illegal. The finite cut gate has no EPF search prerequisite and does not claim dynamic EPF history certification. Its summaries report that boundary explicitly. Source witnesses and actual scripts have separate inventories, so extending the untrusted witness proposals never changes the executed case population.
+
+Prefix existence is an existential search over the complete original witness
+family. The driver uses the proved `shapeGroupAnswers_as_candidate_queries`
+equality to stop at the first checked witness. The family, scripts, questions
+and input histories are unchanged.
+
+The oracle is compiled from its complete Lean/build inputs and platform, with
+binary checksums verified on reuse. A source or codec change rechecks its new
+binary and actual observations; previous population success is not promoted to
+a changed checker without rechecking.
+Population receipts compare their implementation, generator, model and tool
+inputs, compiler and platform. They preserve the producer's revision instead of
+invalidating identical content after staging or committing it. Documentation
+and generated claim reports are not executable population inputs. Both input
+manifests sort tracked and untracked paths together before hashing them.
+
+The shrinker uses the same external-process result contract as syntax fuzz.
+Preflight runs the actual reduction loop through that process boundary,
+requiring the original failure class, strict source-size reduction and evidence
+preservation; a compiler/process failure aborts rather than becoming a witness.
+The real Endpoint/backend classification is checked by the four admitted-bit
+controls and native regression expectations. The former whole-pipeline shrink
+demo repeatedly compiled these same obligations and compared an image against
+a deliberately different global. That alternate oracle and demo are removed.
+Seeded fuzz still shrinks actual failures through the ordinary backend.
+
+Each source runs in a fresh bounded worker, sequentially. The parent validates
+and aggregates the complete source inventory. Observation controls mutate one
+answer or history while preserving all others. Source-dependent schedule and
+history controls remain mandatory.
+
+Dedicated scripts, patches, cloned source trees and build caches for restoring
+old defects are removed from normal and extended validation. Native regressions,
+the complete generated domain and illegal-record rejection tests remain.
+Generated runtime inputs compile as library tests of the canonical core,
+reusing its private passive operation observer. Each input is compiled once;
+template inputs are packed by emitted source bytes as well as case count, so
+large probe bodies do not accumulate in one compiler process. Every case is
+retained intact and the runner requires their complete executable inventory.
+The runner verifies the root manifest, executable inventory, source hash and
+binary hash before and after execution. It runs every generated source case
+exactly once across that inventory, including both poll orders and every
+assigned script interval. Ordinary native tests run in their separate required
+gate, rather than being repeated for every generated input. A second build
+only to enumerate the same executables is not needed. Actual borrow targets,
+resident images, copied actor state and producer captures remain associated
+with their measured operation; interval assembly rejects missing queries or
+changed resident-image inventories. These passive values do not select or
+authorize Endpoint operations. Successful populations discard their private
+build targets, consumed admission questions and internal cut states, and
+normalized copies of those questions and images. Their sources, script and
+query inventories, binary hashes, complete successful execution traces,
+resident images, source answers, checker verdicts, schedule witnesses,
+negative-control rejection logs and hashes of retired inputs remain.
+Recreating the retired measurements requires rerunning that population;
+their digests are provenance, not retained raw measurements. Partition and
+control copies are removed after their contents have been combined and checked.
+Failed populations retain their debugging evidence.
 
 
 The budget counts generated constructors, not syntax depth. The grammar includes
@@ -361,3 +419,20 @@ CI success must never be reported as successful extended certification. After a
 core change, run the required contract locally on fixed source as well; perform
 extended checks for the final artifact and for changes to the properties they
 specifically cover. Preserve failing inputs and verification stops.
+
+## Development snapshot: 2026-11-12
+
+The `progress-20261112` tag publishes the current development source, not a
+release or a claim that the complete ordinary/extended gates passed. The public
+`main` stays at its existing revision until the required integration succeeds.
+The latest recorded focused qualification includes native library checks,
+Clippy, no_std/embedded builds, offer-boundary Miri and one generated shared-
+contract assignment. The complete normal generated population and all gate
+aggregation are still unfinished. Five inputs changed after that focused
+source manifest, including the parallel admission implementation and source
+checker; its older results do not certify those changes.
+
+The source-bound records are retained in
+`output/verification/ordinary-offer-v1/qualification.json` and
+`current-population-source.sha256`. Publishing this checkpoint does not replace
+local validation or turn unexecuted assignments into successes.

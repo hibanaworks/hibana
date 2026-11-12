@@ -87,7 +87,7 @@ pub(super) struct OwnershipColumns {
 
 impl ProgramImageColumns {
     /// Little-endian encoding of the four actual resident column values.
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) const fn proof_header_bytes(self) -> [u8; 8] {
         let atoms = self.atom_len.to_le_bytes();
         let resolvers = self.route_resolver_len.to_le_bytes();

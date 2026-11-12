@@ -1,4 +1,5 @@
 import Hibana.SourceOccurrenceTrace
+import Hibana.PublicCandidateAdmission
 import Lean.Data.Json
 import Init.Data.Nat.Bitwise.Lemmas
 

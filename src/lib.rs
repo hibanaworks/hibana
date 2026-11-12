@@ -102,7 +102,7 @@ extern crate self as hibana;
 #[cfg(test)]
 extern crate std;
 
-#[cfg(all(test, hibana_repo_tests))]
+#[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
 mod test_support;
 
 // ============================================================================

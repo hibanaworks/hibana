@@ -174,7 +174,7 @@ async fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_
                 source.push_str(&std::format!(
                     "def {name} : Hibana.ActorProgressObservation := {}\n\
                          def {name}Count : Nat := {}\n",
-                    super::commit::observation_source(snapshot),
+                    crate::endpoint::proof_snapshot::observation_source(snapshot),
                     snapshot.completion_mutations,
                 ));
             }
@@ -199,7 +199,7 @@ async fn a_last_receipt_keeps_past_and_future_handoffs_outside_pending_parallel_
                          before := {}, after := {} }}, wire := {{ session := {}, lane := {}, \
                          sender := {}, receiver := {}, frameLabel := {}, payload := {payload:?} }} }}\n\
                          before := {}, after := {}\n}}\n",
-                        super::commit::observation_source(before), super::commit::observation_source(after),
+                        crate::endpoint::proof_snapshot::observation_source(before), crate::endpoint::proof_snapshot::observation_source(after),
                         header.session().raw(), header.lane(), header.source_role(), header.target_role(), header.label().raw(),
                         before.completion_mutations, after.completion_mutations,
                     ));

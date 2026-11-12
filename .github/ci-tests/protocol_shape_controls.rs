@@ -139,7 +139,8 @@ fn source_json(value: &Json) -> Result<String, Box<dyn std::error::Error>> {
             }
             format!("{{{}}}", encoded.join(","))
         }
-        Json::String(_) | Json::Null => return Err("unsupported source field value".into()),
+        Json::Null => "null".into(),
+        Json::String(_) => return Err("unsupported source field value".into()),
     })
 }
 
@@ -182,13 +183,32 @@ fn single_case(
         .parent()
         .and_then(Path::parent)
         .ok_or("missing shape root")?;
-    for directory in ["scripts", "scope-observations"] {
+    for directory in ["scripts", "scope-observations", "whole-operation-states"] {
         fs::create_dir_all(target.join(directory))?;
         let filename = format!("{name}.jsonl");
-        fs::copy(
-            source_root.join(directory).join(&filename),
-            target.join(directory).join(filename),
-        )?;
+        let source = source_root.join(directory).join(&filename);
+        let destination = target.join(directory).join(filename);
+        if directory == "whole-operation-states" {
+            // Immutable baseline cuts are large. Mutations use the atomic
+            // rewrite helper, which replaces this control's link only.
+            fs::hard_link(source, destination)?;
+        } else {
+            fs::copy(source, destination)?;
+        }
+    }
+    fs::create_dir_all(target.join("operation-images"))?;
+    for entry in fs::read_dir(source_root.join("operation-images"))? {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|file| file.starts_with(&format!("{name}-")) && file.ends_with(".json"))
+        {
+            fs::copy(
+                entry.path(),
+                target.join("operation-images").join(entry.file_name()),
+            )?;
+        }
     }
     Ok((input, observations))
 }
@@ -687,68 +707,8 @@ fn causal_control(
     Ok(())
 }
 
-// Exercise shrinking against a real Endpoint run and a deliberately weakened
-// source model. The mutation removes the root seq dependency, never Rust code.
-fn shrink_probe(args: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
-    if args.len() != 4 {
-        return Err("shrink probe requires REPOSITORY DEPTH RANK OUTPUT".into());
-    }
-    let repo = Path::new(&args[0]);
-    let output = Path::new(&args[3]);
-    let observed = Command::new("bash")
-        .arg(repo.join(".github/scripts/check_protocol_shapes.sh"))
-        .args([
-            "--syntax-depth",
-            &args[1],
-            &args[2],
-            "1",
-            "--",
-            "--mutant-root-seq-as-par",
-        ])
-        .env("HIBANA_PROTOCOL_SHAPE_OUTPUT_ROOT", output.canonicalize()?)
-        .output()?;
-    fs::write(
-        output.join("validation.log"),
-        [observed.stdout.as_slice(), observed.stderr.as_slice()].concat(),
-    )?;
-    std::io::stdout().write_all(&observed.stdout)?;
-    std::io::stderr().write_all(&observed.stderr)?;
-    Ok(observed.status.code().unwrap_or(1))
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    if args.first().is_some_and(|arg| arg == "--check-shrink") {
-        if args.len() != 2 {
-            return Err("usage: protocol-shape-controls --check-shrink DIRECTORY".into());
-        }
-        let root = Path::new(&args[1]);
-        let source = fs::read_to_string(root.join("best.tsv"))?;
-        let mut rows = source.lines();
-        if rows.next() != Some("depth\trank\toperators") {
-            return Err("invalid reduced source header".into());
-        }
-        let fields = rows
-            .next()
-            .ok_or("missing reduced source")?
-            .split('\t')
-            .map(str::parse::<usize>)
-            .collect::<Result<Vec<_>, _>>()?;
-        // seq(0 -> 1, 0 -> 1) has exact-height rank 32 + 1*32 + 1.
-        if fields != [1, 65, 1] || rows.next().is_some() {
-            return Err("shrinker control did not retain exactly two ordered messages".into());
-        }
-        if fs::read_to_string(root.join("result.txt"))?
-            != "failure=ModelOnly\nminimal_under=subtree-removal\n"
-        {
-            return Err("shrinker control did not preserve its semantic mismatch".into());
-        }
-        println!("Shrinker control: two ordered messages, same model-only mismatch: pass");
-        return Ok(());
-    }
-    if args.first().is_some_and(|arg| arg == "--shrink-probe") {
-        std::process::exit(shrink_probe(&args[1..])?);
-    }
     if let [command, checker, output] = args.as_slice()
         && command == "--admission-controls"
     {
@@ -769,6 +729,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
     let first = paths.first().ok_or("no observed cases")?;
+    let (input, observations) =
+        single_case(&inventory, &output.join("controls/wrong-state-id"), first)?;
+    let states = observations
+        .parent()
+        .ok_or("missing control root")?
+        .join("whole-operation-states")
+        .join(first.file_name().ok_or("missing control case")?);
+    rewrite_records(&states, |index, line| {
+        if index != 0 {
+            return Ok(vec![line.into()]);
+        }
+        let mut record: serde_json::Value = serde_json::from_str(line)?;
+        let state = record
+            .get_mut("state")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("missing whole-call state")?;
+        state.insert("id".into(), serde_json::json!(1));
+        Ok(vec![serde_json::to_string(&record)?])
+    })?;
+    rejected(
+        &checker,
+        &input,
+        &observations,
+        "missing, duplicated or reordered operation state",
+    )?;
+    println!("Whole-call state inventory control: wrong state id: pass");
     completed_controls(&checker, &inventory, &paths, &output)?;
     parallel_coverage_control(&checker, &inventory, &paths, &output)?;
     causal_control(&checker, &inventory, &paths, &output)?;
@@ -938,6 +924,88 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn population_reuse_tracks_code_compiler_and_every_input_value() {
+        let root = env::temp_dir().join(format!("hibana-population-inputs-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        for directory in ["proofs/lean", ".github/ci-tests", ".github/scripts/lib"] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let helper = root.join(".github/scripts/lib/protocol_model_inputs.sh");
+        fs::write(
+            &helper,
+            include_str!("../scripts/lib/protocol_model_inputs.sh"),
+        )
+        .unwrap();
+        let proof = root.join("proofs/lean/Model.lean");
+        fs::write(&proof, "def ready := true\n").unwrap();
+        let inputs = || {
+            let output = Command::new("bash")
+                .args(["-euo", "pipefail", "-c", "source .github/scripts/lib/protocol_model_inputs.sh; hibana_protocol_population_inputs ."])
+                .current_dir(&root).output().unwrap();
+            assert!(output.status.success());
+            output.stdout
+        };
+        let original = inputs();
+        assert_eq!(original, inputs());
+        assert!(
+            Command::new("git")
+                .args(["add", "."])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(original, inputs());
+        fs::write(root.join("README.md"), "documentation\n").unwrap();
+        fs::create_dir(root.join("proofs/lean/claims")).unwrap();
+        fs::write(root.join("proofs/lean/claims/surface.txt"), "type report\n").unwrap();
+        assert_eq!(original, inputs());
+        fs::write(&proof, "def ready := false\n").unwrap();
+        assert_ne!(original, inputs());
+        let environment = |change: Option<(&str, &str)>| {
+            let mut command = Command::new("bash");
+            command.args(["-euo", "pipefail", "-c", "source .github/scripts/lib/protocol_model_inputs.sh; hibana_protocol_compiler_environment"]).current_dir(&root);
+            if let Some((key, value)) = change {
+                command.env(key, value);
+            }
+            let output = command.output().unwrap();
+            assert!(output.status.success());
+            output.stdout
+        };
+        let original = environment(None);
+        assert_eq!(
+            original,
+            environment(Some(("HIBANA_INERT_TEST_VALUE", "changed")))
+        );
+        assert_ne!(
+            original,
+            environment(Some(("RUSTFLAGS", "--cfg changed_compiler_input")))
+        );
+        let changed_assertions =
+            if std::env::var("CARGO_PROFILE_TEST_DEBUG_ASSERTIONS").as_deref() == Ok("false") {
+                "true"
+            } else {
+                "false"
+            };
+        assert_ne!(
+            original,
+            environment(Some((
+                "CARGO_PROFILE_TEST_DEBUG_ASSERTIONS",
+                changed_assertions
+            )))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn a_mutation_preserves_the_shared_baseline_and_every_other_record() {

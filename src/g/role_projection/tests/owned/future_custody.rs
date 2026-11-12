@@ -25,7 +25,7 @@ pub(super) fn write(
         source.push_str(&std::format!(
             "def {name} : Hibana.ActorProgressObservation := {}\n\n\
              theorem {name}Valid : {name}.valid = true := by decide\n\n",
-            super::super::commit::observation_source(snapshot),
+            crate::endpoint::proof_snapshot::observation_source(snapshot),
         ));
     }
     for (name, (header, payload)) in wires {

@@ -6,7 +6,7 @@ use crate::global::typestate::{StateIndex, state_index_to_usize};
 
 pub(in crate::endpoint::kernel) enum ObservedIngressSelection {
     Branch(OfferScopeSelection),
-    OrdinaryReceive(u8),
+    OrdinaryReceive(StateIndex),
     PendingReceive(u8),
 }
 

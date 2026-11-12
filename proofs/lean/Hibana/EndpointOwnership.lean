@@ -56,6 +56,18 @@ def Source.uses : Source → List EndpointKey
       (left.uses ++ right.uses).eraseDups
   | .roll body => body.uses
 
+/-- Constructor summaries may forget components only to exclude an absent
+role. A present role still needs the original full-key test. -/
+def Source.usedRoles : Source → List Nat
+  | .send message =>
+      [message.sender.role, message.receiver.role] ++ match message.payload with
+        | .wire _ => []
+        | .endpoint key => [key.role]
+  | .seq left right | .par left right | .route _ left right =>
+      (left.usedRoles ++ right.usedRoles).eraseDups
+  | .roll body => body.usedRoles
+
+
 inductive OwnerExpr where
   | actor (actor : Nat)
   | initial (endpoint : EndpointKey)
@@ -396,6 +408,39 @@ end Hibana.EndpointDelegation
 
 namespace Hibana
 open EndpointDelegation
+
+theorem EndpointDelegation.source_use_role_mem (source : Source) (key : EndpointKey)
+    (present : key ∈ source.uses) : key.role ∈ source.usedRoles := by
+  induction source with
+  | send message =>
+      have projected : key.role ∈ (Source.send message).uses.map EndpointKey.role :=
+        List.mem_map.mpr ⟨key, present, rfl⟩
+      cases payload : message.payload <;>
+        simpa [Source.uses, Source.usedRoles, payload] using projected
+  | seq left right leftIH rightIH =>
+      have member : key ∈ left.uses ∨ key ∈ right.uses := by
+        simpa [Source.uses] using present
+      have role : key.role ∈ left.usedRoles ∨ key.role ∈ right.usedRoles :=
+        member.elim (fun h => Or.inl (leftIH h)) (fun h => Or.inr (rightIH h))
+      simpa [Source.usedRoles] using role
+  | par left right leftIH rightIH =>
+      have member : key ∈ left.uses ∨ key ∈ right.uses := by
+        simpa [Source.uses] using present
+      have role : key.role ∈ left.usedRoles ∨ key.role ∈ right.usedRoles :=
+        member.elim (fun h => Or.inl (leftIH h)) (fun h => Or.inr (rightIH h))
+      simpa [Source.usedRoles] using role
+  | route resolver left right leftIH rightIH =>
+      have member : key ∈ left.uses ∨ key ∈ right.uses := by
+        simpa [Source.uses] using present
+      have role : key.role ∈ left.usedRoles ∨ key.role ∈ right.usedRoles :=
+        member.elim (fun h => Or.inl (leftIH h)) (fun h => Or.inr (rightIH h))
+      simpa [Source.usedRoles] using role
+  | roll body bodyIH => exact bodyIH present
+
+theorem EndpointDelegation.source_absent_role_excludes_use (source : Source) (key : EndpointKey)
+    (absent : key.role ∉ source.usedRoles) : key ∉ source.uses :=
+  fun present => absent (source_use_role_mem source key present)
+
 
 @[simp] theorem EndpointDelegation.withOwner_same (owners : OwnerMap) (key : EndpointKey) (value : OwnerExpr) :
     withOwner owners key value key = value := by simp [withOwner]

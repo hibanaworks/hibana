@@ -89,15 +89,15 @@ impl<const E: usize> OperationIndex<E> {
                 let key = direction.operation_index_key(atom.from, atom.to, atom.label);
                 out.steps[step / E][step % E] = step as u16;
                 keys[step / E][step % E] = key;
+                let view = if matches!(direction, RoleLocalDirection::Recv) {
+                    atom.to
+                } else {
+                    atom.from
+                };
+                out.view_keys[step / E][step % E] = ((view as u32) << 8) | atom.lane as u32;
+                out.view_lanes[step / E][step % E] = step as u16;
                 if topology {
-                    let view = if matches!(direction, RoleLocalDirection::Recv) {
-                        atom.to
-                    } else {
-                        atom.from
-                    };
                     effects[step / E][step % E] = event as u16;
-                    out.view_keys[step / E][step % E] = ((view as u32) << 8) | atom.lane as u32;
-                    out.view_lanes[step / E][step % E] = step as u16;
                     let mut prior = last_view[view as usize];
                     while prior != u16::MAX {
                         let before = effects[prior as usize / E][prior as usize % E] as usize;
@@ -123,9 +123,7 @@ impl<const E: usize> OperationIndex<E> {
             event += 1;
         }
         Self::sort(&mut out.steps, &keys, out.len, 17);
-        if topology {
-            Self::sort(&mut out.view_lanes, &out.view_keys, out.len, 16);
-        }
+        Self::sort(&mut out.view_lanes, &out.view_keys, out.len, 16);
         out.retained =
             super::projection::finish_route_retention((source, scopes), rows, out.retained);
         out

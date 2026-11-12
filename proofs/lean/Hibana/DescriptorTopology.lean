@@ -1949,16 +1949,72 @@ private theorem nested_right_offer_alternative_source_controls :
       [65535, 2, 65535] = false := by
   decide
 
+private def RustDescriptorImage.roleRollOfferHeadsCheck?
+    (image : RustDescriptorImage) : Option Bool := do
+  let markers ← image.decodeScopeMarkers?
+  let events ← image.decodeOfferTopologyEvents?
+  let index ← (List.range image.eventCount).mapM fun slot =>
+    readU16LE? image.roleBytes
+      (image.roleViewLaneIndexOffset + slot * productionRoleU16Stride)
+  let indexed ← index.mapM fun step => events[step]?
+  -- Search all source repetition scopes, independently of Rust's cached
+  -- innermost scope and reverse-pass head links.
+  let heads := (List.range indexed.length).map fun slot =>
+    match indexed[slot]? with
+    | none => false
+    | some current =>
+      let previous := if slot = 0 then none else indexed[slot - 1]?
+      (List.range markers.length).any fun markerIndex =>
+        match markers[markerIndex]? with
+        | none => false
+        | some marker =>
+          let stop := scopeSegmentEnd markers markerIndex image.atomCount marker
+          marker.scope / productionScopeCapacity == 1 &&
+          firstCanonicalEnterForScope markers markerIndex marker &&
+          decide (marker.offset ≤ current.effect ∧ current.effect < stop) &&
+          !(previous.any fun prior => sameOfferViewLane prior current &&
+            decide (marker.offset ≤ prior.effect ∧ prior.effect < stop))
+  let actual ← (List.range image.eventCount).mapM fun slot =>
+    readU16LE? image.roleBytes
+      (image.roleRollOfferHeadOffset + slot * productionRoleU16Stride)
+  pure ((List.range indexed.length).all fun slot =>
+    match indexed[slot]?, actual[slot]? with
+    | some current, some link =>
+      let expected := ((List.range indexed.length).find? fun candidate =>
+        slot ≤ candidate && heads[candidate]?.getD false &&
+        (indexed[candidate]?.any fun event => sameOfferViewLane current event)).getD
+          packedU16Absent
+      link == expected
+    | _, _ => false)
+
+/-- Every link names the first later-or-equal repetition entry of the same
+view and lane. The source markers determine entries; emitted links and the
+compiler's scope cache do not determine the expected result. -/
+def RustDescriptorImage.roleRollOfferHeadsCoherent (image : RustDescriptorImage) : Bool :=
+  if image.routeScopeCount = 0 ∨ image.rollScopeCount = 0 then true
+  else image.roleRollOfferHeadsCheck?.getD false
+
 /-- Immutable offer topology is checked independently of Rust's emitted links:
 every first receive/outbound row is exact; the view/lane index is a strictly
 sorted complete permutation; every predecessor is the greatest same-view row
 under marker-derived strict source order; and every alternative head, fork
-identity and enclosing link equals a source-row search. Images without retained
+identity, enclosing link and repetition entry equals a source-row search. Images without retained
 routes omit these tables; lane successors are checked separately. None of these
 facts grants live event authority. -/
 def RustDescriptorImage.roleOfferTopologyCoherent (image : RustDescriptorImage) : Bool :=
   if image.routeScopeCount = 0 then true
-  else image.roleOfferTopologyCheck?.getD false && image.roleOfferAlternativesCheck?.getD false
+  else image.roleOfferTopologyCheck?.getD false &&
+    image.roleOfferAlternativesCheck?.getD false && image.roleRollOfferHeadsCoherent
+
+theorem offer_topology_binds_roll_offer_heads
+    {image : RustDescriptorImage}
+    (accepted : image.roleOfferTopologyCoherent = true) :
+    image.roleRollOfferHeadsCoherent = true := by
+  unfold RustDescriptorImage.roleOfferTopologyCoherent at accepted
+  split at accepted
+  · simp_all [RustDescriptorImage.roleRollOfferHeadsCoherent]
+  · simp only [Bool.and_eq_true] at accepted
+    exact accepted.2
 
 /-- Scan all row ordinals in increasing order instead of reproducing Rust's
 reverse pass or following its emitted links. The first matching later row is
@@ -2285,5 +2341,46 @@ theorem checked_descriptor_binds_roll_columns
   unfold RustDescriptorImage.check at accepted
   simp only [Bool.and_eq_true] at accepted
   exact role_runtime_columns_check_binds_roll_columns accepted.1.2
+
+/-- If scopes containing the current point have an innermost member, that
+    member detects entry into any of them. -/
+theorem innermost_scope_detects_roll_entry
+    {Scope : Type} (rolls : List Scope) (contains : Scope → Nat → Prop)
+    (inner : Scope) (previous current : Nat)
+    (member : inner ∈ rolls) (atCurrent : contains inner current)
+    (smallest : ∀ scope ∈ rolls, contains scope current →
+      ∀ point, contains inner point → contains scope point) :
+    (∃ scope ∈ rolls, contains scope current ∧ ¬ contains scope previous) ↔
+      ¬ contains inner previous := by
+  constructor
+  · rintro ⟨scope, present, here, absent⟩ inside
+    exact absent (smallest scope present here previous inside)
+  · intro absent
+    exact ⟨inner, member, atCurrent, absent⟩
+
+/-- For source-ordered rows of one view/lane, the last preceding row suffices
+    to decide whether the current interval has any earlier row. -/
+theorem previous_row_decides_new_interval_entry
+    (points : List Nat) (previous start stop : Nat)
+    (member : previous ∈ points)
+    (greatest : ∀ point ∈ points, point ≤ previous)
+    (beforeEnd : previous < stop) :
+    (∀ point ∈ points, ¬ (start ≤ point ∧ point < stop)) ↔ previous < start := by
+  constructor
+  · intro absent
+    have outside : ¬ start ≤ previous := fun inside =>
+      absent previous member ⟨inside, beforeEnd⟩
+    omega
+  · intro before point present inside
+    have bounded := greatest point present
+    omega
+
+/-- A constructor-checked forward link permits neither a cycle nor an
+    out-of-domain successor when the iterator resumes after its target. -/
+theorem checked_roll_head_link_advances
+    (position target limit : Nat) (forward : position ≤ target) (inside : target < limit) :
+    target + 1 ≤ limit ∧ limit - (target + 1) < limit - position := by
+  exact ⟨Nat.succ_le_of_lt inside,
+    Nat.sub_lt_sub_left (Nat.lt_of_le_of_lt forward inside) (Nat.lt_succ_of_le forward)⟩
 
 end Hibana

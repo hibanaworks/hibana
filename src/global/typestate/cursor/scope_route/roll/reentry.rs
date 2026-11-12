@@ -40,6 +40,29 @@ impl EventCursor {
             && self.roll_scope_head_allows_index(body, idx, lane, &mut preview)
     }
 
+    /// A whole-view offer may choose a fresh enclosing visit even when this
+    /// event can also revisit a retained child. The enclosing body must be
+    /// complete and this event must be its head; child completion alone does
+    /// not discharge an enclosing prefix or parallel sibling.
+    pub(crate) fn route_offer_reentry_head_allows_index(
+        &self,
+        scope: ScopeId,
+        idx: usize,
+        lane: u8,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        self.route_scope_reentry(scope)
+            && self
+                .machine()
+                .event_program()
+                .roll_ancestors(idx)
+                .any(|body| {
+                    self.route_scope_contained_in_roll_scope(scope, body)
+                        && self.roll_scope_head_allows_index(body, idx, lane, selected)
+                        && self.roll_scope_complete_for_entry(body, idx, selected)
+                })
+    }
+
     #[inline(never)]
     pub(crate) fn roll_body_reentry_scope_for_step(
         &self,

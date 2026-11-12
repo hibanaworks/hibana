@@ -194,7 +194,7 @@ async fn a_local_branch_waits_for_another_view_to_receive_its_entry_resource()
             ] {
                 source.push_str(&std::format!(
                     "def {name} : Hibana.ActorProgressObservation := {}\n\n",
-                    super::commit::observation_source(snapshot)
+                    crate::endpoint::proof_snapshot::observation_source(snapshot)
                 ));
             }
             source.push_str(&std::format!(

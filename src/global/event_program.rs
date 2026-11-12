@@ -10,7 +10,7 @@ mod kani;
 #[cfg(hibana_profile)]
 pub(crate) mod work;
 
-#[cfg(all(test, hibana_repo_tests))]
+#[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
 use crate::global::typestate::LocalNode;
 use crate::global::{
     compiled::images::CompiledProgramRef,
@@ -181,7 +181,7 @@ impl LocalEventProgram {
         self.local_len() + 1
     }
 
-    #[cfg(all(test, hibana_repo_tests))]
+    #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) fn node(&self, idx: usize) -> LocalNode {
         match self.rows().local_step_node(idx) {
             Some(node) => node,
@@ -276,6 +276,10 @@ impl LocalEventProgram {
         start: usize,
     ) -> Option<usize> {
         self.rows().view_lane_step_at_or_after(view, lane, start)
+    }
+
+    pub(crate) fn roll_offer_heads(&self, view: u8, lane: u8) -> impl Iterator<Item = usize> + '_ {
+        self.rows().roll_offer_heads(view, lane)
     }
 
     #[inline(always)]

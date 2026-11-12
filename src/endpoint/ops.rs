@@ -92,14 +92,15 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    /// Preview an operation in a protocol choice without advancing it.
+    /// Preview a protocol choice or incoming operation without advancing it.
     ///
     /// Returns a [`RouteBranch`] whose
     /// [`RouteBranch::label`] identifies the previewed operation. After a branch
     /// is selected, later calls can preview its next send or incoming receive.
     /// Dropping the future before completion leaves endpoint progress unchanged.
-    /// Use [`Endpoint::recv`] when the expected message is known, and for
-    /// receive steps outside a choice.
+    /// An enabled ordinary input can also be previewed, including a roll's
+    /// next visit or its continuation. Such an input makes no route decision.
+    /// Use [`Endpoint::recv`] when the expected message is known.
     /// Choices resolved by the application require a registered resolver.
     ///
     /// When independent choices are ready together, their preview order is

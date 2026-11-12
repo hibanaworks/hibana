@@ -195,6 +195,7 @@ pub(crate) struct OperationSnapshot {
     /// Exact existing commit plan: source event, logical label and lane.
     pub(crate) prepared_send: Option<(usize, u8, u8)>,
     pub(crate) offered_event: Option<usize>,
+    pub(crate) offered_choice: Option<(u16, u8)>,
 }
 
 /// The actual Endpoint/parallel-borrow target used for this observation.
@@ -209,6 +210,10 @@ pub(crate) struct OperationTargetSnapshot {
     pub(crate) owned_lanes: Vec<usize>,
     pub(crate) other_active: bool,
     pub(crate) lane_mask_offset: Option<u16>,
+    /// Scope, borrow-time epoch and current actor epoch. These are copies of
+    /// existing data, not a second visit counter or a raw eligibility result.
+    #[cfg(hibana_generated_protocols)]
+    pub(crate) reentry: Option<(u16, u64, u64)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -227,6 +232,9 @@ pub(crate) struct ActorSnapshot {
     /// Existing retained completion bits, separate from current event rows.
     /// These are copied under the same actor lease and never drive progress.
     pub(crate) retained_rolls: Vec<u16>,
+    /// Existing unconsumed child-completion credits. A retained history bit
+    /// alone does not say whether its contribution to a parent was spent.
+    pub(crate) credited_rolls: Vec<u16>,
 }
 
 impl ActorSnapshot {
@@ -242,6 +250,130 @@ pub(crate) struct OperationCutSnapshot {
     pub(crate) actor: ActorSnapshot,
     pub(crate) operations: Vec<OperationSnapshot>,
     pub(crate) target: OperationTargetSnapshot,
+}
+
+#[cfg(hibana_generated_protocols)]
+pub(crate) fn operation_cut_json(cut: &OperationCutSnapshot) -> std::string::String {
+    let slots = cut
+        .operations
+        .iter()
+        .map(|slot| {
+            let mut phase = std::format!("{:?}", slot.phase);
+            phase.get_mut(..1).unwrap().make_ascii_lowercase();
+            std::format!(
+                r#"{{"view":{},"lane":{},"phase":"{phase}","offeredEvent":{},"offeredChoice":{}}}"#,
+                slot.view,
+                slot.lane,
+                slot.offered_event
+                    .map(|event| std::format!("{event}"))
+                    .unwrap_or_else(|| "null".into()),
+                slot.offered_choice
+                    .map(|(scope, arm)| std::format!("[{scope},{arm}]"))
+                    .unwrap_or_else(|| "null".into()),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let target = &cut.target;
+    std::format!(
+        r#"{{"views":{:?},"slots":[{slots}],"target":{{"view":{},"lane":{},"whole":{},"start":{},"stop":{},"ownedLanes":{:?},"otherActive":{},"laneMaskOffset":{}}}}}"#,
+        cut.actor
+            .views
+            .iter()
+            .map(|view| view.role)
+            .collect::<Vec<_>>(),
+        target.view,
+        target.lane,
+        target.whole,
+        target.start,
+        target.end,
+        target.owned_lanes,
+        target.other_active,
+        target
+            .lane_mask_offset
+            .map(|offset| std::format!("{offset}"))
+            .unwrap_or_else(|| "null".into()),
+    )
+}
+
+#[cfg(any(not(miri), hibana_generated_protocols))]
+fn observed_step_identity(step: &StepSnapshot) -> (usize, &'static str) {
+    let (event, side) = match step.action {
+        LocalAction::Send { eff_index, .. } => (eff_index, "send"),
+        LocalAction::Recv { eff_index, .. } => (eff_index, "receive"),
+        LocalAction::Local { eff_index, .. } => (eff_index, "local"),
+        LocalAction::Terminate => unreachable!("observations contain only operation rows"),
+    };
+    (event.dense_ordinal(), side)
+}
+
+#[cfg(any(not(miri), hibana_generated_protocols))]
+fn observed_fault_name(fault: crate::rendezvous::SessionFaultKind) -> &'static str {
+    use crate::rendezvous::SessionFaultKind;
+    match fault {
+        SessionFaultKind::EndpointDropped => "endpointDropped",
+        SessionFaultKind::TransportClosed => "transportClosed",
+        SessionFaultKind::DecodeFailed => "decodeFailed",
+        SessionFaultKind::ProtocolViolation => "protocolViolation",
+        SessionFaultKind::ProgressInvariantViolated => "progressInvariantViolated",
+    }
+}
+
+#[cfg(hibana_generated_protocols)]
+pub(crate) fn observation_json(snapshot: &ActorSnapshot) -> std::string::String {
+    let fault = snapshot
+        .fault
+        .map(|fault| std::format!("{:?}", observed_fault_name(fault)))
+        .unwrap_or_else(|| "null".into());
+    let views = snapshot
+        .views
+        .iter()
+        .map(|view| {
+            let mut operation = view.operation.clone();
+            operation.get_mut(..1).unwrap().make_ascii_lowercase();
+            std::format!(
+                r#"{{"role":{},"run":{},"nonce":{},"operation":"{operation}"}}"#,
+                view.role,
+                view.run,
+                view.nonce
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let steps = snapshot
+        .steps
+        .iter()
+        .map(|step| {
+            let (event, side) = observed_step_identity(step);
+            std::format!(
+                r#"{{"effIndex":{event},"view":{},"side":"{side}","done":{}}}"#,
+                step.view,
+                step.done
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let choices = snapshot
+        .choices
+        .iter()
+        .map(|(scope, arm)| {
+            let arm = match arm {
+                None => "null",
+                Some(0) => "\"left\"",
+                Some(1) => "\"right\"",
+                _ => panic!("invalid observed route arm"),
+            };
+            std::format!("[{scope},{arm}]")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    std::format!(
+        r#"{{"actor":{},"run":{},"counter":{},"liveViews":{},"fault":{fault},"views":[{views}],"steps":[{steps}],"choices":[{choices}]}}"#,
+        snapshot.actor,
+        snapshot.run,
+        snapshot.counter,
+        snapshot.live_views,
+    )
 }
 
 /// Encode copied evidence only, after the direct localsides have run.
@@ -261,9 +393,17 @@ pub(crate) fn operation_cut_source(cut: &OperationCutSnapshot) -> std::string::S
             let mut phase = std::format!("{:?}", slot.phase);
             phase.get_mut(..1).unwrap().make_ascii_lowercase();
             std::format!(
-                "{{ view := {}, lane := {}, phase := .{phase} }}",
+                "{{ view := {}, lane := {}, phase := .{phase}, offeredEvent := {}, offeredChoice := {} }}",
                 slot.view,
-                slot.lane
+                slot.lane,
+                match slot.offered_event {
+                    Some(event) => std::format!("some {event}"),
+                    None => std::string::String::from("none"),
+                },
+                match slot.offered_choice {
+                    Some((scope, arm)) => std::format!("some ({scope}, {arm})"),
+                    None => std::string::String::from("none"),
+                },
             )
         })
         .collect::<Vec<_>>()
@@ -284,6 +424,65 @@ pub(crate) fn operation_cut_source(cut: &OperationCutSnapshot) -> std::string::S
             Some(offset) => std::format!("some {offset}"),
             None => std::string::String::from("none"),
         },
+    )
+}
+
+/// Encode the copied actor state for the source-level qualification checks.
+#[cfg(not(miri))]
+pub(crate) fn observation_source(snapshot: &ActorSnapshot) -> std::string::String {
+    let fault = match snapshot.fault {
+        None => std::string::String::from("none"),
+        Some(fault) => std::format!("some .{}", observed_fault_name(fault)),
+    };
+    let views = snapshot
+        .views
+        .iter()
+        .map(|view| {
+            let mut operation = view.operation.clone();
+            operation.get_mut(..1).unwrap().make_ascii_lowercase();
+            std::format!(
+                "{{ role := {}, run := {}, nonce := {}, operation := .{operation} }}",
+                view.role,
+                view.run,
+                view.nonce
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let steps = snapshot
+        .steps
+        .iter()
+        .map(|step| {
+            let (event, side) = observed_step_identity(step);
+            std::format!(
+                "{{ effIndex := {}, view := {}, side := .{side}, done := {} }}",
+                event,
+                step.view,
+                step.done
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let choices = snapshot
+        .choices
+        .iter()
+        .map(|(scope, arm)| {
+            let arm = match arm {
+                None => "none",
+                Some(0) => "some .left",
+                Some(1) => "some .right",
+                _ => panic!("invalid observed route arm"),
+            };
+            std::format!("({scope}, {arm})")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::format!(
+        "{{ actor := {}, run := {}, counter := {}, liveViews := {}, fault := {fault}, views := [{views}], steps := [{steps}], choices := [{choices}] }}",
+        snapshot.actor,
+        snapshot.run,
+        snapshot.counter,
+        snapshot.live_views
     )
 }
 
@@ -437,6 +636,12 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                             .public_route_branch
                             .as_ref()
                             .map(|branch| branch.branch_meta.eff_index.dense_ordinal()),
+                        offered_choice: state.public_route_branch.as_ref().and_then(|branch| {
+                            branch
+                                .branch_meta
+                                .route_choice()
+                                .map(|(scope, arm)| (scope.raw(), arm))
+                        }),
                     });
                 }
             }
@@ -457,6 +662,10 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                     .collect(),
                 other_active: kernel.has_other_active_operations(),
                 lane_mask_offset: (!region.is_whole()).then(|| region.mask()),
+                #[cfg(hibana_generated_protocols)]
+                reentry: region
+                    .reentry()
+                    .map(|(scope, epoch)| (scope.raw(), epoch, cursor.roll_reentry_epoch(scope))),
             };
             let snapshot = ActorSnapshot {
                 completion_mutations: cursor.completion_mutations(),
@@ -495,6 +704,7 @@ unsafe fn snapshot_from_handle<T: crate::transport::Transport>(
                     .collect(),
                 steps,
                 retained_rolls: cursor.retained_roll_scopes(),
+                credited_rolls: cursor.credited_roll_scopes(),
                 choices: (0..kernel.context.program.route_resolver_row_count())
                     .filter_map(|row| {
                         let (scope, _) = kernel
