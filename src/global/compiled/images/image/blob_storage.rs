@@ -3,7 +3,7 @@ use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_INITIAL_ACTOR_STRIDE,
     PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
     PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
-    first_endpoint_transfer,
+    first_endpoint_transfers, route_arm_participants,
 };
 use super::route_resolvers::PackedRouteAuthority;
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
         DynamicRouteResolver, EffList, ReentryMark, ScopeEvent, ScopeId, ScopeKind, ScopeMarker,
-        first_visible_controller, route_arm_ranges_from_first_enter,
+        route_arm_ranges_from_first_enter,
     },
 };
 
@@ -132,10 +132,11 @@ impl<const N: usize> ProgramImageBytes<N> {
             decision += 1;
         }
 
+        let first_transfers = first_endpoint_transfers(source.eff_list());
         let mut row = 0;
         let mut role = 0u16;
         while role <= u8::MAX as u16 {
-            if let Some(event) = first_endpoint_transfer(source.eff_list(), role as u8) {
+            if let Some(event) = first_transfers[role as usize] {
                 // The first transfer's sender must agree on the one initial
                 // issuer in every source path, as required by source validation.
                 let Some((actor, _)) = actors.actors_at(event, &[]) else {
@@ -247,58 +248,27 @@ impl<const N: usize> ProgramImageBytes<N> {
         self.write_u8(out + 7, (left_len - 1) as u8);
     }
 
-    const fn next_route_arm_participant<const E: usize>(
-        eff_list: &EffList<E>,
-        start: usize,
-        end: usize,
-        role_floor: u16,
-    ) -> Option<u8> {
-        let mut candidate = None;
-        let mut idx = start;
-        while idx < end && idx < eff_list.len() {
-            let atom = eff_list.atom_at(idx);
-            let from = atom.from as u16;
-            if from >= role_floor
-                && match candidate {
-                    Some(current) => atom.from < current,
-                    None => true,
-                }
-            {
-                candidate = Some(atom.from);
-            }
-            let to = atom.to as u16;
-            if to >= role_floor
-                && match candidate {
-                    Some(current) => atom.to < current,
-                    None => true,
-                }
-            {
-                candidate = Some(atom.to);
-            }
-            idx += 1;
-        }
-        candidate
-    }
-
     const fn write_route_arm_participants<const E: usize>(
         &mut self,
         column: ProgramColumnRange,
         mut row: usize,
         eff_list: &EffList<E>,
-        start: usize,
-        end: usize,
+        range: (usize, usize),
+        controller: u8,
     ) -> usize {
         let first_row = row;
-        let mut role_floor = 0u16;
-        while role_floor <= u8::MAX as u16 {
-            let Some(role) = Self::next_route_arm_participant(eff_list, start, end, role_floor)
-            else {
-                break;
-            };
-            let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE);
-            self.write_u8(out, role);
-            row += 1;
-            role_floor = role as u16 + 1;
+        let participants = route_arm_participants(eff_list, range, controller);
+        let mut byte = 0;
+        while byte < participants.len() {
+            let mut bits = participants[byte];
+            while bits != 0 {
+                let role = (byte * 8 + bits.trailing_zeros() as usize) as u8;
+                let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE);
+                self.write_u8(out, role);
+                row += 1;
+                bits &= bits - 1;
+            }
+            byte += 1;
         }
         if row == first_row {
             crate::invariant();
@@ -330,15 +300,12 @@ impl<const N: usize> ProgramImageBytes<N> {
         if route_enter_marker_idx >= scope_markers.len() {
             crate::invariant();
         }
-        let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
+        let [(arm0_start, _), _] =
             route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
-        match first_visible_controller(eff_list, arm0_start, arm0_end)
-            .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
-            .unique()
-        {
-            Some(role) => role,
-            None => crate::invariant(),
-        }
+        // Source validation proves a common owner for implicit first sends,
+        // and one exact logical view when a resolver is present. Keep a
+        // canonical view reference, without adding another authority table.
+        eff_list.atom_at(arm0_start).from
     }
 
     pub(crate) const fn from_image<const E: usize>(
@@ -388,16 +355,16 @@ impl<const N: usize> ProgramImageBytes<N> {
                     columns.route_participants(),
                     participant_row,
                     eff_list,
-                    left_start,
-                    left_end,
+                    (left_start, left_end),
+                    controller,
                 );
                 let participant_mid = participant_row;
                 participant_row = out.write_route_arm_participants(
                     columns.route_participants(),
                     participant_row,
                     eff_list,
-                    right_start,
-                    right_end,
+                    (right_start, right_end),
+                    controller,
                 );
                 if participant_row > u16::MAX as usize {
                     crate::invariant();

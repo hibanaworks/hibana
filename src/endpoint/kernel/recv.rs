@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
-    global::role_program::LANE_SET_VIEW_WORDS,
+    global::role_program::{LANE_SET_VIEW_WORDS, LaneWord, lane_word_index},
     global::typestate::{
         CursorInvariantError, DeterministicInboundKey, EventArmView, InboundFrameKey,
         PackedEventConflict, state_index_to_usize,
@@ -137,14 +137,27 @@ where
             // borrow. Its matching contract resumes through branch_recv.
             // Other contracts can still receive on independent lanes, but
             // must neither poll behind this frame nor consume it as another arm.
-            if self
+            if let Some(branch) = self
                 .operation
                 .public_route_branch
                 .as_ref()
-                .and_then(|branch| branch.offered_frame.as_ref())
-                .is_some_and(|frame| frame.lane() == lane_wire)
+                .filter(|branch| {
+                    branch
+                        .offered_frame
+                        .as_ref()
+                        .is_some_and(|frame| frame.lane() == lane_wire)
+                })
             {
                 parked_lane = true;
+                if self.operation.public_active_op == super::core::PublicActiveOp::Recv
+                    && !self.recv_contract_allows_observation(
+                        target_label,
+                        target_payload,
+                        state_index_to_usize(branch.branch_meta.cursor_index),
+                    )
+                {
+                    return Poll::Ready(Err(RecvError::Unavailable));
+                }
                 continue;
             }
             let frame = match self.poll_received_transport_frame_for_lane(
@@ -187,14 +200,21 @@ where
                             .map(|frame| MatchedRecvFrame { desc, frame }),
                         );
                     }
-                    // The head belongs to a different admitted receive. Keep
-                    // its FIFO position while another requested lane can wait
-                    // or has yet to be polled. If every head excludes this
-                    // request, reject it. Retention commits no protocol progress.
-                    if pending_lane || next.is_some() {
-                        self.requeue_transport_frame(frame)?;
-                        continue;
+                    // This is a valid source operation, but not this call's
+                    // contract. Retain its FIFO head even on the final lane.
+                    // Looking at the header commits neither receive nor choice.
+                    self.requeue_transport_frame(frame)?;
+                    parked_lane = true;
+                    if self.operation.public_active_op == super::core::PublicActiveOp::Recv
+                        && !self.recv_contract_allows_observation(
+                            target_label,
+                            target_payload,
+                            state_index_to_usize(desc.cursor_index),
+                        )
+                    {
+                        return Poll::Ready(Err(RecvError::Unavailable));
                     }
+                    continue;
                 }
                 Ok(Err(UniqueMatchFailure::None)) => {}
                 Ok(Err(UniqueMatchFailure::Ambiguous)) => {
@@ -215,11 +235,97 @@ where
             frame.discard_uncommitted();
             return Poll::Ready(Err(RecvError::PhaseInvariant));
         }
+        if self.operation.public_active_op == super::core::PublicActiveOp::Recv
+            && self.poll_excluding_receive_observation(
+                target_label,
+                target_payload,
+                &words,
+                pending_recv,
+                cx,
+            )?
+        {
+            return Poll::Ready(Err(RecvError::Unavailable));
+        }
         if parked_lane && !pending_lane {
-            Poll::Ready(Err(RecvError::OutOfOrder))
+            Poll::Ready(Err(
+                if self.operation.public_active_op == super::core::PublicActiveOp::Recv {
+                    RecvError::Unavailable
+                } else {
+                    RecvError::OutOfOrder
+                },
+            ))
         } else {
             Poll::Pending
         }
+    }
+
+    /// A choice can arrive on a different lane from the requested contract.
+    /// Inspect only other currently enabled receive directions and retain each
+    /// FIFO head. Independent input cannot exclude the requested receive.
+    fn poll_excluding_receive_observation(
+        &mut self,
+        target_label: u8,
+        target_payload: crate::eff::EventPayload,
+        inspected: &[LaneWord; LANE_SET_VIEW_WORDS],
+        pending_recv: &mut lane_port::PendingRecv,
+        cx: &mut core::task::Context<'_>,
+    ) -> RecvResult<bool> {
+        let incoming = self.read_projected_incoming(inspected);
+        for lane_idx in 0..self.progress.cursor.logical_lane_count() {
+            let (word, bit) = lane_word_index(lane_idx);
+            if incoming[word] & bit == 0 {
+                continue;
+            }
+            if let Some(branch) = self.operation.public_route_branch.as_ref()
+                && branch
+                    .offered_frame
+                    .as_ref()
+                    .is_some_and(|frame| usize::from(frame.lane()) == lane_idx)
+            {
+                if !self.recv_contract_allows_observation(
+                    target_label,
+                    target_payload,
+                    state_index_to_usize(branch.branch_meta.cursor_index),
+                ) {
+                    return Ok(true);
+                }
+                continue;
+            }
+            let frame = match self.poll_received_transport_frame_for_lane(
+                pending_recv,
+                lane_idx,
+                lane_idx as u8,
+                cx,
+            ) {
+                Poll::Pending => continue,
+                Poll::Ready(result) => result?,
+            };
+            if frame.is_deterministic() {
+                // A headerless frame carries no evidence about another
+                // contract. Leave its interpretation to that contract's call.
+                self.requeue_transport_frame(frame)?;
+                continue;
+            }
+            let observed = InboundFrameKey::new(
+                frame.observed_source_role(),
+                frame.lane_wire(),
+                frame.observed_frame_label_raw(),
+            );
+            let candidate = self.unique_recv_candidate(observed);
+            // This port was inspected only for a choice excluding the
+            // requested call. Do not consume even an unmatched FIFO head.
+            self.requeue_transport_frame(frame)?;
+            if let Ok(candidate) = candidate?
+                && !self.recv_contract_allows_observation(
+                    target_label,
+                    target_payload,
+                    state_index_to_usize(candidate.desc.cursor_index),
+                )
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn build_recv_commit_plan(

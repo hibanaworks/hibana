@@ -88,7 +88,7 @@ bash "${ROOT_DIR}/.github/scripts/lib/supplemental_proofs_tool.sh" module-self-t
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1302 788 378 136)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1306 791 378 137)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \

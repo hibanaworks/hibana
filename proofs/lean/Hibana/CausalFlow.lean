@@ -523,4 +523,43 @@ theorem recoloring_preserves_receive_index_positions
       simp only [List.map_cons, indexedReceives, List.foldr_cons]
       split <;> simp_all [indexedReceives]
 
+/-- The allocator searches a bounded wire palette in ascending order. -/
+def firstFreeReceiveColor (forbidden : Nat → Bool) (start : Nat) : Nat → Nat
+  | 0 => start
+  | fuel + 1 => if forbidden start then
+      firstFreeReceiveColor forbidden (start + 1) fuel else start
+
+theorem first_free_receive_color_is_available
+    (forbidden : Nat → Bool) (start fuel : Nat)
+    (fits : firstFreeReceiveColor forbidden start fuel < start + fuel) :
+    forbidden (firstFreeReceiveColor forbidden start fuel) = false := by
+  induction fuel generalizing start with
+  | zero => simp [firstFreeReceiveColor] at fits
+  | succ fuel ih =>
+      by_cases blocked : forbidden start = true
+      · simp only [firstFreeReceiveColor, blocked, ↓reduceIte] at fits ⊢
+        exact ih (start + 1) (by omega)
+      · have available : forbidden start = false := by
+          cases h : forbidden start <;> simp_all
+        simp [firstFreeReceiveColor, available]
+
+/-- Disjoint palette blocks retain every separation established by the
+parallel allocator, regardless of the sender's color within either block. -/
+theorem receive_palette_blocks_preserve_parallel_separation
+    (leftBase leftWidth rightBase leftColor rightColor : Nat)
+    (separate : leftBase + leftWidth ≤ rightBase)
+    (within : leftColor < leftWidth) :
+    leftBase + leftColor ≠ rightBase + rightColor := by
+  omega
+
+theorem receive_coloring_separates_an_already_colored_neighbor
+    (forbidden : Nat → Bool) (previous start fuel : Nat)
+    (neighbor : forbidden previous = true)
+    (fits : firstFreeReceiveColor forbidden start fuel < start + fuel) :
+    firstFreeReceiveColor forbidden start fuel ≠ previous := by
+  intro same
+  have available := first_free_receive_color_is_available forbidden start fuel fits
+  rw [same, neighbor] at available
+  contradiction
+
 end Hibana

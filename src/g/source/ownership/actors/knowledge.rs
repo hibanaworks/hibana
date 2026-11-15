@@ -12,6 +12,81 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fixed_forward_knowledge_matches_independent_prefix_queries() {
+        use crate::g::source::tree::{EndpointKey, Message, Payload};
+        let messages = core::array::from_fn::<_, 3, _>(|at| {
+            Source::Send(Message {
+                from: EndpointKey {
+                    component: 0,
+                    role: at as u8,
+                },
+                to: EndpointKey {
+                    component: 0,
+                    role: ((at + 1) % 3) as u8,
+                },
+                label: at as u8,
+                payload: Payload::Wire { schema: 0 },
+            })
+        });
+        let seq = Source::seq(&messages[0], &messages[1]);
+        let par = Source::par(&messages[0], &messages[1]);
+        let route = Source::route(&messages[0], &messages[1], None);
+        let shapes = [
+            Source::seq(&seq, &messages[2]),
+            Source::seq(&par, &messages[2]),
+            Source::seq(&route, &messages[2]),
+            Source::par(&messages[2], &route),
+        ];
+        let actors = [0, 127, 255];
+        let mut comparisons = 0;
+        for code in 0..729 {
+            let mut digits = code;
+            let bindings = core::array::from_fn::<_, 3, _>(|_| {
+                core::array::from_fn(|_| {
+                    let actor = actors[digits % actors.len()];
+                    digits /= actors.len();
+                    actor as u16
+                })
+            });
+            let image = ActorImage::<3, 0>::causal_fixture(&bindings, &[]);
+            let checker = Checker { image: &image };
+            for shape in &shapes {
+                for source in [*shape, Source::roll(shape)] {
+                    for controller in actors {
+                        let mut known = [0; 32];
+                        known[controller as usize / 8] |= 1 << (controller % 8);
+                        let context = Context::new(&[]);
+                        let expected = (0..3).find(|&event| {
+                            !checker.before(
+                                &source,
+                                0,
+                                event,
+                                image.events[event].sender,
+                                ActorRef(controller as u16),
+                                &context,
+                            )
+                        });
+                        let actual = checker.fixed_arm(&source, 0, &mut known);
+                        assert_eq!(actual, expected, "bindings={bindings:?} source={source:?}");
+                        if actual.is_none() {
+                            for actor in [0, 1, 64, 127, 128, 255] {
+                                let expected = actor == controller
+                                    || checker.after(&source, 0, ActorRef(actor as u16), &context);
+                                assert_eq!(
+                                    known[actor as usize / 8] & (1 << (actor % 8)) != 0,
+                                    expected
+                                );
+                            }
+                        }
+                        comparisons += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(comparisons, 17_496);
+    }
+
+    #[test]
     fn scoped_participant_filter_preserves_every_actor_and_correlated_path() {
         let prior = Scope {
             start: 0,
@@ -57,7 +132,8 @@ mod tests {
                     for split in start + 1..6 {
                         for stop in split + 1..=6 {
                             let scope = Scope { start, split, stop };
-                            let candidates = checker.participants(scope);
+                            let candidates =
+                                checker.participants(scope.start as usize..scope.stop as usize);
                             let controller = image.events[start as usize].sender;
                             for role in 0u16..=255 {
                                 let full = checker
@@ -76,7 +152,7 @@ mod tests {
             }
         }
         assert_eq!(comparisons, 78_336);
-        let candidates = checker.participants(prior);
+        let candidates = checker.participants(prior.start as usize..prior.stop as usize);
         assert!(candidates[0] & 1 != 0);
         assert!(!checker.matching_presence(prior, 0, ActorRef(255), &Context::new(&[])));
     }
@@ -125,10 +201,10 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
     /// Roles absent from every possible endpoint holder in this choice have
     /// equal, false participation in both arms. The union only excludes these
     /// absent roles; remaining roles still use the correlated path check.
-    const fn participants(&self, scope: Scope) -> [u8; 32] {
+    const fn participants(&self, range: core::ops::Range<usize>) -> [u8; 32] {
         let mut participants = [0; 32];
-        let mut event = scope.start as usize;
-        while event < scope.stop as usize {
+        let mut event = range.start;
+        while event < range.end {
             let pair = self.image.events[event];
             if pair.sender.0 < 256 && pair.receiver.0 < 256 {
                 participants[pair.sender.0 as usize / 8] |= 1 << (pair.sender.0 % 8);
@@ -309,6 +385,59 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
         true
     }
 
+    /// Forward must-knowledge for a fixed physical binding. Parallel branches
+    /// share their input facts; a choice retains only facts true in both arms.
+    const fn fixed_arm(
+        &self,
+        source: &Source<'_>,
+        start: usize,
+        known: &mut [u8; 32],
+    ) -> Option<usize> {
+        match source {
+            Source::Send(message) => {
+                let pair = self.image.events[start];
+                if pair.sender.0 >= 256 || pair.receiver.0 >= 256 {
+                    crate::invariant();
+                }
+                let sender = pair.sender.0 as usize;
+                if known[sender / 8] & (1 << (sender % 8)) == 0 {
+                    return Some(start);
+                }
+                if !message.from.same(message.to) {
+                    let receiver = pair.receiver.0 as usize;
+                    known[receiver / 8] |= 1 << (receiver % 8);
+                }
+                None
+            }
+            Source::Seq(left, right, _) => {
+                if let Some(event) = self.fixed_arm(left, start, known) {
+                    return Some(event);
+                }
+                self.fixed_arm(right, start + left.event_count(), known)
+            }
+            Source::Par(left, right, _) | Source::Route { left, right, .. } => {
+                let mut other = *known;
+                if let Some(event) = self.fixed_arm(left, start, known) {
+                    return Some(event);
+                }
+                if let Some(event) = self.fixed_arm(right, start + left.event_count(), &mut other) {
+                    return Some(event);
+                }
+                let mut byte = 0;
+                while byte < known.len() {
+                    known[byte] = if matches!(source, Source::Par(..)) {
+                        known[byte] | other[byte]
+                    } else {
+                        known[byte] & other[byte]
+                    };
+                    byte += 1;
+                }
+                None
+            }
+            Source::Roll(body, _) => self.fixed_arm(body, start, known),
+        }
+    }
+
     const fn reference_presence(
         &self,
         reference: ActorRef,
@@ -421,15 +550,46 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 let controller = self.image.events[start].sender;
                 // Keep the current conservative merge rule: a noncontroller
                 // actor must participate in both alternatives or neither.
-                let participants = self.participants(scope);
-                let mut role = 0usize;
-                while role < 256 {
-                    if participants[role / 8] & (1 << (role % 8)) != 0
-                        && !self.matching_presence(scope, role as u8, controller, path)
-                    {
-                        return Some((scope, Some(role as u8), None));
+                if self.image.choice_len == 0 {
+                    // With fixed physical actors, exact arm membership is a
+                    // bit set. Compare both sets once instead of rescanning
+                    // each arm independently for every one of 256 roles.
+                    let left_members =
+                        self.participants(scope.start as usize..scope.split as usize);
+                    let right_members =
+                        self.participants(scope.split as usize..scope.stop as usize);
+                    if controller.0 >= 256 {
+                        crate::invariant();
                     }
-                    role += 1;
+                    let mut byte = 0;
+                    while byte < left_members.len() {
+                        let mut difference = left_members[byte] ^ right_members[byte];
+                        if byte == controller.0 as usize / 8 {
+                            difference &= !(1 << (controller.0 % 8));
+                        }
+                        if difference != 0 {
+                            return Some((
+                                scope,
+                                Some((byte * 8 + difference.trailing_zeros() as usize) as u8),
+                                None,
+                            ));
+                        }
+                        byte += 1;
+                    }
+                } else {
+                    let participants = self.participants(scope.start as usize..scope.stop as usize);
+                    let mut byte = 0;
+                    while byte < participants.len() {
+                        let mut bits = participants[byte];
+                        while bits != 0 {
+                            let role = (byte * 8 + bits.trailing_zeros() as usize) as u8;
+                            if !self.matching_presence(scope, role, controller, path) {
+                                return Some((scope, Some(role), None));
+                            }
+                            bits &= bits - 1;
+                        }
+                        byte += 1;
+                    }
                 }
                 let left_path = path.select(Selection {
                     scope,
@@ -446,7 +606,17 @@ impl<const E: usize, const D: usize> Checker<'_, E, D> {
                 let mut arm = 0;
                 while arm < arms.len() {
                     let (body, begin, selected) = arms[arm];
-                    if !self.arm(body, begin, controller, selected) {
+                    if self.image.choice_len == 0 {
+                        let mut known = [0; 32];
+                        known[controller.0 as usize / 8] |= 1 << (controller.0 % 8);
+                        if let Some(event) = self.fixed_arm(body, begin, &mut known) {
+                            return Some((
+                                scope,
+                                Some(self.image.events[event].sender.0 as u8),
+                                Some(event),
+                            ));
+                        }
+                    } else if !self.arm(body, begin, controller, selected) {
                         let mut event = begin;
                         while event < begin + body.event_count() {
                             let actor = self.image.events[event].sender;

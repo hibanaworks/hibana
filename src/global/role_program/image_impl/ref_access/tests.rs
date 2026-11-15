@@ -15,6 +15,47 @@ mod route_commit;
 mod route_topology;
 
 #[test]
+fn receipt_retirement_requires_a_causal_receive_from_the_terminal_owner() {
+    type File = Msg<201, crate::Endpoint<'static, 3>>;
+    type Loan = Msg<202, crate::Endpoint<'static, 2>>;
+    type Retire = Msg<207, crate::Endpoint<'static, 2>>;
+    let global = g::seq(
+        g::send::<0, 1, File>(),
+        g::seq(
+            g::seq(
+                g::send::<0, 1, Loan>(),
+                g::seq(
+                    g::send::<3, 0, Msg<203, ()>>(),
+                    g::seq(g::send::<2, 0, Msg<204, ()>>(), g::send::<1, 0, Loan>()),
+                ),
+            )
+            .roll(),
+            g::seq(
+                g::send::<0, 4, Retire>(),
+                g::seq(
+                    g::send::<4, 3, Msg<205, ()>>(),
+                    g::send::<4, 1, Msg<206, ()>>(),
+                ),
+            ),
+        ),
+    );
+    let rows = project::<1>(&global).role_image_ref();
+    let receipts: std::vec::Vec<_> = (0..rows.owned_receipt_count())
+        .filter(|&index| rows.owned_receipt(index).1.is_some())
+        .collect();
+    assert_eq!(receipts.len(), 1);
+    let receipt = receipts[0];
+    for witness in [0, 2, u16::MAX - 1] {
+        reject(rows, |bytes, columns, _| {
+            let offset = columns.owned_receipts().offset as usize
+                + receipt * crate::global::role_program::ROLE_IMAGE_OWNED_RECEIPT_STRIDE
+                + 2;
+            put(bytes, offset, witness);
+        });
+    }
+}
+
+#[test]
 fn source_boundaries_preserve_missing_events_and_both_actor_facets() {
     type Loan<'r> = Msg<1, crate::Endpoint<'r, 2>>;
     let global = g::seq(

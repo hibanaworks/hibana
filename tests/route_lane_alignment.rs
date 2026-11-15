@@ -686,6 +686,29 @@ async fn a_later_visit_notice_can_arrive_before_the_earlier_ack()
         g::send::<0, 1, Tail>(),
     )
     .roll();
+    assert_eq!(
+        g::diagnose(&global)
+            .expect("the left visit needs its receiver ACK")
+            .problem,
+        g::ProjectionProblem::ReceiveLaneCausality
+    );
+    let global = g::seq(
+        g::route(
+            g::seq(
+                g::send::<2, 0, NL>(),
+                g::seq(g::send::<0, 1, DL>(), g::send::<1, 0, Ack>()),
+            ),
+            g::seq(
+                g::send::<2, 0, NR>(),
+                g::seq(
+                    g::send::<0, 2, Ready>(),
+                    g::seq(g::send::<2, 1, DR>(), g::send::<1, 0, Ack>()),
+                ),
+            ),
+        ),
+        g::send::<0, 1, Tail>(),
+    )
+    .roll();
     assert_eq!(g::diagnose(&global), None);
     let p0 = project::<0>(&global);
     let p1 = project::<1>(&global);
@@ -725,6 +748,8 @@ async fn a_later_visit_notice_can_arrive_before_the_earlier_ack()
         assert_eq!(a.recv::<NL>().await.unwrap(), 4);
         a.send::<DL>(&7).await.unwrap();
         assert_eq!(b.recv::<DL>().await.unwrap(), 7);
+        b.send::<Ack>(&7).await.unwrap();
+        assert_eq!(a.recv::<Ack>().await.unwrap(), 7);
         a.send::<Tail>(&8).await.unwrap();
         assert_eq!(b.recv::<Tail>().await.unwrap(), 8);
     };
@@ -746,12 +771,30 @@ async fn an_early_continuation_cannot_impersonate_another_choice_arm()
     type DataLeft = g::Msg<12, u32>;
     type DataRight = g::Msg<13, u32>;
     type Tail = g::Msg<15, u32>;
+    type VisitReceived = g::Msg<16, ()>;
     let global = g::seq(
         g::route(
             g::seq(g::send::<2, 0, NoticeLeft>(), g::send::<0, 1, DataLeft>()),
             g::seq(g::send::<2, 0, NoticeRight>(), g::send::<2, 1, DataRight>()),
         ),
         g::send::<0, 1, Tail>(),
+    )
+    .roll();
+    assert_eq!(
+        g::diagnose(&global)
+            .expect("the next peer cannot identify an unfinished visit")
+            .problem,
+        g::ProjectionProblem::ReceiveLaneCausality
+    );
+    let global = g::seq(
+        g::seq(
+            g::route(
+                g::seq(g::send::<2, 0, NoticeLeft>(), g::send::<0, 1, DataLeft>()),
+                g::seq(g::send::<2, 0, NoticeRight>(), g::send::<2, 1, DataRight>()),
+            ),
+            g::send::<0, 1, Tail>(),
+        ),
+        g::send::<1, 2, VisitReceived>(),
     )
     .roll();
     assert_eq!(g::diagnose(&global), None);
@@ -790,6 +833,8 @@ async fn an_early_continuation_cannot_impersonate_another_choice_arm()
         c.send::<DataRight>(&7).await.unwrap();
         assert_eq!(b.recv::<DataRight>().await.unwrap(), 7);
         assert_eq!(b.recv::<Tail>().await.unwrap(), 99);
+        b.send::<VisitReceived>(&()).await?;
+        c.recv::<VisitReceived>().await?;
     };
     assert!(network.queue_is_empty());
 

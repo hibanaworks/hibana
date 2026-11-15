@@ -21,6 +21,12 @@ pub struct SourceProfile {
     pub lanes: usize,
     /// Whether the assigned lanes preserve receive order.
     pub receive_causal: bool,
+    /// Complete builds of the logical receiver/direction index.
+    pub receive_index_builds: usize,
+    /// Source event rows visited by the direct receive-color constructor.
+    pub refinement_event_visits: usize,
+    /// Sender adjacency entries visited by the direct receive-color constructor.
+    pub refinement_neighbor_visits: usize,
     /// Inspections that start at the beginning of the source.
     pub full_inspections: usize,
     /// Inspections that resume at a previously rejected receive.
@@ -36,6 +42,9 @@ pub struct SourceProfile {
 }
 
 pub(crate) struct Counters {
+    pub receive_index_builds: usize,
+    pub refinement_event_visits: usize,
+    pub refinement_neighbor_visits: usize,
     pub full_inspections: usize,
     pub resumed_inspections: usize,
     pub alignment_attempts: usize,
@@ -47,6 +56,9 @@ pub(crate) struct Counters {
 impl Counters {
     pub(crate) const fn new() -> Self {
         Self {
+            receive_index_builds: 0,
+            refinement_event_visits: 0,
+            refinement_neighbor_visits: 0,
             full_inspections: 0,
             resumed_inspections: 0,
             alignment_attempts: 0,
@@ -88,6 +100,70 @@ pub fn actor_image(program: &impl Projectable) -> bool {
 /// Source ownership compilation remains outside this native measurement.
 pub fn reentry_knowledge(program: &impl Projectable) -> bool {
     construction_pass(program, SourcePass::Reentry)
+}
+
+/// Locate the first rejected roll and resource using the production checker.
+/// The tuple is (source start, source component, logical resource role).
+/// This diagnostic adds no runtime state and is compiled only for profiling.
+pub fn reentry_conflict<P: Projectable>(_program: &P) -> Option<(usize, u16, u8)> {
+    let inspect: fn() -> Option<(usize, u16, u8)> = const {
+        let rows = P::Steps::SOURCE_ROW_COUNT;
+        with_source_capacity!(rows, |CAPACITY| super::source::profile_reentry_conflict::<
+            P::Steps,
+            CAPACITY,
+        >)
+    };
+    inspect()
+}
+
+#[cfg(test)]
+mod reentry_diagnostics_tests {
+    use super::*;
+    use crate::{Endpoint, g};
+
+    #[test]
+    fn a_conflict_names_the_production_rejected_roll_and_resource() {
+        type Loan<'run> = g::Msg<1, Endpoint<'run, 10>>;
+        type Ready = g::Msg<2, ()>;
+        type Tick = g::Msg<3, ()>;
+        type Read = g::Msg<4, u32>;
+        let source = g::seq(
+            g::send::<0, 1, Loan>(),
+            g::seq(
+                g::send::<1, 2, Ready>(),
+                g::seq(
+                    g::seq(g::send::<2, 1, Tick>(), g::send::<10, 4, Read>()).roll(),
+                    g::send::<1, 5, Loan>(),
+                ),
+            ),
+        );
+        assert!(!reentry_knowledge(&source));
+        assert_eq!(reentry_conflict(&source), Some((2, 0, 10)));
+    }
+
+    #[test]
+    fn same_visit_permission_and_sources_without_loans_have_no_conflict() {
+        type Loan<'run> = g::Msg<1, Endpoint<'run, 10>>;
+        type Permit = g::Msg<2, ()>;
+        type Tick = g::Msg<3, ()>;
+        type Read = g::Msg<4, u32>;
+        let source = g::seq(
+            g::send::<0, 1, Loan>(),
+            g::seq(
+                g::seq(
+                    g::send::<1, 2, Permit>(),
+                    g::seq(g::send::<2, 1, Tick>(), g::send::<10, 4, Read>()),
+                )
+                .roll(),
+                g::send::<1, 5, Loan>(),
+            ),
+        );
+        assert!(reentry_knowledge(&source));
+        assert_eq!(reentry_conflict(&source), None);
+        let ordinary = g::send::<0, 1, Tick>().roll();
+        assert!(reentry_knowledge(&ordinary));
+        assert_eq!(reentry_conflict(&ordinary), None);
+    }
 }
 
 /// Rebuild the shared scope information used by local projection.
@@ -191,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_source_needs_one_inspection() {
+    fn ordinary_source_needs_only_one_receive_index() {
         let global = g::seq(
             g::send::<0, 1, g::Msg<1, u32>>(),
             g::send::<1, 0, g::Msg<2, u32>>(),
@@ -199,14 +275,16 @@ mod tests {
         let result = source(&global);
         assert!(result.receive_causal);
         assert_eq!((result.source_rows, result.events, result.lanes), (2, 2, 1));
-        assert_eq!(result.full_inspections, 1);
+        assert_eq!(result.receive_index_builds, 1);
+        assert_eq!(result.refinement_event_visits, 0);
+        assert_eq!(result.full_inspections, 0);
         assert_eq!(result.resumed_inspections, 0);
         assert_eq!(result.alignment_attempts, 0);
         assert_eq!(result.recolorings, 0);
     }
 
     #[test]
-    fn ordinary_recoloring_counts_partitioned_inspections() {
+    fn ordinary_recoloring_counts_the_direct_constructor_work() {
         let global = g::seq(
             g::send::<0, 2, g::Msg<1, ()>>(),
             g::send::<1, 2, g::Msg<2, ()>>(),
@@ -214,8 +292,11 @@ mod tests {
         let result = source(&global);
         assert!(result.receive_causal);
         assert_eq!((result.events, result.lanes), (2, 2));
-        assert_eq!(result.full_inspections, 2);
-        assert_eq!(result.resumed_inspections, 1);
+        assert_eq!(result.receive_index_builds, 2);
+        assert_eq!(result.refinement_event_visits, 6);
+        assert_eq!(result.refinement_neighbor_visits, 6);
+        assert_eq!(result.full_inspections, 0);
+        assert_eq!(result.resumed_inspections, 0);
         assert_eq!(result.recolorings, 1);
     }
 
@@ -235,9 +316,12 @@ mod tests {
         let result = source(&global);
         assert!(result.receive_causal);
         assert_eq!((result.source_rows, result.events), (4, 4));
-        assert_eq!(result.full_inspections, 2);
+        assert_eq!(result.receive_index_builds, 2);
+        assert!(result.refinement_event_visits >= result.events * 3);
+        assert_ne!(result.refinement_neighbor_visits, 0);
+        assert_eq!(result.full_inspections, 0);
         assert_ne!(result.recolorings, 0);
-        assert_eq!(result.resumed_inspections, result.recolorings);
-        assert!(result.alignment_attempts >= result.recolorings);
+        assert_eq!(result.resumed_inspections, 0);
+        assert_eq!(result.alignment_attempts, 0);
     }
 }

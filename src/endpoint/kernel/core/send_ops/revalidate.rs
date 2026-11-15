@@ -68,7 +68,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             }
             Err(
                 EventAdmissionError::PredecessorPending
-                | EventAdmissionError::PayloadPredecessorPending,
+                | EventAdmissionError::HeldPredecessorPending,
             ) => {
                 return Poll::Ready(Err(SendError::OutOfOrder));
             }

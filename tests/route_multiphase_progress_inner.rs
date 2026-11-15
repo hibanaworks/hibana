@@ -62,15 +62,21 @@ async fn inner_route_completion_does_not_exit_outer_route_early() {
                         .expect("decode inner payload"),
                     40
                 );
+                let before = rv.tap().checkpoint();
                 let err = local
                     .send::<Msg<POST_OUTER, u8>>(&0)
                     .await
                     .expect_err("post-route send must wait for the selected route path");
                 let rendered = format!("{err:?}");
                 assert!(
-                    rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+                    err.is_unavailable(),
                     "post-route send must be rejected by selected path progress: {rendered}"
                 );
+                assert_eq!(rv.tap().checkpoint(), before);
+                local.send::<Msg<OUTER_LATER, u8>>(&50).await.unwrap();
+                assert_eq!(worker.recv::<Msg<OUTER_LATER, u8>>().await.unwrap(), 50);
+                local.send::<Msg<POST_OUTER, u8>>(&60).await.unwrap();
+                assert_eq!(worker.recv::<Msg<POST_OUTER, u8>>().await.unwrap(), 60);
             }
 
             {

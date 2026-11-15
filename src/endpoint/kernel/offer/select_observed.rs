@@ -52,7 +52,7 @@ where
                 Ok(_) => {}
                 Err(
                     EventAdmissionError::PredecessorPending
-                    | EventAdmissionError::PayloadPredecessorPending
+                    | EventAdmissionError::HeldPredecessorPending
                     | EventAdmissionError::OtherViewPending,
                 ) => {
                     // Ordered future messages can reuse a wire key. Retention

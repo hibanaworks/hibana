@@ -22,7 +22,7 @@ const fn projection_error_all_roles<const E: usize>(
     if !roll_reentry_endpoint_conflict(source, None).is_none() {
         return Some(ProgramSourceError::ReentryAmbiguousEndpointSelector);
     }
-    if let Some(error) = validate_passive_child_projection_guarantees(source.scope_markers()) {
+    if let Some(error) = validate_passive_child_projection_guarantees(source) {
         return Some(error);
     }
     validate_route_projection_guarantees(summary, source)

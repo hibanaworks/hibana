@@ -520,9 +520,13 @@ switch to another branch. The current
 run cannot continue in that runtime after such an error. Accepted transfers
 are not rolled back. Other runtimes learn of a failure through their transport.
 
-An unfinished predecessor on the calling view or its owned payload produces
-`OutOfOrder` and faults the local run as a protocol violation. `PhaseInvariant`
-reports other inconsistencies in the operation's progress or descriptor facts.
+A declared borrowed-payload send blocked by its own source prefix returns
+`is_unavailable()` before callbacks, I/O or progress publication. The caller may
+perform the required prefix or another permitted operation; the refused send
+does not become enabled. An owned send cannot restore its moved Endpoint on
+failure and remains terminal. Calling outside a borrowed fragment's source
+range remains a protocol violation. `PhaseInvariant` reports other
+inconsistencies in the operation's progress or descriptor facts.
 
 A transport close does not signal successful protocol completion. `roll()`
 lets a completed fragment run again and has no end message. To tell a worker

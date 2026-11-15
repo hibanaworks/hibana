@@ -3,15 +3,22 @@ use super::*;
 /// Add source witnesses only after the unchanged acceptance gate has rejected.
 pub(crate) const fn projection_diagnostic<const E: usize>(
     summary: &CompiledProgramImage,
-    eff_list: &EffList<E>,
+    source: &crate::g::ProgramSourceData<E>,
     error: ProgramSourceError,
 ) -> crate::g::ProjectionDiagnostic {
     use crate::g::{DiagnosticEvent, DiagnosticRange, ProjectionDiagnostic, ProjectionProblem};
+    let eff_list = source.eff_list();
+    let actors = match source.actors() {
+        Some(actors) => Some(actors.event_actors()),
+        None => None,
+    };
     let mut diagnostic = ProjectionDiagnostic::from_error(error);
     if matches!(error, ProgramSourceError::ReceiveLaneCausalityConflict) {
-        if let Some((earlier, later, scope)) =
-            crate::global::const_dsl::receive_lane_conflict(eff_list)
-        {
+        let conflict = match crate::global::const_dsl::receive_lane_conflict(eff_list) {
+            Some(pair) => Some(pair),
+            None => crate::global::const_dsl::passive_choice_conflict::<E, 0>(eff_list, None, None),
+        };
+        if let Some((earlier, later, scope)) = conflict {
             diagnostic.role = Some(eff_list.atom_at(earlier).to);
             diagnostic.scope = scope;
             diagnostic.first = Some(DiagnosticEvent::from_atom(
@@ -30,8 +37,7 @@ pub(crate) const fn projection_diagnostic<const E: usize>(
         return diagnostic;
     }
     if !matches!(error, ProgramSourceError::RouteControllerMismatch)
-        && passive_child::validate_passive_child_projection_guarantees(eff_list.scope_markers())
-            .is_some()
+        && passive_child::validate_passive_child_projection_guarantees(eff_list).is_some()
     {
         return diagnostic;
     }
@@ -44,7 +50,7 @@ pub(crate) const fn projection_diagnostic<const E: usize>(
             && marker.event.is_primary_enter()
             && if matches!(error, ProgramSourceError::RouteControllerMismatch) {
                 matches!(
-                    route_controller_and_selectors(eff_list, marker_idx),
+                    route_controller_and_selectors(eff_list, marker_idx, actors),
                     Err(ProgramSourceError::RouteControllerMismatch)
                 )
             } else {
@@ -64,9 +70,18 @@ pub(crate) const fn projection_diagnostic<const E: usize>(
                 DiagnosticRange { start: a, end: b },
                 DiagnosticRange { start: c, end: d },
             ]);
-            let controller = first_visible_controller(eff_list, a, b)
-                .merge(first_visible_controller(eff_list, c, d))
-                .unique();
+            let owners = if scope_has_dynamic_resolver(eff_list, marker.scope_id) {
+                None
+            } else {
+                actors
+            };
+            let controller = match first_visible_controller(eff_list, (a, b), owners)
+                .merge(first_visible_controller(eff_list, (c, d), owners))
+                .unique()
+            {
+                Some(_) => Some(eff_list.atom_at(a).from),
+                None => None,
+            };
             diagnostic.controller = controller;
             if a < b {
                 diagnostic.first = Some(DiagnosticEvent::from_atom(a, eff_list.atom_at(a)));

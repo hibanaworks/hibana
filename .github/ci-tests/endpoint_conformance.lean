@@ -5,6 +5,8 @@ import Init.Data.Nat.Bitwise.Lemmas
 
 open Hibana Hibana.EndpointDelegation
 set_option maxRecDepth 100000
+-- Apply sequential elaboration before the codecs and proof declarations too.
+set_option Elab.async false
 
 structure Attempt where
   commands : List Nat
@@ -68,8 +70,7 @@ def boundedPlans (source : Source) (oracle : Oracle) : List (SourceOccurrenceCut
       (.rollMore (.rollOnce (.oneCopy body)) (.oneCopy body)) (.oneCopy tail)
     let after := SourceUnfolding.resumeAfterContinuation .hole first (.oneCopy body)
     let alongside := SourceUnfolding.resumeAlongsideContinuation
-      .hole .hole
-      (.rollOnce (.oneCopy body)) (.rollOnce (.oneCopy body)) (.oneCopy tail)
+      .hole (.seqRight body.oneCopy .hole) first (.rollOnce (.oneCopy body))
     checkedPlans _ _ first ++ checkedPlans _ _ before ++ checkedPlans (.seq (.roll body) tail) _ after ++
       if oracle == .serialized then [] else checkedPlans (.seq (.roll body) tail) _ alongside
   | .par (.roll body) tail =>

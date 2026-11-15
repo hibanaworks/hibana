@@ -65,7 +65,7 @@ fn check_receive_prefix(hint: u8, received: bool, arm: bool) {
         assert_eq!(result.unwrap().0.label, meta.label);
         assert_eq!(calls, 1);
     } else {
-        assert!(matches!(result, Err(SendPreviewError::OutOfOrder)));
+        assert!(matches!(result, Err(SendPreviewError::Unavailable)));
         assert_eq!(calls, 0);
     }
 }

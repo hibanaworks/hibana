@@ -38,10 +38,21 @@ elif [[ -f "$out/source.sha256" && -f "$out/platform.txt" ]] &&
   check
 else
   generated="$ROOT_DIR/target/lean-proof/ProtocolShapesGenerated.lean"
-  mkdir -p "$(dirname "$generated")"
-  cat .github/ci-tests/endpoint_conformance.lean .github/ci-tests/protocol_shape_cuts.lean .github/ci-tests/protocol_shapes.lean > "$generated"
+  generated_modules="$ROOT_DIR/target/lean-proof/ProtocolChecker"
+  mkdir -p "$generated_modules"
+  cp .github/ci-tests/endpoint_conformance.lean "$generated_modules/Base.lean"
+  {
+    printf '%s\n' 'import ProtocolChecker.Base' 'set_option maxRecDepth 100000' 'set_option Elab.async false'
+    cat .github/ci-tests/protocol_shape_cuts.lean
+  } > "$generated_modules/Cuts.lean"
+  {
+    printf '%s\n' 'import ProtocolChecker.Cuts' 'open Hibana Hibana.EndpointDelegation' \
+      'set_option maxRecDepth 100000' 'set_option Elab.async false'
+    cat .github/ci-tests/protocol_shapes.lean
+  } > "$generated"
   bash .github/scripts/lib/lean_audit_tool.sh build-serial \
-    "$ROOT_DIR/proofs/lean" --native Hibana.SourceOccurrenceTrace >&2
+    "$ROOT_DIR/proofs/lean" --native \
+    Hibana.SourceOccurrenceTrace Hibana.PublicCandidateAdmission >&2
   (cd proofs/lean && lake build protocolShapes) >&2
   cp proofs/lean/.lake/build/bin/protocol-shapes "$work/protocol-shapes"
   "$work/protocol-shapes" --check-guarded-reentry > "$work/guarded-reentry.log"

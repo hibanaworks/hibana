@@ -17,8 +17,9 @@ private def plan : SourceOccurrenceCut source := {
   original := original
   originalAccepted := by decide
   expanded := expanded
-  unfolding := .resumeAlongsideContinuation .hole (.seqLeft .hole (.send loan))
-    (.rollOnce (.send tick)) (.rollOnce (.send tick)) (.seq (.send tail) (.send loan))
+  unfolding := .resumeAlongsideContinuation .hole
+    (.seqRight (.send tick) (.seqLeft .hole (.send loan)))
+    (.seq (.rollOnce (.send tick)) (.seq (.send tail) (.send loan))) (.rollOnce (.send tick))
   normalized := normalized
   accepted := by decide
   sameIssuance := by decide
@@ -58,9 +59,10 @@ private def twoStepPlan : SourceOccurrenceCut twoStepSource := {
   original := twoStepOriginal
   originalAccepted := by decide
   expanded := twoStepExpanded
-  unfolding := .resumeAlongsideContinuation .hole (.seqLeft .hole (.send loan))
-    (.rollOnce (.oneCopy twoStepBody)) (.rollOnce (.oneCopy twoStepBody))
-    (.seq (.send tail) (.send loan))
+  unfolding := .resumeAlongsideContinuation .hole
+    (.seqRight twoStepBody (.seqLeft .hole (.send loan)))
+    (.seq (.rollOnce (.oneCopy twoStepBody)) (.seq (.send tail) (.send loan)))
+    (.rollOnce (.oneCopy twoStepBody))
   normalized := twoStepNormalized
   accepted := by decide
   sameIssuance := by decide

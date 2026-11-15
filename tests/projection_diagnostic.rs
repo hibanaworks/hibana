@@ -2,6 +2,78 @@ use hibana::g::{self, Msg, ProjectionProblem};
 use hibana::runtime::program::{RoleProgram, project};
 
 #[test]
+fn co_resident_file_views_have_one_implicit_choice_owner() {
+    use hibana::Endpoint;
+    type FirstFile<'r> = Msg<1, Endpoint<'r, 9>>;
+    type SecondFile<'r> = Msg<2, Endpoint<'r, 10>>;
+    let source = g::seq(
+        g::par(g::send::<0, 2, FirstFile>(), g::send::<1, 2, SecondFile>()),
+        g::route(
+            g::seq(
+                g::send::<9, 3, Msg<3, u32>>(),
+                g::send::<2, 4, Msg<5, ()>>(),
+            ),
+            g::seq(
+                g::send::<10, 4, Msg<4, u32>>(),
+                g::send::<2, 3, Msg<6, ()>>(),
+            ),
+        ),
+    );
+    assert_eq!(g::diagnose(&source), None);
+    let _: RoleProgram<2> = project(&source);
+}
+
+#[test]
+fn a_resolver_does_not_acquire_authority_over_other_co_resident_views() {
+    use hibana::Endpoint;
+    type FirstFile<'r> = Msg<1, Endpoint<'r, 9>>;
+    type SecondFile<'r> = Msg<2, Endpoint<'r, 10>>;
+    let source = g::seq(
+        g::par(g::send::<0, 2, FirstFile>(), g::send::<1, 2, SecondFile>()),
+        g::route(
+            g::seq(
+                g::send::<9, 3, Msg<3, u32>>(),
+                g::send::<2, 4, Msg<5, ()>>(),
+            ),
+            g::seq(
+                g::send::<10, 4, Msg<4, u32>>(),
+                g::send::<2, 3, Msg<6, ()>>(),
+            ),
+        )
+        .resolve::<8199>(),
+    );
+    assert_eq!(
+        g::diagnose(&source).unwrap().problem,
+        ProjectionProblem::RouteControllerMismatch,
+        "a resolver still requires one exact logical controlling view"
+    );
+}
+
+#[test]
+fn independently_owned_file_views_do_not_share_a_choice_authority() {
+    use hibana::Endpoint;
+    type FirstFile<'r> = Msg<1, Endpoint<'r, 9>>;
+    type SecondFile<'r> = Msg<2, Endpoint<'r, 10>>;
+    let source = g::seq(
+        g::par(g::send::<0, 2, FirstFile>(), g::send::<1, 3, SecondFile>()),
+        g::route(
+            g::seq(
+                g::send::<9, 3, Msg<3, u32>>(),
+                g::send::<2, 4, Msg<5, ()>>(),
+            ),
+            g::seq(
+                g::send::<10, 4, Msg<4, u32>>(),
+                g::send::<2, 3, Msg<6, ()>>(),
+            ),
+        ),
+    );
+    assert_eq!(
+        g::diagnose(&source).unwrap().problem,
+        ProjectionProblem::RouteControllerMismatch
+    );
+}
+
+#[test]
 fn nested_parallel_reentry_needs_the_entry_owner_to_start_the_notice() {
     use hibana::Endpoint;
     type Loan = Msg<0, Endpoint<'static, 3>>;
@@ -299,6 +371,34 @@ fn mutually_exclusive_senders_with_controller_handoff_are_accepted() {
     );
     assert_eq!(g::diagnose(&program), None);
     let _: RoleProgram<3> = project(&program);
+}
+
+#[test]
+fn equal_possible_owner_sets_do_not_establish_one_choice_owner() {
+    type FirstLoan<'r> = Msg<1, hibana::Endpoint<'r, 9>>;
+    type SecondLoan<'r> = Msg<2, hibana::Endpoint<'r, 10>>;
+    let loans = g::route(
+        g::seq(
+            g::send::<0, 1, Msg<3, ()>>(),
+            g::seq(g::send::<0, 1, FirstLoan>(), g::send::<0, 2, SecondLoan>()),
+        ),
+        g::seq(
+            g::send::<0, 1, Msg<4, ()>>(),
+            g::seq(g::send::<0, 2, FirstLoan>(), g::send::<0, 1, SecondLoan>()),
+        ),
+    );
+    assert_eq!(g::diagnose(&loans), None);
+    let source = g::seq(
+        loans,
+        g::route(
+            g::send::<9, 3, Msg<5, u32>>(),
+            g::send::<10, 3, Msg<6, u32>>(),
+        ),
+    );
+    assert_eq!(
+        g::diagnose(&source).unwrap().problem,
+        ProjectionProblem::RouteControllerMismatch,
+    );
 }
 
 #[test]

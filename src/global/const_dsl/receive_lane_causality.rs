@@ -4,15 +4,13 @@ use super::{EffList, ScopeEvent, ScopeKind, scope::ScopeEntry};
 mod actors;
 mod directions;
 mod participants;
-pub(crate) use participants::Participants;
 mod relations;
-pub(crate) use actors::owned_receive_lane_conflict;
 pub(crate) use actors::receive_pair_is_causal;
 use actors::{ActorMap, NeedChoice};
-pub(crate) use actors::{ReceiveScan, receive_lane_conflict_in};
-pub(crate) use directions::LogicalDirections;
-pub(crate) use directions::has_receive_sender_changes;
-use directions::{Direction, ReceiveDirectionIndex};
+pub(crate) use actors::{ReceiveScan, receive_lane_conflict_in, receive_lane_conflict_indexed};
+pub(crate) use actors::{owned_receive_lane_conflict, passive_choice_conflict};
+pub(crate) use directions::{Direction, ReceiveDirectionIndex};
+pub(crate) use directions::{LogicalDirections, ReceiveLanes};
 pub(crate) use relations::{ReceiveOrder, ReceiveRelations, ReceiveSeeds};
 
 const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
@@ -25,23 +23,23 @@ const CAUSAL_ROLE_WORDS: usize = CAUSAL_ROLE_COUNT / u64::BITS as usize;
 pub(crate) struct CausalRoles([u64; CAUSAL_ROLE_WORDS]);
 
 impl CausalRoles {
-    const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self([0; CAUSAL_ROLE_WORDS])
     }
 
-    const fn contains(&self, role: u8) -> bool {
+    pub(crate) const fn contains(&self, role: u8) -> bool {
         self.0[role as usize / 64] & (1u64 << (role as usize % 64)) != 0
     }
 
-    const fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.0[0] | self.0[1] | self.0[2] | self.0[3] == 0
     }
 
-    const fn insert(&mut self, role: u8) {
+    pub(crate) const fn insert(&mut self, role: u8) {
         self.0[role as usize / 64] |= 1u64 << (role as usize % 64);
     }
 
-    const fn pop_first(&mut self) -> Option<u8> {
+    pub(crate) const fn pop_first(&mut self) -> Option<u8> {
         let mut word = 0;
         while word < self.0.len() {
             let bits = self.0[word];
@@ -77,7 +75,7 @@ impl CausalRoles {
         ])
     }
 
-    const fn union(self, other: Self) -> Self {
+    pub(crate) const fn union(self, other: Self) -> Self {
         Self([
             self.0[0] | other.0[0],
             self.0[1] | other.0[1],
@@ -132,13 +130,17 @@ impl<const E: usize> FlowIndex<E> {
     pub(crate) const fn participants_at(&self, event: usize) -> CausalRoles {
         self.participants.at(event)
     }
-    pub(crate) const fn lane_participants(
+
+    pub(crate) const fn participants_in(&self, start: usize, end: usize) -> CausalRoles {
+        self.participants.members(start, end)
+    }
+    pub(crate) const fn exclude_lane_colors(
         &self,
         events: &EffList<E>,
-        lane: u8,
-        output: &mut Participants<E>,
+        selection: (usize, usize, CausalRoles),
+        colors: &mut [u8],
     ) {
-        output.for_lane(events, &self.participants, lane);
+        self.participants.exclude_colors(events, selection, colors);
     }
     const fn scope_at(&self, range: &mut FlowRange) -> Option<(usize, ScopeKind, usize, usize)> {
         let scopes = self;
@@ -483,6 +485,9 @@ struct CausalFlow<'a, const E: usize> {
     goal: FlowGoal,
     body_start: usize,
     iteration_start: usize,
+    /// Construction-only origin of branch knowledge: occurrence, exact arm
+    /// marker floor and actor. Unrelated parallel arms never receive it.
+    choice_entry: Option<(usize, usize, u8)>,
 }
 
 impl<const E: usize> CausalFlow<'_, E> {
@@ -546,8 +551,18 @@ impl<const E: usize> CausalFlow<'_, E> {
     ) -> Result<Result<CausalRoles, usize>, NeedChoice> {
         let stop = self.goal.stop();
         let selected_target = self.goal.selected_target();
-        if self.occurrence(range.end) <= self.earlier || self.occurrence(range.start) >= stop {
+        let seed_start = match self.choice_entry {
+            Some((at, _, _)) => at,
+            None => self.earlier,
+        };
+        if self.occurrence(range.end) <= seed_start || self.occurrence(range.start) >= stop {
             return Ok(Ok(facts));
+        }
+        if let Some((at, floor, actor)) = self.choice_entry
+            && self.occurrence(range.start) == at
+            && range.marker_floor == floor
+        {
+            facts.insert(actor);
         }
         // Convert this query's cutoff once. Every nested range uses source
         // indices; only reported failures need occurrence coordinates.
@@ -586,8 +601,8 @@ impl<const E: usize> CausalFlow<'_, E> {
             // Relays cannot create evidence from an empty input. Before the
             // seed, seek directly to it or to the next structural boundary;
             // a containing route/par must still fork using its shared input.
-            if self.occurrence(range.start) < self.earlier && facts.is_empty() {
-                let seed = self.body_start + self.earlier - self.iteration_start;
+            if self.occurrence(range.start) < seed_start && facts.is_empty() {
+                let seed = self.body_start + seed_start - self.iteration_start;
                 let scopes = self.scope_offsets;
                 let first = self.scope_offsets.first[range.start] as usize;
                 let next = if range.marker_floor > first {
@@ -722,7 +737,7 @@ impl<const E: usize> CausalFlow<'_, E> {
                 let mut occurrence = self.occurrence(range.start);
                 while range.start < boundary && range.start < source_stop {
                     let atom = self.eff_list.atom_at(range.start);
-                    let receiver = if occurrence == self.earlier {
+                    let receiver = if occurrence == self.earlier && self.choice_entry.is_none() {
                         match actors.receiver(range.start, atom, self.iteration_start) {
                             Ok(value) => value,
                             Err(choice) => return Err(choice),
@@ -813,6 +828,7 @@ const fn receive_precedes_later_send<const E: usize>(
         goal: FlowGoal::Target(later_eff_idx),
         body_start: 0,
         iteration_start: 0,
+        choice_entry: None,
     };
     let Some(facts) = flow.advance(
         FlowRange {
@@ -858,7 +874,8 @@ const fn validate_linear_later_senders<const E: usize>(
 #[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn validate_linear_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let mut storage = [Direction::EMPTY; E];
-    let directions = ReceiveDirectionIndex::new(eff_list, &mut storage);
+    let mut storage_homogeneous = [false; E];
+    let directions = ReceiveDirectionIndex::new(eff_list, &mut storage, &mut storage_homogeneous);
     let mut earlier_eff_idx = 0usize;
     while earlier_eff_idx < eff_list.len() {
         let earlier = eff_list.atom_at(earlier_eff_idx);
@@ -903,6 +920,7 @@ const fn receive_precedes_after_roll_reentry<const E: usize>(
         goal: FlowGoal::Target(body.len() + later_eff_idx - body.start),
         body_start: body.start,
         iteration_start: 0,
+        choice_entry: None,
     };
     let Some(facts) = flow.advance(range, CausalRoles::empty()) else {
         crate::invariant()
@@ -936,7 +954,8 @@ const fn validate_roll_body_receive_lane_causality<const E: usize>(
     };
     let mut earlier_idx = body.start;
     let mut storage = [Direction::EMPTY; E];
-    let directions = ReceiveDirectionIndex::new(eff_list, &mut storage);
+    let mut storage_homogeneous = [false; E];
+    let directions = ReceiveDirectionIndex::new(eff_list, &mut storage, &mut storage_homogeneous);
     while earlier_idx < body.end {
         let earlier = eff_list.atom_at(earlier_idx);
         if earlier.from != earlier.to {
@@ -951,6 +970,7 @@ const fn validate_roll_body_receive_lane_causality<const E: usize>(
                 goal: FlowGoal::Closure,
                 body_start: body.start,
                 iteration_start: 0,
+                choice_entry: None,
             };
             let Some(facts) = flow.advance(range, CausalRoles::empty()) else {
                 crate::invariant()
@@ -998,7 +1018,8 @@ const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList
 const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let scope_offsets = FlowIndex::new::<0>(eff_list, None);
     let mut storage = [Direction::EMPTY; E];
-    let directions = ReceiveDirectionIndex::new(eff_list, &mut storage);
+    let mut storage_homogeneous = [false; E];
+    let directions = ReceiveDirectionIndex::new(eff_list, &mut storage, &mut storage_homogeneous);
     let range = FlowRange {
         start: 0,
         end: eff_list.len(),
@@ -1026,6 +1047,7 @@ const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &E
                 goal: FlowGoal::ReceiveLane(earlier, end),
                 body_start: 0,
                 iteration_start: 0,
+                choice_entry: None,
             };
             if flow.advance(range, CausalRoles::empty()).is_none() {
                 return false;

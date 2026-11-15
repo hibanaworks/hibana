@@ -152,7 +152,8 @@ fn scoped_candidates_preserve_correlated_participation_rejection() {
         receiver: ActorRef::node(1).unwrap(),
     };
     image.event_len = 2;
-    let candidates = Checker { image: &image }.participants(PRIOR);
+    let candidates =
+        Checker { image: &image }.participants(PRIOR.start as usize..PRIOR.stop as usize);
     let marked = candidates[actor as usize / 8] & (1 << (actor % 8)) != 0;
     assert_eq!(marked, actor == 255 || actor == first || actor == second);
     let full = actor == 255 || ((actor == first) == (actor == second));
@@ -187,7 +188,7 @@ fn leaf_participation_is_exact_including_collapsed_choice_inputs() {
         actor == 255 || ((actor == first) == (actor == second))
     );
     let checker = Checker { image: &image };
-    let candidates = checker.participants(PRIOR);
+    let candidates = checker.participants(PRIOR.start as usize..PRIOR.stop as usize);
     let full = checker.matching_presence(PRIOR, actor, ActorRef::actor(255), &Context::new(&[]));
     assert_eq!(
         candidates[actor as usize / 8] & (1 << (actor % 8)) == 0 || full,

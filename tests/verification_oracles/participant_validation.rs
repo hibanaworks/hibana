@@ -37,11 +37,15 @@ const fn reference_route_scope<const E: usize>(
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
     let route_scope = scope_markers.at(route_enter_marker_idx).scope_id;
     let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
-    let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)
-        .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
+    let controller = match first_visible_controller(eff_list, (arm0_start, arm0_end), None)
+        .merge(first_visible_controller(
+            eff_list,
+            (arm1_start, arm1_end),
+            None,
+        ))
         .unique()
     {
-        Some(controller) => controller,
+        Some(_) => eff_list.atom_at(arm0_start).from,
         None => return Some(ProgramSourceError::RouteControllerMismatch),
     };
     if !has_dynamic_resolver
@@ -100,9 +104,7 @@ pub(crate) const fn reference_projection_error_all_roles<const E: usize>(
     if !roll_reentry_endpoint_conflict(eff_list, None).is_none() {
         return Some(ProgramSourceError::ReentryAmbiguousEndpointSelector);
     }
-    if let Some(error) =
-        passive_child::validate_passive_child_projection_guarantees(eff_list.scope_markers())
-    {
+    if let Some(error) = passive_child::validate_passive_child_projection_guarantees(eff_list) {
         return Some(error);
     }
     reference_route_projection_guarantees(summary, eff_list)

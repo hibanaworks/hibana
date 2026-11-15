@@ -39,7 +39,15 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         event.body_reentry = self
             .borrowed_reentry_scope(index)
             .unwrap_or_else(crate::global::const_dsl::ScopeId::none);
-        let enabled = self.progress.cursor.event_enabled(index, event, arms)?;
+        let held = self.held;
+        let actor = self.public_header.actor();
+        let borrowed = |role| held.is_some_and(|views| views.contains(actor, role));
+        let enabled = self.progress.cursor.event_enabled_borrowing(
+            index,
+            event,
+            held.map(|_| &borrowed as &dyn Fn(u8) -> bool),
+            arms,
+        )?;
         self.admit_enabled_entry_views(index, event, enabled)
     }
 
@@ -71,7 +79,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             Err(
                 crate::global::typestate::EventAdmissionError::OtherViewPending
                 | crate::global::typestate::EventAdmissionError::PredecessorPending
-                | crate::global::typestate::EventAdmissionError::PayloadPredecessorPending,
+                | crate::global::typestate::EventAdmissionError::HeldPredecessorPending,
             ) if self.operation.public_active_op == PublicActiveOp::Offer
                 && !self.progress.cursor.is_send_at(index) => {}
             Err(error) => return Err(error),
@@ -136,6 +144,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     }
 
     fn arm_lane(&self, source: core::ops::Range<usize>) -> Option<usize> {
+        if source.is_empty() {
+            return None;
+        }
         (0..self.progress.cursor.local_steps_len()).find_map(|index| {
             let row = self.progress.cursor.event_row_at(index)?;
             (row.logical_role() == self.public_header.role()
@@ -215,7 +226,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 Ok(())
                     | Err(
                         crate::global::typestate::EventAdmissionError::OtherViewPending
-                            | crate::global::typestate::EventAdmissionError::PayloadPredecessorPending
+                            | crate::global::typestate::EventAdmissionError::HeldPredecessorPending
                     )
             ) {
                 continue;
@@ -245,15 +256,17 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         inside
     }
 
-    /// Flatten only associative parallel composition. Sequential prefixes and
-    /// enclosing repetitions retain their own execution boundary.
+    /// Flatten associative local parallel composition. A foreign suffix adds
+    /// no operation to this view; local sequential tails and enclosing rolls
+    /// retain their own execution boundary.
     fn associative_parallel_at(&self, region: OperationRegion) -> Option<(usize, usize, usize)> {
         let bounds = region.bounds();
         let program = self.context.program;
         for marker in program.source_markers_at(bounds.start) {
             if let Some((_, start, end)) = program.source_roll_at(marker)
                 && start == bounds.start
-                && end == bounds.end
+                && end <= bounds.end
+                && self.arm_lane(end..bounds.end).is_none()
             {
                 return None;
             }
@@ -262,7 +275,8 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             let Some((start, split, end)) = program.source_parallel_at(marker) else {
                 continue;
             };
-            if start != bounds.start || end != bounds.end {
+            if start != bounds.start || end > bounds.end || self.arm_lane(end..bounds.end).is_some()
+            {
                 continue;
             }
             return Some((start, split, end));
@@ -433,10 +447,17 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             .as_ref()
             .ok_or(SendError::PhaseInvariant)?;
         let event = branch.branch_meta.eff_index.dense_ordinal();
-        let region = regions
-            .iter()
-            .find(|region| region.contains(event))
-            .ok_or(SendError::PhaseInvariant)?;
+        let Some(region) = regions.iter().find(|region| region.contains(event)) else {
+            if branch.offered_frame.is_some() {
+                return Err(SendError::PhaseInvariant);
+            }
+            // A parked preview can name a completed roll's alternative to
+            // this continuation. Scope/frontier admission already validated
+            // the borrow. Keep a frame-free preview with its parent; these
+            // fragments do not commit the alternative. Materialized input
+            // must still belong to a borrowed fragment and cannot be stranded.
+            return Ok(());
+        };
         let target =
             crate::invariant_some(self.operations.get(region.lane(0)).and_then(Option::as_ref));
         let target = target.state.get();

@@ -15,6 +15,7 @@ use crate::global::{
 };
 
 mod entry_resources;
+pub(super) use entry_resources::source_terminal_transfers;
 mod operation_index;
 mod parallel_masks;
 mod route_topology;
@@ -345,7 +346,11 @@ impl RoleImageRef {
         self.lanes().roll_entry_receipts(index)
     }
 
-    pub(crate) const fn owned_receipt(&self, index: usize) -> u16 {
+    pub(crate) const fn owned_receipt_count(&self) -> usize {
+        self.columns.owned_receipt_count as usize
+    }
+
+    pub(crate) const fn owned_receipt(&self, index: usize) -> (u16, Option<u16>) {
         self.lanes().owned_receipt(index)
     }
 

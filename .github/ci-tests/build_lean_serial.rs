@@ -36,7 +36,7 @@ fn visit(
     Ok(())
 }
 
-fn run(root: &Path, native: Option<&str>) -> AuditResult<()> {
+fn run(root: &Path, native: Option<&[&str]>) -> AuditResult<()> {
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let mut files = lean_files(&root.join("Hibana"))?;
     files.push(root.join("Hibana.lean"));
@@ -87,12 +87,15 @@ fn run(root: &Path, native: Option<&str>) -> AuditResult<()> {
     let mut order = Vec::new();
     let mut active = BTreeSet::new();
     let mut built = BTreeSet::new();
-    if let Some(module) = native {
-        require(
-            graph.contains_key(module),
-            format!("unknown native root {module}"),
-        )?;
-        visit(module, &graph, &mut active, &mut built, &mut order)?;
+    if let Some(modules) = native {
+        require(!modules.is_empty(), "empty native root set")?;
+        for module in modules {
+            require(
+                graph.contains_key(*module),
+                format!("unknown native root {module}"),
+            )?;
+            visit(module, &graph, &mut active, &mut built, &mut order)?;
+        }
     } else {
         for module in graph.keys() {
             visit(module, &graph, &mut active, &mut built, &mut order)?;
@@ -140,11 +143,16 @@ fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
     let result = match args.as_slice() {
         [_, root] => run(Path::new(root), None),
-        [_, root, flag, module] if flag == "--native" => module
-            .to_str()
-            .ok_or_else(|| "non-UTF8 native module".into())
-            .and_then(|module| run(Path::new(root), Some(module))),
-        _ => Err("usage: build_lean_serial PROOF_DIRECTORY [--native MODULE]".into()),
+        [_, root, flag, modules @ ..] if flag == "--native" && !modules.is_empty() => modules
+            .iter()
+            .map(|module| {
+                module
+                    .to_str()
+                    .ok_or_else(|| "non-UTF8 native module".into())
+            })
+            .collect::<AuditResult<Vec<_>>>()
+            .and_then(|modules| run(Path::new(root), Some(&modules))),
+        _ => Err("usage: build_lean_serial PROOF_DIRECTORY [--native MODULE...]".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

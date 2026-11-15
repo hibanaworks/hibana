@@ -11,10 +11,106 @@ use hibana::{
 };
 use in_memory::InMemoryTransport;
 
+#[test]
+fn a_delayed_relay_cannot_hide_a_previous_visit_of_a_passive_choice() {
+    type LeftNotice = g::Msg<0, ()>;
+    type LeftValue = g::Msg<1, ()>;
+    type RightNotice = g::Msg<2, ()>;
+    type RightValue = g::Msg<3, ()>;
+    type DoneNotice = g::Msg<4, ()>;
+    type DoneValue = g::Msg<5, ()>;
+
+    let global = g::route(
+        g::route(
+            g::seq(g::send::<0, 2, LeftNotice>(), g::send::<0, 1, LeftValue>()),
+            g::seq(
+                g::send::<0, 2, RightNotice>(),
+                g::send::<2, 1, RightValue>(),
+            ),
+        )
+        .resolve::<1>()
+        .roll(),
+        g::seq(g::send::<0, 2, DoneNotice>(), g::send::<0, 1, DoneValue>()),
+    )
+    .resolve::<0>();
+    let diagnostic = g::diagnose(&global).expect("a lane cannot distinguish these visits");
+    assert_eq!(
+        diagnostic.problem,
+        g::ProjectionProblem::ReceiveLaneCausality
+    );
+    assert_eq!(diagnostic.role, Some(1));
+    type ResourceLoan<'r> = g::Msg<6, Endpoint<'r, 9>>;
+    let with_owned = g::seq(
+        g::send::<4, 5, ResourceLoan>(),
+        g::seq(global, g::send::<5, 4, ResourceLoan>()),
+    );
+    let diagnostic =
+        g::diagnose(&with_owned).expect("unrelated delegation does not repair the head");
+    assert_eq!(
+        diagnostic.problem,
+        g::ProjectionProblem::ReceiveLaneCausality
+    );
+    assert_eq!(diagnostic.role, Some(1));
+
+    type Msg<const LABEL: u8> = g::Msg<LABEL, ()>;
+    let repeated = g::seq(
+        g::send::<1, 0, Msg<0>>(),
+        g::seq(
+            g::send::<0, 2, Msg<1>>(),
+            g::seq(g::send::<2, 0, Msg<2>>(), g::send::<0, 1, Msg<3>>()),
+        ),
+    )
+    .roll();
+    let once = g::seq(
+        g::send::<1, 0, Msg<4>>(),
+        g::seq(
+            g::send::<0, 2, Msg<5>>(),
+            g::seq(g::send::<2, 0, Msg<6>>(), g::send::<0, 1, Msg<7>>()),
+        ),
+    );
+    let global = g::route(
+        g::par(repeated, once),
+        g::seq(
+            g::send::<1, 0, Msg<8>>(),
+            g::seq(g::send::<1, 2, Msg<9>>(), g::send::<0, 2, Msg<10>>()),
+        ),
+    )
+    .resolve::<0>()
+    .roll();
+    let diagnostic = g::diagnose(&global).expect("the unused arm still needs a closed handoff");
+    assert_eq!(
+        diagnostic.problem,
+        g::ProjectionProblem::ReceiveLaneCausality
+    );
+    assert_eq!(diagnostic.role, Some(2));
+}
+
 const OWNER: u8 = 0;
 const WORKER: u8 = 1;
 const SERVICE: u8 = 2;
 const DB: u8 = 3;
+
+#[test]
+fn both_fifo_directions_can_fence_a_repeated_passive_choice() {
+    type Msg<const LABEL: u8> = g::Msg<LABEL, ()>;
+    let choice = g::route(
+        g::seq(g::send::<0, 2, Msg<0>>(), g::send::<0, 1, Msg<1>>()),
+        g::seq(g::send::<0, 2, Msg<2>>(), g::send::<2, 1, Msg<3>>()),
+    )
+    .resolve::<0>();
+    let forward = g::seq(
+        choice,
+        g::par(g::send::<0, 1, Msg<4>>(), g::send::<2, 1, Msg<5>>()),
+    )
+    .roll();
+    let reverse = g::seq(
+        choice,
+        g::par(g::send::<2, 1, Msg<5>>(), g::send::<0, 1, Msg<4>>()),
+    )
+    .roll();
+    assert_eq!(g::diagnose(&forward), None);
+    assert_eq!(g::diagnose(&reverse), None);
+}
 type Start = g::Msg<1, ()>;
 type Loan<'r> = g::Msg<2, Endpoint<'r, DB>>;
 type Read = g::Msg<3, u32>;
@@ -86,6 +182,7 @@ async fn delegated_roll_reentry_keeps_the_current_body_before_outgoing_continuat
             for visit in 0..3 {
                 db.send::<First>(&()).await.unwrap();
                 if reject_early_tail && visit == 1 {
+                    let before = rv1.tap().checkpoint();
                     let send = db.send::<TailFirst>(&());
                     let mut send = core::pin::pin!(send);
                     let result =
@@ -95,8 +192,8 @@ async fn delegated_roll_reentry_keeps_the_current_body_before_outgoing_continuat
                             "a resumed actor must finish its current visit before a new outgoing continuation: {result:?}"
                         );
                     };
-                    assert!(format!("{error:?}").contains("OutOfOrder"), "{error:?}");
-                    return;
+                    assert!(error.is_unavailable(), "{error:?}");
+                    assert_eq!(rv1.tap().checkpoint(), before, "refusal committed an event");
                 }
                 let send = worker.send::<Second>(&());
                 let mut send = core::pin::pin!(send);

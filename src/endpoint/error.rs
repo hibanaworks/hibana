@@ -12,8 +12,8 @@ pub(crate) enum EndpointOp {
 /// An error from an Endpoint or branch operation.
 ///
 /// Its `Display` and `Debug` output identify the failed operation and cause.
-/// `is_unavailable()` identifies a declared receive or completed borrowed-payload
-/// send rejected before transport polling or progress publication. That
+/// `is_unavailable()` identifies a declared receive or borrowed-payload send
+/// refused before transport polling or progress publication. That
 /// rejection leaves the run usable.
 /// Protocol violations after admission and transport failures fault the run.
 /// Starting another run requires fresh transport state that excludes frames

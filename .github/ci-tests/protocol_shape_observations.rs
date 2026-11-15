@@ -448,7 +448,7 @@ impl<const ROLE: u8> ObservedEndpoint for Endpoint<'_, ROLE> {
         }
     }
 }
-impl<const ROLE: u8> ObservedEndpoint for hibana::ParallelEndpoint<'_, '_, ROLE> {
+impl<const ROLE: u8> ObservedEndpoint for hibana::EndpointBorrow<'_, '_, ROLE> {
     const ROLE: u8 = ROLE;
     unsafe fn operation_cut(&self) -> crate::endpoint::proof_snapshot::OperationCutSnapshot {
         // SAFETY: the caller establishes the original concrete transport.

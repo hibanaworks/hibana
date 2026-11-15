@@ -197,6 +197,43 @@ pub(super) fn parallel_parts<'a>(source: &'a Protocol, parts: &mut Vec<&'a Proto
     }
 }
 
+fn parallel_prefix(source: &Protocol, role: u8) -> bool {
+    match source {
+        Protocol::Par(..) => true,
+        Protocol::Seq(first, tail) if !present(tail, role, None) => parallel_prefix(first, role),
+        _ => false,
+    }
+}
+
+/// Local leaves of an ordinary-view group, retaining real sequential tails
+/// and roll boundaries. A group using the resource view retains its separate
+/// view borrows and source parts, as its emitted localside drives both views.
+pub(super) fn parallel_parts_for_actor<'a>(
+    source: &'a Protocol,
+    actor: u8,
+    parts: &mut Vec<&'a Protocol>,
+) {
+    fn collect<'a>(source: &'a Protocol, role: u8, parts: &mut Vec<&'a Protocol>) {
+        match source {
+            Protocol::Par(a, b) => {
+                collect(a, role, parts);
+                collect(b, role, parts);
+            }
+            Protocol::Seq(first, tail)
+                if !present(tail, role, None) && parallel_prefix(first, role) =>
+            {
+                collect(first, role, parts)
+            }
+            _ => parts.push(source),
+        }
+    }
+    if present(source, 3, None) {
+        parallel_parts(source, parts);
+    } else {
+        collect(source, actor, parts);
+    }
+}
+
 fn parallel_ancestors<'a>(source: &'a Protocol, target: &Protocol) -> Option<Vec<&'a Protocol>> {
     if source == target {
         return Some(Vec::new());
@@ -407,7 +444,7 @@ impl Emitter<'_> {
             }
             for (lifetimes, target) in [
                 ("'r", format!("Endpoint<'r,{role}>")),
-                ("'e,'r", format!("hibana::ParallelEndpoint<'e,'r,{role}>")),
+                ("'e,'r", format!("hibana::EndpointBorrow<'e,'r,{role}>")),
             ] {
                 code += &format!(
                     "impl<{lifetimes}> QueryEndpoint<'r> for {target}{{fn query(&mut self,db:&mut Option<Endpoint<'r,3>>,input:(u8,bool,&mut core::task::Context<'_>))->Result<Outcome,hibana::EndpointError>{{let _=&db;let(label,receive,cx)=input;match(label,receive){{{arms}_=>panic!(\"unknown scoped admission selector\")}}}}}}"
@@ -824,6 +861,8 @@ impl Emitter<'_> {
         if left_entries.is_empty() && right_entries.is_empty() {
             return format!("{{{select}{common}}}");
         }
+        let left_done = left_entries.is_empty();
+        let right_done = right_entries.is_empty();
         let mut views = std::collections::BTreeMap::new();
         for (view, label) in left_entries.iter().chain(&right_entries) {
             views.entry(*view).or_insert(*label);
@@ -884,15 +923,31 @@ impl Emitter<'_> {
                 // actual occurrence/choice and every admission are checked
                 // independently from the captured records by the source oracle.
                 (true, true) => format!("if right{{{right}}}else{{{left}}}"),
-                (true, false) => format!("assert_eq!(right,false);{left}"),
-                (false, true) => format!("assert_eq!(right,true);{right}"),
+                (true, false) => format!(
+                    "assert_eq!(right,false,\"incoming preview chose another source arm: actor={actor} label={{label}} script={{script_index}} reverse={{reverse_poll}} prefix={{:?}}\",observed.completed.borrow());{left}"
+                ),
+                (false, true) => format!(
+                    "assert_eq!(right,true,\"incoming preview chose another source arm: actor={actor} label={{label}} script={{script_index}} reverse={{reverse_poll}} prefix={{:?}}\",observed.completed.borrow());{right}"
+                ),
                 _ => unreachable!(),
             };
             branches += &format!("{label}=>{{{body}}},");
         }
-        format!(
-            "{{{select}{common}{preview}match label{{{branches}_=>panic!(\"unknown received branch\")}}}}"
-        )
+        let remaining =
+            format!("{preview}match label{{{branches}_=>panic!(\"unknown received branch\")}}");
+        // A prescribed finite source word needs no further operation from
+        // this actor on an empty residual path. Offering there can observe a
+        // later visit, or wait forever at the end of this word. Keep both
+        // previews on every nonempty path; the independent source checker
+        // still checks the actual common occurrence and complete word.
+        let remaining = if left_done {
+            format!("if right{{{remaining}}}else{{{left}}}")
+        } else if right_done {
+            format!("if right{{{right}}}else{{{remaining}}}")
+        } else {
+            remaining
+        };
+        format!("{{{select}{common}{remaining}}}")
     }
 
     fn parallel_code(
@@ -903,7 +958,7 @@ impl Emitter<'_> {
         primed: Option<u8>,
     ) -> (String, String, String, bool) {
         let mut parts = Vec::new();
-        parallel_parts(source, &mut parts);
+        parallel_parts_for_actor(source, actor, &mut parts);
         let mut names = names.clone();
         let mut declarations = String::new();
         // A received owned endpoint starts at the whole view. Enter enclosing
@@ -963,6 +1018,24 @@ impl Emitter<'_> {
             if indices.is_empty() {
                 continue;
             }
+            if !optional
+                && primed.is_none()
+                && indices.len() > 1
+                && parts.iter().all(|part| {
+                    matches!(part,
+                    Protocol::Message { from, owned: false, .. } if usize::from(*from) == role)
+                })
+                && follows_roll_in_choice(self.source, bounds(source).0 as u8)
+            {
+                // Both outgoing children follow the completed input/retry
+                // prefix. Retain a real offer before borrowing: it may name
+                // the roll's alternative rather than either child.
+                let endpoint = &names[role];
+                let entry = bounds(source).0;
+                declarations += &format!(
+                    "let branch=record_pending({endpoint}.offer(),observed,ObservedCall::Preview({actor},{entry})).await?;drop(branch);"
+                );
+            }
             let mut inner = Vec::new();
             let bindings = indices
                 .iter()
@@ -1011,13 +1084,14 @@ impl Emitter<'_> {
             e: &Emitter<'_>,
             source: &Protocol,
             actor: u8,
+            parts: &[&Protocol],
             names: &[[String; 4]],
             part: &mut usize,
             primed: Option<u8>,
         ) -> (String, bool) {
             if let Protocol::Par(a, b) = source {
-                let (left, returns_left) = schedule(e, a, actor, names, part, primed);
-                let (right, returns_right) = schedule(e, b, actor, names, part, primed);
+                let (left, returns_left) = schedule(e, a, actor, parts, names, part, primed);
+                let (right, returns_right) = schedule(e, b, actor, parts, names, part, primed);
                 assert!(!returns_left || !returns_right);
                 if left.is_empty() && right.is_empty() {
                     return (String::new(), false);
@@ -1046,6 +1120,16 @@ impl Emitter<'_> {
                     ),
                     returns_left || returns_right,
                 )
+            } else if let Protocol::Seq(first, _) = source
+                && parts[*part] != source
+            {
+                let (body, returns) = schedule(e, first, actor, parts, names, part, primed);
+                (
+                    format!(
+                        "{{let script=match script{{Script::Seq(first,_)=>first.as_ref(),_=>panic!(\"expected sequential script\")}};{body}}}"
+                    ),
+                    returns,
+                )
             } else {
                 let names = &names[*part];
                 *part += 1;
@@ -1072,7 +1156,7 @@ impl Emitter<'_> {
                 )
             }
         }
-        let (body, returns) = schedule(self, source, actor, &part_names, &mut 0, primed);
+        let (body, returns) = schedule(self, source, actor, &parts, &part_names, &mut 0, primed);
         (declarations, scope_checks, body, returns)
     }
 }
@@ -1297,6 +1381,51 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_tails_erase_only_for_the_view_with_no_later_operation() {
+        fn group(source: &Protocol) -> &Protocol {
+            match source {
+                Protocol::Seq(_, tail) => group(tail),
+                Protocol::Par(..) => source,
+                _ => panic!("expected the finite catalog's final parallel group"),
+            }
+        }
+        for rank in [33, 34] {
+            let source = super::super::contracts::protocol(rank);
+            let root = group(&source);
+            let sender = if rank == 33 { 0 } else { 1 };
+            let mut leaves = Vec::new();
+            parallel_parts_for_actor(root, sender, &mut leaves);
+            assert_eq!(leaves.len(), 3);
+            assert!(
+                leaves
+                    .iter()
+                    .all(|part| matches!(part, Protocol::Message { from, .. } if *from == sender))
+            );
+            leaves.clear();
+            parallel_parts_for_actor(root, 2, &mut leaves);
+            assert_eq!(
+                leaves.iter().filter(|part| present(part, 2, None)).count(),
+                2
+            );
+            let repeated = Protocol::Roll(Box::new(root.clone()));
+            leaves.clear();
+            parallel_parts_for_actor(&repeated, sender, &mut leaves);
+            assert_eq!(leaves, [&repeated]);
+        }
+        let mut source = super::super::contracts::protocol(33);
+        let Protocol::Par(_, right) = &mut source else {
+            unreachable!()
+        };
+        let Protocol::Seq(_, tail) = right.as_mut() else {
+            unreachable!()
+        };
+        *tail = Box::new(message(0, 2, false));
+        let mut leaves = Vec::new();
+        parallel_parts_for_actor(&source, 0, &mut leaves);
+        assert_eq!(leaves.len(), 2, "a real local suffix retains its join");
+    }
 
     fn message(from: u8, to: u8, owned: bool) -> Protocol {
         Protocol::Message {

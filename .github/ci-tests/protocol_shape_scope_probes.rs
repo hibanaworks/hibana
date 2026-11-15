@@ -286,7 +286,7 @@ impl Planner<'_> {
             }
             (Protocol::Par(a, b), Execution::Par(..)) => {
                 let mut parts = Vec::new();
-                localside::parallel_parts(source, &mut parts);
+                localside::parallel_parts_for_actor(source, self.actor, &mut parts);
                 for role in 0..4 {
                     if (if role == 3 && localside::mobile(self.global) {
                         holder
@@ -318,7 +318,7 @@ impl Planner<'_> {
                     }
                 }
                 // Adjacent par nodes form one borrow group in the public API.
-                self.parallel_children(source, script, holder, primed, occurrence);
+                self.parallel_children(source, script, holder, primed, occurrence, &parts);
             }
             _ => panic!("source and scoped execution disagree"),
         }
@@ -331,13 +331,28 @@ impl Planner<'_> {
         holder: u8,
         primed: Option<(&Protocol, u8)>,
         occurrence: usize,
+        parts: &[&Protocol],
     ) {
+        if parts.contains(&source) {
+            self.walk(source, script, holder, primed, occurrence);
+            return;
+        }
         match (source, script) {
             (Protocol::Par(a, b), Execution::Par(left, right, _)) => {
-                self.parallel_children(a, left, holder, primed, occurrence);
-                self.parallel_children(b, right, holder, primed, occurrence + left.message_count());
+                self.parallel_children(a, left, holder, primed, occurrence, parts);
+                self.parallel_children(
+                    b,
+                    right,
+                    holder,
+                    primed,
+                    occurrence + left.message_count(),
+                    parts,
+                );
             }
-            _ => self.walk(source, script, holder, primed, occurrence),
+            (Protocol::Seq(first, _), Execution::Seq(before, _)) => {
+                self.parallel_children(first, before, holder, primed, occurrence, parts)
+            }
+            _ => panic!("projected parallel leaves disagree with their source script"),
         }
     }
 }

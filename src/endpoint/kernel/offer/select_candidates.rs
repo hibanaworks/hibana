@@ -74,7 +74,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     /// Discover only receive directions while an already selected scope waits.
     /// The first enabled receive proves that its lane must remain polled.
     /// No branch is selected or admitted by this read.
-    pub(super) fn read_projected_offer_incoming(
+    pub(in crate::endpoint::kernel) fn read_projected_incoming(
         &self,
         inspected_lanes: &[LaneWord; LANE_SET_VIEW_WORDS],
     ) -> [LaneWord; LANE_SET_VIEW_WORDS] {
@@ -356,8 +356,73 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
             self.selected_arm_for_scope(scope).is_none(),
         );
         if selected.is_some_and(|(prior_priority, prior)| {
-            priority < prior_priority
-                || (priority == prior_priority && prior.entry_index.as_usize() <= entry)
+            // A completed retry alone cannot retire its decision. Prefer a
+            // later decision only after its source prefix actually sent or
+            // performed a local action. Receiving the next request is not
+            // that evidence. This reads an existing sealed predecessor row.
+            let advanced_between = |earlier: LocalEventRow, later: LocalEventRow| {
+                let Some(range) = self.progress.cursor.route_scope_rows(later.route_scope()) else {
+                    return false;
+                };
+                let Some(index) = range.start().checked_sub(1) else {
+                    return false;
+                };
+                let step = crate::invariant_some(self.progress.cursor.event_row_at(index));
+                step.direction() != RoleLocalDirection::Recv
+                    && self.progress.cursor.node_event_done_for_lane(
+                        index,
+                        crate::invariant_some(self.progress.cursor.event_lane_at(index)),
+                    )
+                    && self.context.program.source_precedes(
+                        earlier.effect().dense_ordinal(),
+                        step.effect().dense_ordinal(),
+                    )
+                    && self.context.program.source_precedes(
+                        step.effect().dense_ordinal(),
+                        later.effect().dense_ordinal(),
+                    )
+            };
+            let previous = crate::invariant_some(
+                self.progress
+                    .cursor
+                    .event_row_at(prior.candidate_index.as_usize()),
+            );
+            let previous_done = self.progress.cursor.node_event_done_for_lane(
+                previous.index(),
+                crate::invariant_some(self.progress.cursor.event_lane_at(previous.index())),
+            );
+            let current_done = self.progress.cursor.node_event_done_for_lane(
+                candidate_row.index(),
+                crate::invariant_some(self.progress.cursor.event_lane_at(candidate_row.index())),
+            );
+            let forward = !current_done
+                && previous_done
+                && advanced_between(previous, candidate_row)
+                && (locally_ready || (controller && dynamic && live_arm.is_none()))
+                && self.context.program.source_precedes(
+                    previous.effect().dense_ordinal(),
+                    candidate_row.effect().dense_ordinal(),
+                );
+            let previous_ready = prior_priority >= 16
+                || (self.is_route_controller(prior.scope_id)
+                    && self
+                        .progress
+                        .cursor
+                        .route_scope_resolver(prior.scope_id)
+                        .is_some()
+                    && previews(prior.scope_id).is_none());
+            let repeat = current_done
+                && !previous_done
+                && advanced_between(candidate_row, previous)
+                && previous_ready
+                && self.context.program.source_precedes(
+                    candidate_row.effect().dense_ordinal(),
+                    previous.effect().dense_ordinal(),
+                );
+            !forward
+                && (repeat
+                    || priority < prior_priority
+                    || (priority == prior_priority && prior.entry_index.as_usize() <= entry))
         }) {
             return Ok(());
         }

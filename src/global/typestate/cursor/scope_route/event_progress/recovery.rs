@@ -10,6 +10,7 @@ impl EventCursor {
         &self,
         index: usize,
         event: EventCommitMeta,
+        borrowed: Option<&dyn Fn(u8) -> bool>,
         arms: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> EventAdmissionError {
         let Some(scope) = (!event.body_reentry.is_none())
@@ -40,12 +41,16 @@ impl EventCursor {
         };
         let conflict = self.machine().event_conflict_for_index(index);
         let mut selected = |scope| arms(scope, EventArmView::Preview);
+        if self.retired_receipt_blocks(index, scope, &mut selected) {
+            return EventAdmissionError::PredecessorPending;
+        }
         let mut wait = EventAdmissionError::OtherViewPending;
         let end = index.min(row.end());
         let mut prior = row.start();
         while prior < end {
             if !(self.uses_view_at(prior, role)
-                || sent.is_some_and(|sent| self.uses_view_at(prior, sent)))
+                || sent.is_some_and(|sent| self.uses_view_at(prior, sent))
+                || self.uses_borrowed_view_at(prior, borrowed))
             {
                 prior += 1;
                 continue;
@@ -72,8 +77,10 @@ impl EventCursor {
                         if self.uses_view_at(prior, role) {
                             return EventAdmissionError::PredecessorPending;
                         }
-                        if sent.is_some_and(|sent| self.uses_view_at(prior, sent)) {
-                            wait = EventAdmissionError::PayloadPredecessorPending;
+                        if sent.is_some_and(|sent| self.uses_view_at(prior, sent))
+                            || self.uses_borrowed_view_at(prior, borrowed)
+                        {
+                            wait = EventAdmissionError::HeldPredecessorPending;
                         }
                     }
                     super::super::ConflictAdmission::Excluded { scope, arm } => {
@@ -88,12 +95,62 @@ impl EventCursor {
         wait
     }
 
+    /// Current pending prefixes and fresh visits need the same receipt
+    /// feasibility check. A fresh visit also needs already-completed receipts
+    /// inside that roll again. No completion or branch knowledge is changed.
+    pub(super) fn retired_receipt_blocks(
+        &self,
+        index: usize,
+        reentry: ScopeId,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        let program = self.machine().event_program();
+        let start = if reentry.is_none() {
+            0
+        } else {
+            crate::invariant_some(self.machine().roll_scope_row(reentry)).start()
+        };
+        let (after, _) = crate::invariant_some(program.operation_at(index));
+        let conflict = self.machine().event_conflict_for_index(index);
+        for receipt in 0..program.owned_receipt_count() {
+            let (step, retirement) = program.owned_receipt(receipt);
+            let Some(witness) = retirement else {
+                continue;
+            };
+            let step = step as usize;
+            if step < start
+                || step >= index
+                || (reentry.is_none() && self.local_event_done(step))
+                || !self.local_event_done(witness as usize)
+            {
+                continue;
+            }
+            let prior = state_index_to_usize(crate::invariant_some(
+                self.machine().state_for_step_index(step),
+            ));
+            let (before, _) = crate::invariant_some(program.operation_at(prior));
+            if self
+                .program_ref()
+                .source_precedes(before.dense_ordinal(), after.dense_ordinal())
+                && self.event_actor_is_local(prior, selected) == Some(true)
+                && self.event_conflict_row_required_with_preview(
+                    self.machine().event_conflict_for_index(prior),
+                    conflict,
+                    selected,
+                )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     fn pending_resource_receipt(
         &self,
         receipt: usize,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<(usize, EventCommitMeta)> {
-        let step = self.machine().event_program().owned_receipt(receipt) as usize;
+        let step = self.machine().event_program().owned_receipt(receipt).0 as usize;
         let index = state_index_to_usize(crate::invariant_some(
             self.machine().state_for_step_index(step),
         ));
@@ -155,6 +212,11 @@ impl EventCursor {
     ) -> EventAdmissionError {
         let mut verdict = EventAdmissionError::Invariant;
         for receipt in receipts.start()..receipts.end() {
+            if let (_, Some(witness)) = self.machine().event_program().owned_receipt(receipt)
+                && self.local_event_done(witness as usize)
+            {
+                return EventAdmissionError::PredecessorPending;
+            }
             let Some((index, meta)) = self.pending_resource_receipt(receipt, selected) else {
                 continue;
             };
@@ -164,9 +226,10 @@ impl EventCursor {
                 let wait = if role == blocked.0 {
                     EventAdmissionError::PredecessorPending
                 } else {
-                    let wait = self.source_predecessor_wait(index, blocked, conflict, selected);
+                    let wait =
+                        self.source_predecessor_wait(index, blocked, None, conflict, selected);
                     if wait == EventAdmissionError::OtherViewPending && blocked.1 == Some(role) {
-                        EventAdmissionError::PayloadPredecessorPending
+                        EventAdmissionError::HeldPredecessorPending
                     } else {
                         wait
                     }
@@ -174,7 +237,7 @@ impl EventCursor {
                 if wait == EventAdmissionError::PredecessorPending {
                     return wait;
                 }
-                if wait == EventAdmissionError::PayloadPredecessorPending {
+                if wait == EventAdmissionError::HeldPredecessorPending {
                     verdict = wait;
                     continue;
                 }

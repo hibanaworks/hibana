@@ -2,6 +2,81 @@ use super::*;
 use crate::global::typestate::cursor::validated_metadata_tests::with_rows;
 use crate::{Endpoint, g, runtime::program::project};
 
+#[test]
+fn a_retired_optional_receipt_does_not_refuse_an_unknown_or_resource_free_arm() {
+    type File = g::Msg<201, Endpoint<'static, 3>>;
+    type Loan = g::Msg<202, Endpoint<'static, 2>>;
+    type Retire = g::Msg<207, Endpoint<'static, 2>>;
+    let left = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(g::send::<2, 0, g::Msg<204, ()>>(), g::send::<1, 0, Loan>()),
+    );
+    let global = g::seq(
+        g::send::<0, 1, File>(),
+        g::seq(
+            g::seq(
+                g::route(left, g::send::<0, 1, g::Msg<208, ()>>()),
+                g::send::<3, 0, g::Msg<203, ()>>(),
+            )
+            .roll(),
+            g::seq(
+                g::send::<0, 4, Retire>(),
+                g::send::<4, 3, g::Msg<205, ()>>(),
+            ),
+        ),
+    );
+    let image = project::<1>(&global).role_image_ref();
+    with_rows(image, |cursor| {
+        for step in 0..cursor.local_steps_len() {
+            cursor.mark_local_event_done(step);
+        }
+        let index = (0..cursor.local_steps_len())
+            .find(|&index| {
+                cursor
+                    .try_send_meta_at(index)
+                    .is_some_and(|meta| meta.label == 203)
+            })
+            .unwrap();
+        let mut event = EventCommitMeta::from(cursor.try_send_meta_at(index).unwrap());
+        event.body_reentry = image.roll_scope_row(0).unwrap().scope();
+        for arm in [None, Some(0), Some(1)] {
+            assert_eq!(
+                cursor.reentry_view_wait(index, event, None, &mut |_, view| match view {
+                    EventArmView::Committed => Some(0),
+                    EventArmView::Preview => arm,
+                }),
+                if arm == Some(0) {
+                    EventAdmissionError::PredecessorPending
+                } else {
+                    EventAdmissionError::OtherViewPending
+                },
+                "arm={arm:?}"
+            );
+        }
+        // A never-executed occurrence can be blocked on the same resource
+        // without first being classified as a completed-body reentry.
+        cursor.clear_local_event_done(1);
+        cursor.clear_local_event_done(index);
+        for arm in [None, Some(0), Some(1)] {
+            assert_eq!(
+                cursor.source_predecessor_wait(
+                    index,
+                    (3, None),
+                    None,
+                    cursor.event_conflict_for_index(index),
+                    &mut |_| arm
+                ),
+                if arm == Some(0) {
+                    EventAdmissionError::PredecessorPending
+                } else {
+                    EventAdmissionError::OtherViewPending
+                },
+                "pending arm={arm:?}"
+            );
+        }
+    });
+}
+
 // The unfactored rule searches completion before checking the current path.
 // Keep this interpreter separate from the admission function being compared.
 fn unfactored(

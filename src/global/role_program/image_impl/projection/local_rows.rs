@@ -160,6 +160,50 @@ pub(crate) enum LocalRows<'a, const E: usize> {
 }
 
 impl<const E: usize> LocalRows<'_, E> {
+    /// Actual local receipts from an irreversible receiver, after its mandatory
+    /// handoff. A completed notice proves that an old loan cannot arrive again.
+    pub(in crate::global::role_program::image_impl) const fn receipt_retirements(
+        self,
+        effects: &EffList<E>,
+    ) -> [u16; 256] {
+        let mut notices = [u16::MAX; 256];
+        let Self::Actor(rows) = self else {
+            return notices;
+        };
+        let terminals = super::super::ref_access::source_terminal_transfers(&rows.program);
+        let mut event = 0;
+        while event < rows.events {
+            if rows.directions[event] & (1 << RoleLocalDirection::Recv as u8) != 0
+                && rows.program.source_unconditional_once(event)
+            {
+                let Some([sender, receiver]) = rows.program.actor_binding_at(event) else {
+                    crate::invariant();
+                };
+                if sender < 256 && receiver == rows.actor as u16 && sender != receiver {
+                    let mut resource = 0;
+                    while resource <= rows.program.facts.max_role as usize {
+                        let transfer = terminals[resource];
+                        if transfer != u16::MAX && notices[resource] == u16::MAX {
+                            let Some([_, sink]) = rows.program.actor_binding_at(transfer as usize)
+                            else {
+                                crate::invariant();
+                            };
+                            if sender == sink
+                                && rows.program.source_precedes(transfer as usize, event)
+                            {
+                                notices[resource] =
+                                    (self.range(effects, event, event + 1).end() - 1) as u16;
+                            }
+                        }
+                        resource += 1;
+                    }
+                }
+            }
+            event += 1;
+        }
+        notices
+    }
+
     /// The first source occurrence reads the resource's entry owner: no
     /// preceding occurrence in this fragment could have transferred it.
     /// Enumeration here constructs immutable facts, never an execution order.

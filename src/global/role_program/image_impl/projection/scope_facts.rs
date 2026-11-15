@@ -563,7 +563,7 @@ mod tests {
             }
             assert_eq!(
                 crate::global::compiled::lowering::validate_passive_child_projection_guarantees(
-                    markers
+                    &source
                 )
                 .map(|error| error as u8),
                 reference_passive_error(markers),

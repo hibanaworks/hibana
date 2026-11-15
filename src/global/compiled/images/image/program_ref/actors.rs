@@ -265,6 +265,28 @@ impl CompiledProgramRef {
         self.source_scopes as usize
     }
 
+    /// A mandatory occurrence that cannot be revisited or omitted by a route.
+    /// Parallel ancestry does not by itself make an occurrence conditional.
+    pub(crate) const fn source_unconditional_once(&self, event: usize) -> bool {
+        if event >= self.columns.atom_count()
+            || self.source_roll_containing(event, event + 1).is_some()
+        {
+            return false;
+        }
+        if self.source_scopes == 0 {
+            return true;
+        }
+        let mut scope = self.source_order_u16(self.source_scopes as usize * 9 + event * 2);
+        while scope != u16::MAX {
+            let row = scope as usize * 9;
+            if self.source_order.byte_at(row + 8) == ScopeKind::Route as u8 {
+                return false;
+            }
+            scope = self.source_order_u16(row + 6);
+        }
+        true
+    }
+
     /// Enclosing repetitions, from the innermost source scope to the root.
     /// Dedicated repetition links skip binary scopes. The image constructor
     /// checks the links and event heads once.

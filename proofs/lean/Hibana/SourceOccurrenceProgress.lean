@@ -104,20 +104,20 @@ inductive SourceUnfolding : Source → Source → Type where
   /-- A retained body may overlap a subtree of its continuation. A branch's
   earlier communications can already have happened when the next copy enters;
   ownership is still checked against the selected expansion and original issuance. -/
-  | resumeAlongsideContinuation {body continuation earlier next focus : Source}
+  | resumeAlongsideContinuation {body continuation next focus : Source}
       (context insertion : RollContext) :
-      SourceUnfolding (context.plug (.roll body)) earlier → SourceUnfolding (.roll body) next →
-      SourceUnfolding continuation (insertion.plug focus) →
+      SourceUnfolding (.seq (context.plug (.roll body)) continuation) (insertion.plug focus) →
+      SourceUnfolding (.roll body) next →
       SourceUnfolding (.seq (context.plug (.roll body)) continuation)
-        (.seq earlier (insertion.plug (.par next focus)))
-  /-- A resumed body may also finish before an operation inside a continuation,
-  including a later transfer that ends the earlier holder's right to reenter. -/
-  | resumeBeforeContinuation {body continuation earlier next focus : Source}
+        (insertion.plug (.par next focus))
+  /-- Graft a later visit before a subtree of the previously expanded
+  continuation. Existing insertions remain part of the earlier witness. -/
+  | resumeBeforeContinuation {body continuation next focus : Source}
       (context insertion : RollContext) :
-      SourceUnfolding (context.plug (.roll body)) earlier → SourceUnfolding (.roll body) next →
-      SourceUnfolding continuation (insertion.plug focus) →
+      SourceUnfolding (.seq (context.plug (.roll body)) continuation) (insertion.plug focus) →
+      SourceUnfolding (.roll body) next →
       SourceUnfolding (.seq (context.plug (.roll body)) continuation)
-        (.seq earlier (insertion.plug (.seq next focus)))
+        (insertion.plug (.seq next focus))
 
 def EndpointDelegation.Source.oneCopy : Source → Source
   | .send message => .send message
@@ -148,11 +148,11 @@ def SourceUnfolding.occurrences : {source expanded : Source} →
       first.occurrences start ++ second.occurrences (start + left.eventCount)
   | _, _, .resumeAfterContinuation context earlier next, start =>
       earlier.occurrences start ++ next.occurrences (start + context.offset)
-  | _, _, @resumeAlongsideContinuation body _ _ _ _ context insertion earlier next tail, start
-  | _, _, @resumeBeforeContinuation body _ _ _ _ context insertion earlier next tail, start =>
-      let rest := tail.occurrences (start + (context.plug (.roll body)).eventCount)
-      earlier.occurrences start ++ rest.take insertion.offset ++
-        next.occurrences (start + context.offset) ++ rest.drop insertion.offset
+  | _, _, @resumeAlongsideContinuation body _ _ _ context insertion earlier next, start
+  | _, _, @resumeBeforeContinuation body _ _ _ context insertion earlier next, start =>
+      let rest := earlier.occurrences start
+      rest.take insertion.offset ++ next.occurrences (start + context.offset) ++
+        rest.drop insertion.offset
 
 def SourceUnfolding.origins (unfolding : SourceUnfolding source expanded) (start : Nat) : List Nat :=
   (unfolding.occurrences start).map Prod.fst
@@ -196,16 +196,15 @@ theorem source_unfolding_preserves_original_messages
     · exact left start entry before
     · exact List.mem_append_left _
         (context.contains_message _ start (right (start + context.offset) entry after))
-  | resumeAlongsideContinuation context insertion earlier next tail left right continuation
-  | resumeBeforeContinuation context insertion earlier next tail left right continuation =>
+  | resumeAlongsideContinuation context insertion earlier next left right
+  | resumeBeforeContinuation context insertion earlier next left right =>
     intro entry present
     simp only [SourceUnfolding.occurrences, List.mem_append] at present
-    rcases present with ((before | earlierTail) | after) | suffix
-    · exact List.mem_append_left _ (left start entry before)
-    · exact List.mem_append_right _ (continuation _ entry (List.mem_of_mem_take earlierTail))
+    rcases present with (before | after) | suffix
+    · exact left start entry (List.mem_of_mem_take before)
     · exact List.mem_append_left _
         (context.contains_message _ start (right (start + context.offset) entry after))
-    · exact List.mem_append_right _ (continuation _ entry (List.mem_of_mem_drop suffix))
+    · exact left start entry (List.mem_of_mem_drop suffix)
 
 /-- Every occurrence has an origin, including later copies of the same
 message. Equal source ordinals are intentionally retained rather than deduped. -/
@@ -229,10 +228,8 @@ theorem source_unfolding_has_one_origin_per_occurrence
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
   | resumeAfterContinuation context earlier next left right =>
     simp [SourceUnfolding.occurrences, Source.eventCount, left, right]
-  | @resumeAlongsideContinuation body tail first next focus context insertion earlier later rest
-      left right continuation
-  | @resumeBeforeContinuation body tail first next focus context insertion earlier later rest
-      left right continuation =>
+  | @resumeAlongsideContinuation body tail next focus context insertion earlier later left right
+  | @resumeBeforeContinuation body tail next focus context insertion earlier later left right =>
     have count := insertion.eventCount_plug_add
       (first := .par next focus) (second := focus) next.eventCount
       (by simp only [Source.eventCount]; omega)
@@ -240,7 +237,7 @@ theorem source_unfolding_has_one_origin_per_occurrence
       (first := .seq next focus) (second := focus) next.eventCount
       (by simp only [Source.eventCount]; omega)
     simp only [SourceUnfolding.occurrences, List.length_append, List.length_take,
-      List.length_drop, left, right, continuation, Source.eventCount]
+      List.length_drop, left, right]
     omega
 
 /-- Exact expanded events of a retained body, its continuation and earlier
@@ -267,30 +264,72 @@ private def SourceUnfolding.copyRanges : {body expanded : Source} →
   | _, .par first second, .rollParallel _ _, start =>
       [(start, start + first.eventCount + second.eventCount)]
 
--- Structural witnesses locate the focus in the last enclosing roll copy.
--- They retain scope nesting even when two rolls have the same event bounds.
-private def RollContext.lastBodyRange : (context : RollContext) →
-    {body expanded : Source} → SourceUnfolding (context.plug (.roll body)) expanded →
-    Option (Nat × Nat)
-  | .hole, _, expanded, .rollOnce _ => some (0, expanded.eventCount)
-  | .hole, _, .seq earlier next, .rollMore _ _ =>
-      some (earlier.eventCount, earlier.eventCount + next.eventCount)
-  | .seqLeft context _, _, _, .seq first _
-  | .parLeft context _, _, _, .par first _
-  | .routeLeft _ context _, _, _, .route _ first _ => context.lastBodyRange first
-  | .seqRight _ context, _, .seq first _, .seq _ second
-  | .parRight _ context, _, .par first _, .par _ second
-  | .routeRight _ _ context, _, .route _ first _, .route _ _ second =>
-      (context.lastBodyRange second).map fun (a, b) => (first.eventCount + a, first.eventCount + b)
-  | .roll context, _, _, .rollOnce body => context.lastBodyRange body
-  | .roll context, _, .seq earlier _, .rollMore _ next =>
-      (context.lastBodyRange next).map fun (a, b) => (earlier.eventCount + a, earlier.eventCount + b)
-  | _, _, _, _ => none
+-- Source paths retain scope identity even when nested rolls share event bounds.
+private def RollContext.path : RollContext → List Nat
+  | .hole => []
+  | .seqLeft context _ | .parLeft context _ | .routeLeft _ context _ | .roll context =>
+      0 :: context.path
+  | .seqRight _ context | .parRight _ context | .routeRight _ _ context => 1 :: context.path
+
+-- Insertions can separate the original anchor's entries. Locate their exact
+-- positions in the most recent visit instead of using a contiguous envelope.
+private def SourceUnfolding.lastBodyEntries : {source expanded : Source} →
+    SourceUnfolding source expanded → List Nat → Option (List Nat)
+  | _, _, .send _, _ => none
+  | _, .seq first _, .seq left right, key
+  | _, .par first _, .par left right, key
+  | _, .route _ first _, .route _ left right, key =>
+      match key with
+      | 0 :: rest => left.lastBodyEntries rest
+      | 1 :: rest => (right.lastBodyEntries rest).map (List.map (first.eventCount + ·))
+      | _ => none
+  | _, expanded, .rollOnce body, key =>
+      match key with
+      | [] => some (List.range expanded.eventCount)
+      | 0 :: rest => body.lastBodyEntries rest
+      | _ => none
+  | _, .seq earlier next, .rollMore _ later, key =>
+      match key with
+      | [] => some (List.range' earlier.eventCount next.eventCount)
+      | 0 :: rest => (later.lastBodyEntries rest).map (List.map (earlier.eventCount + ·))
+      | _ => none
+  | _, .par first _, .rollParallel left right, key =>
+      match key with
+      | 0 :: 0 :: rest => left.lastBodyEntries (0 :: rest)
+      | 0 :: 1 :: rest => (right.lastBodyEntries (0 :: rest)).map (List.map (first.eventCount + ·))
+      | _ => none
+  | _, .seq first second, .resumeAfterContinuation context earlier next, key =>
+      let target := 0 :: context.path
+      if key == target then some (List.range' first.eventCount second.eventCount)
+      else if key.take (target.length + 1) == target ++ [0] then
+        (next.lastBodyEntries (key.drop (target.length + 1))).map
+          (List.map (first.eventCount + ·))
+      else earlier.lastBodyEntries key
+  | _, _, @resumeAlongsideContinuation _ _ nextSource _ context insertion earlier next, key
+  | _, _, @resumeBeforeContinuation _ _ nextSource _ context insertion earlier next, key =>
+      let target := 0 :: context.path
+      if key.take target.length == target then
+        (next.lastBodyEntries (key.drop target.length)).map (List.map (insertion.offset + ·))
+      else (earlier.lastBodyEntries key).map (List.map fun event =>
+        if insertion.offset ≤ event then event + nextSource.eventCount else event)
 
 private def RollContext.anchor (context : RollContext)
     (earlier : SourceUnfolding (context.plug (.roll body)) expanded) (start : Nat) :
     Option (List Nat) :=
-  (context.lastBodyRange earlier).map fun (a, b) => List.range' (start + a) (b - a)
+  (earlier.lastBodyEntries context.path).map (List.map (start + ·))
+
+/-- Resuming another roll does not replace this retained roll's last visit.
+The source path excludes the resumed roll and its nested descendants. -/
+theorem resuming_another_roll_preserves_its_anchor_positions
+    (context : RollContext)
+    (earlier : SourceUnfolding (.seq (context.plug (.roll body)) continuation) first)
+    (next : SourceUnfolding body second) (key : List Nat)
+    (different : key ≠ 0 :: context.path)
+    (outside : key.take (context.path.length + 2) ≠ (0 :: context.path) ++ [0]) :
+    (SourceUnfolding.resumeAfterContinuation context earlier next).lastBodyEntries key =
+      earlier.lastBodyEntries key := by
+  simp only [SourceUnfolding.lastBodyEntries, beq_iff_eq, List.length_cons, Nat.add_assoc]
+  rw [if_neg different, if_neg outside]
 
 def SourceUnfolding.resumptions : {source expanded : Source} →
     SourceUnfolding source expanded → Nat → List SourceResumption
@@ -307,27 +346,27 @@ def SourceUnfolding.resumptions : {source expanded : Source} →
   | _, .seq first nextSource, .resumeAfterContinuation context earlier next, start =>
       let nextStart := start + first.eventCount
       let nextEnd := nextStart + nextSource.eventCount
-      let anchor := match earlier with
-        | .seq focused _ => context.anchor focused start
-        | _ => none
+      let anchor := (RollContext.seqLeft context _).anchor earlier start
       let own : List SourceResumption := [{
         body := List.range' nextStart (nextEnd - nextStart)
         tail := []
         anchor
       }]
       own ++ earlier.resumptions start ++ next.resumptions nextStart
-  | _, _, @resumeAlongsideContinuation _ _ first second focus context insertion earlier next tail, start
-  | _, _, @resumeBeforeContinuation _ _ first second focus context insertion earlier next tail, start =>
-      let tailStart := start + first.eventCount
-      let nextStart := tailStart + insertion.offset
+  | _, _, @resumeAlongsideContinuation body continuation second focus context insertion earlier next, start
+  | _, _, @resumeBeforeContinuation body continuation second focus context insertion earlier next, start =>
+      let nextStart := start + insertion.offset
       let focusStart := nextStart + second.eventCount
+      let withinTail := ((earlier.occurrences 0).drop insertion.offset |>.take focus.eventCount).all
+        fun entry => decide ((context.plug (.roll body)).eventCount ≤ entry.1)
+      let anchor := ((RollContext.seqLeft context continuation).anchor earlier start).bind fun entries =>
+        if withinTail && entries.all (fun entry => decide (entry < nextStart)) then some entries else none
       let scopes := next.copyRanges nextStart |>.map fun (bodyStart, bodyEnd) =>
         { body := List.range' bodyStart (bodyEnd - bodyStart),
-          tail := List.range' focusStart focus.eventCount,
-          anchor := context.anchor earlier start }
+          tail := List.range' focusStart focus.eventCount, anchor }
       let shift := fun event => if nextStart ≤ event then event + second.eventCount else event
-      scopes ++ earlier.resumptions start ++ next.resumptions nextStart ++
-        (tail.resumptions tailStart).map (fun scope => scope.mapEvents shift)
+      scopes ++ (earlier.resumptions start).map (fun scope => scope.mapEvents shift) ++
+        next.resumptions nextStart
 
 /-- Expanded source positions whose participants visit a parallel roll
 independently. The selected physical bindings must separate these two sets. -/
@@ -364,13 +403,12 @@ def SourceUnfolding.parallelVisits : {source expanded : Source} →
         (left.parallelVisits start ++ right.parallelVisits (start + first.eventCount))
   | _, .seq first _, .resumeAfterContinuation _ earlier next, start =>
       earlier.parallelVisits start ++ next.parallelVisits (start + first.eventCount)
-  | _, _, @resumeAlongsideContinuation _ _ first second _ _ insertion earlier next tail, start
-  | _, _, @resumeBeforeContinuation _ _ first second _ _ insertion earlier next tail, start =>
-      let tailStart := start + first.eventCount
-      let nextStart := tailStart + insertion.offset
+  | _, _, @resumeAlongsideContinuation _ _ second _ _ insertion earlier next, start
+  | _, _, @resumeBeforeContinuation _ _ second _ _ insertion earlier next, start =>
+      let nextStart := start + insertion.offset
       let shift := fun event => if nextStart ≤ event then event + second.eventCount else event
-      earlier.parallelVisits start ++ next.parallelVisits nextStart ++
-        (tail.parallelVisits tailStart).map (fun visits => visits.mapEvents shift)
+      (earlier.parallelVisits start).map (fun visits => visits.mapEvents shift) ++
+        next.parallelVisits nextStart
 
 def SourceUnfolding.parallelCompatible (unfolding : SourceUnfolding source expanded)
     (bindings : List (Nat × Binding)) : Bool :=
@@ -802,8 +840,8 @@ private def exchangeExpansion : Source := .seq exchangeBody
 private def exchangeBodyUnfolding : SourceUnfolding exchangeBody exchangeBody :=
   .seq (.send _) (.send _)
 private def exchangeUnfolding : SourceUnfolding exchangeSource exchangeExpansion :=
-  .resumeAlongsideContinuation .hole .hole (.rollOnce exchangeBodyUnfolding)
-    (.rollOnce exchangeBodyUnfolding) (.send _)
+  .resumeAlongsideContinuation .hole (.seqRight exchangeBody .hole)
+    (.seq (.rollOnce exchangeBodyUnfolding) (.send _)) (.rollOnce exchangeBodyUnfolding)
 private def exchangeBindings : List (Nat × Binding) :=
   [(0, ⟨exchangeStart, 0, 1⟩), (1, ⟨exchangeAck, 1, 0⟩),
     (2, ⟨exchangeStart, 0, 1⟩), (3, ⟨exchangeAck, 1, 0⟩),
@@ -922,5 +960,62 @@ theorem source_occurrences_keep_separate_choices_for_overlapping_visits :
       choiceUnreadCut.ready (.committed ⟨3, .receive⟩) = false ∧
       ∃ next, SourceOccurrenceStep choiceCut (.accepted 3) next :=
   ⟨rfl, rfl, by decide, a_checked_source_occurrence_has_its_exact_transition _ _ (by decide)⟩
+
+private def mixedLeftNotice : Message := ⟨⟨0, 0⟩, ⟨0, 2⟩, 0, .wire 0⟩
+private def mixedLeftValue : Message := ⟨⟨0, 0⟩, ⟨0, 1⟩, 1, .wire 0⟩
+private def mixedRightNotice : Message := ⟨⟨0, 0⟩, ⟨0, 2⟩, 2, .wire 0⟩
+private def mixedRightValue : Message := ⟨⟨0, 2⟩, ⟨0, 1⟩, 3, .wire 0⟩
+private def mixedPeerChoice : Source := .route none
+  (.seq (.send mixedLeftNotice) (.send mixedLeftValue))
+  (.seq (.send mixedRightNotice) (.send mixedRightValue))
+private def mixedPeerUnfolding : SourceUnfolding mixedPeerChoice mixedPeerChoice :=
+  .route none (.seq (.send _) (.send _)) (.seq (.send _) (.send _))
+private def mixedPeerBindings (start : Nat) : RouteArm → List (Nat × Binding)
+  | .left => [(start, ⟨mixedLeftNotice, 0, 2⟩), (start + 1, ⟨mixedLeftValue, 0, 1⟩)]
+  | .right => [(start + 2, ⟨mixedRightNotice, 0, 2⟩),
+      (start + 3, ⟨mixedRightValue, 2, 1⟩)]
+private def mixedPeerPath (first second : RouteArm) : NormalizedPath := {
+  selections := [⟨⟨0, 2, 4⟩, first⟩, ⟨⟨4, 6, 8⟩, second⟩]
+  bindings := mixedPeerBindings 0 first ++ mixedPeerBindings 4 second
+}
+private def mixedPeerPlan : SourceOccurrenceCut (.roll mixedPeerChoice) := {
+  original := ⟨[], [⟨[⟨⟨0, 2, 4⟩, .left⟩], mixedPeerBindings 0 .left⟩,
+    ⟨[⟨⟨0, 2, 4⟩, .right⟩], mixedPeerBindings 0 .right⟩]⟩
+  originalAccepted := by decide
+  expanded := .seq mixedPeerChoice mixedPeerChoice
+  unfolding := .rollMore (.rollOnce mixedPeerUnfolding) mixedPeerUnfolding
+  normalized := ⟨[], [mixedPeerPath .left .left, mixedPeerPath .left .right,
+    mixedPeerPath .right .left, mixedPeerPath .right .right]⟩
+  accepted := by decide
+  sameIssuance := rfl
+  path := mixedPeerPath .right .left
+  selected := by decide
+  separated := by decide
+  guarded := by decide
+  observed := fun _ => false
+}
+private def mixedPeerPrefix : List SourcePoint := [
+  .accepted 2, .committed ⟨2, .send⟩,
+  .accepted 4, .committed ⟨4, .send⟩,
+  .accepted 5, .committed ⟨5, .send⟩]
+
+/-- Exact source counterpart of the delayed-relay Endpoint counterexample.
+The controller can queue the next Left input while the old Right relay is
+undelivered, but that later receive is not a legal source occurrence yet.
+This is a model fact, not a Rust projection/refinement theorem. -/
+theorem a_delayed_mixed_peer_visit_does_not_enable_the_later_receive :
+    mixedPeerPrefix.zipIdx.all (fun (point, index) =>
+      (occurrenceCut mixedPeerPlan (mixedPeerPrefix.take index)).ready point) = true ∧
+    (occurrenceCut mixedPeerPlan mixedPeerPrefix).ready (.committed ⟨5, .receive⟩) = false ∧
+    (occurrenceCut mixedPeerPlan mixedPeerPrefix).observed (.committed ⟨3, .receive⟩) = false :=
+  ⟨by decide, by decide, rfl⟩
+
+/-- Recoloring or widening a static label cannot supply an unobserved visit.
+Any deterministic local decision has one result for identical observations. -/
+theorem identical_passive_observations_cannot_separate_admission
+    {Observation : Type} (admit : Observation → Bool) {first later : Observation}
+    (same : first = later) (allowed : admit first = true) (blocked : admit later = false) : False := by
+  rw [same, blocked] at allowed
+  contradiction
 
 end Hibana

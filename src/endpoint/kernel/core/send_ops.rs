@@ -1,7 +1,7 @@
 use super::{
     CursorInvariantError, OperationKernel, PendingSendIo, Poll, PreparedCommitDelta,
-    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome, SendMeta,
-    SendResult, SendRouteAuthority, SendRuntimeDesc, StateIndex, Transport, ids, lane_port,
+    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendMeta, SendResult,
+    SendRouteAuthority, SendRuntimeDesc, StateIndex, Transport, ids, lane_port,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -234,21 +234,12 @@ where
         preview_cursor_index: Option<StateIndex>,
         route_authority: SendRouteAuthority,
         payload: Option<lane_port::SendInput>,
-    ) -> SendInitOutcome<'r> {
+    ) -> SendResult<PendingSendIo<'r>> {
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
-            return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
+            return Err(SendError::PhaseInvariant);
         }
-        if let Err(err) =
-            self.validate_send_payload(meta, descriptor, preview_cursor_index, route_authority)
-        {
-            return SendInitOutcome::Ready(Err(err));
-        }
-        let pending =
-            match self.begin_send_transport(preview_cursor_index, meta, payload, route_authority) {
-                Ok(pending) => pending,
-                Err(err) => return SendInitOutcome::Ready(Err(err)),
-            };
-        SendInitOutcome::Pending { pending }
+        self.validate_send_payload(meta, descriptor, preview_cursor_index, route_authority)?;
+        self.begin_send_transport(preview_cursor_index, meta, payload, route_authority)
     }
 
     #[inline(never)]

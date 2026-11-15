@@ -1,11 +1,12 @@
 use super::super::{
     ColumnRange, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
     ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
-    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_ENTRY_STRIDE,
-    ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE,
-    RoleImageBuild, RoleImageBytes, RoleImageColumns, RoleImagePlan, RoleImageRef,
-    RouteArmLaneStepRow, RuntimeRoleFacts, ScopeKind,
+    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_OWNED_RECEIPT_STRIDE,
+    ROLE_IMAGE_ROLL_ENTRY_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
+    ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBuild, RoleImageBytes,
+    RoleImageColumns, RoleImagePlan, RoleImageRef, RouteArmLaneStepRow, RuntimeRoleFacts,
+    ScopeKind,
 };
 use super::{projection, route_arm_row_index};
 use crate::global::compiled::images::CompiledProgramRef;

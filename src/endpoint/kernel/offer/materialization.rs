@@ -77,7 +77,7 @@ where
                     EventAdmissionError::Invariant => Poll::Ready(Ok(None)),
                     EventAdmissionError::OtherViewPending
                     | EventAdmissionError::PredecessorPending
-                    | EventAdmissionError::PayloadPredecessorPending => Poll::Pending,
+                    | EventAdmissionError::HeldPredecessorPending => Poll::Pending,
                 };
             }
         };
@@ -166,7 +166,7 @@ where
                         EventAdmissionError::Invariant => Poll::Ready(Ok(None)),
                         EventAdmissionError::OtherViewPending
                         | EventAdmissionError::PredecessorPending
-                        | EventAdmissionError::PayloadPredecessorPending => Poll::Pending,
+                        | EventAdmissionError::HeldPredecessorPending => Poll::Pending,
                     };
                 }
             }

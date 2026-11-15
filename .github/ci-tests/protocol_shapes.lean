@@ -1,8 +1,5 @@
 -- Appended to endpoint_conformance.lean. This uses the established occurrence
 -- semantics, not the Rust generator's first-event calculation.
--- Retain one elaboration job at a time under the descendant memory limit.
-set_option Elab.async false
-
 structure ShapeNode where
   kind : Nat
   left : Nat := 0
@@ -1613,9 +1610,11 @@ def shapeAlongsidePlans (focus : ShapeRollFocus left) (right : Source) :
               let retained : SourceUnfolding right (insertion.plug part) :=
                 by simpa only [same] using tail.2
               [⟨.seq earlier.1 (insertion.plug (.par next.1 part)),
-                .resumeAlongsideContinuation context insertion earlier.2 (.rollOnce next.2) retained⟩,
+                .resumeAlongsideContinuation context (.seqRight earlier.1 insertion)
+                  (.seq earlier.2 retained) (.rollOnce next.2)⟩,
                ⟨.seq earlier.1 (insertion.plug (.seq next.1 part)),
-                .resumeBeforeContinuation context insertion earlier.2 (.rollOnce next.2) retained⟩])
+                .resumeBeforeContinuation context (.seqRight earlier.1 insertion)
+                  (.seq earlier.2 retained) (.rollOnce next.2)⟩])
 
 def shapeAfterPlans (focus : ShapeRollFocus left) (right : Source) :
     List (Σ expanded : Source, SourceUnfolding (.seq left right) expanded) :=

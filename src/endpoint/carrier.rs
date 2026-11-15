@@ -303,6 +303,13 @@ pub(crate) struct EndpointOps {
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ),
     pub(crate) poll_branch_recv: for<'a, 'cx> unsafe fn(BranchRecvPollRequest<'a, 'cx>),
+    pub(crate) poll_send_admission: unsafe fn(
+        ptr: NonNull<()>,
+        handle: OperationHandle,
+        payload: Option<crate::endpoint::kernel::lane_port::SendInput>,
+        cx: &mut Context<'_>,
+        out: *mut (),
+    ),
     pub(crate) poll_send: unsafe fn(
         ptr: NonNull<()>,
         handle: OperationHandle,
@@ -325,6 +332,7 @@ pub(crate) struct EndpointHandle {
 pub(crate) struct OperationHandle {
     pub(crate) endpoint: EndpointHandle,
     pub(crate) region: OperationRegion,
+    pub(crate) held: Option<super::peers::HeldViews>,
 }
 
 impl EndpointHandle {
@@ -413,7 +421,10 @@ where
         if core::ptr::from_ref(&view.public_header).cast::<()>() != ptr.as_ptr().cast_const() {
             crate::invariant();
         }
-        let result = actor.with_kernel(&mut operation_lease, view, handle.region, f);
+        let result = actor.with_kernel(&mut operation_lease, view, handle.region, |kernel| {
+            kernel.held = handle.held;
+            f(kernel)
+        });
         if !actor.drain_retirements() || actor.context.live_views.get() == 0 {
             crate::invariant();
         }
@@ -463,6 +474,7 @@ where
             poll_recv: Self::poll_recv_public_endpoint,
             poll_offer: Self::poll_offer_public_endpoint,
             poll_branch_recv: Self::poll_branch_recv_public_endpoint,
+            poll_send_admission: Self::poll_send_admission_public_endpoint,
             poll_send: Self::poll_send_public_endpoint,
         }
     }

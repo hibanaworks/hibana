@@ -181,7 +181,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                             }
                             error @ (EventAdmissionError::Invariant
                             | EventAdmissionError::PredecessorPending
-                            | EventAdmissionError::PayloadPredecessorPending) => return Err(error),
+                            | EventAdmissionError::HeldPredecessorPending) => return Err(error),
                         }
                     }
                 }

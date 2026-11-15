@@ -1,4 +1,4 @@
-use super::{FlowIndex, LogicalDirections, Participants, direction_members};
+use super::{FlowIndex, LogicalDirections, direction_members};
 use crate::{
     eff::{EffAtom, EventOrigin, EventPayload},
     global::const_dsl::{EffList, ScopeId},
@@ -33,7 +33,6 @@ fn direction_candidates_preserve_every_symbolic_parallel_exclusion() {
         &FlowIndex::new::<0>(&events, None),
         &LogicalDirections::new(&events),
         (0, first.lane, color),
-        &mut Participants::empty(events.len()),
     );
     let overlap = first.from == second.from
         || first.from == second.to

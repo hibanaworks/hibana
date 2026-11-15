@@ -89,6 +89,23 @@ impl Tree {
         }
     }
 
+    fn unconditional_once(&self, event: usize) -> bool {
+        if event >= self.events() {
+            return false;
+        }
+        match self {
+            Self::Send => true,
+            Self::Roll(_) | Self::Route(_, _) => false,
+            Self::Seq(a, b) | Self::Par(a, b) => {
+                if event < a.events() {
+                    a.unconditional_once(event)
+                } else {
+                    b.unconditional_once(event - a.events())
+                }
+            }
+        }
+    }
+
     fn markers(&self) -> usize {
         match self {
             Self::Send => 0,
@@ -283,6 +300,11 @@ fn compare<const E: usize, const B: usize>(tree: &Tree) {
         }
     }
     for event in (0..=events + 1).chain([usize::MAX]) {
+        assert_eq!(
+            image.source_unconditional_once(event),
+            tree.unconditional_once(event),
+            "mandatory single occurrence {tree:?}: {event}"
+        );
         assert_eq!(
             image.source_roll_ancestors(event).collect::<Vec<_>>(),
             rolls.get(event).map(Vec::as_slice).unwrap_or_default(),

@@ -18,6 +18,7 @@ def productionRoleRouteScopeStride : Nat := 2
 def productionRoleRouteArmStride : Nat := 8
 
 def productionRoleU16Stride : Nat := 2
+def productionRoleOwnedReceiptStride : Nat := 4
 
 def productionRoleLaneRangeStride : Nat := 4
 
@@ -1435,7 +1436,7 @@ def RustDescriptorImage.roleOwnedReceiptOffset (image : RustDescriptorImage) : N
   image.roleRollEntryViewOffset + image.rollEntryViewCount * productionRoleRollEntryStride
 
 def RustDescriptorImage.roleOperationIndexOffset (image : RustDescriptorImage) : Nat :=
-  image.roleOwnedReceiptOffset + image.ownedReceiptCount * productionRoleU16Stride
+  image.roleOwnedReceiptOffset + image.ownedReceiptCount * productionRoleOwnedReceiptStride
 
 def RustDescriptorImage.roleRouteIndexOffset (image : RustDescriptorImage) : Nat :=
   image.roleOperationIndexOffset + image.eventCount * productionRoleU16Stride

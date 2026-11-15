@@ -190,7 +190,7 @@
       "global::const_dsl::allocation::receive_lanes::kani::direction_candidates_preserve_every_symbolic_parallel_exclusion"
     ],
     "../../src/global/const_dsl/endpoint_controller/kani.rs": [
-      "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
+      "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_owner_reference"
     ],
     "../../src/global/const_dsl/endpoint_selectors/kani.rs": [
       "global::const_dsl::endpoint_selectors::kani::a_choice_prefix_guards_the_continuation_exactly_when_both_arms_do",

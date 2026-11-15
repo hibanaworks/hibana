@@ -11,6 +11,299 @@ type Taken = g::Msg<36, ()>;
 
 #[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
 #[test]
+async fn a_file_view_rejects_a_rolled_request_after_resource_retirement()
+-> core::result::Result<(), hibana::EndpointError> {
+    use core::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    type FileLoan = g::Msg<201, Endpoint<'static, 3>>;
+    type ResourceLoan = g::Msg<202, Endpoint<'static, 2>>;
+    type Retire = g::Msg<207, Endpoint<'static, 2>>;
+    type Request = g::Msg<203, ()>;
+    type Effect = g::Msg<204, ()>;
+    type Published = g::Msg<205, ()>;
+    type Next = g::Msg<206, ()>;
+
+    for drop_retired in [false, true] {
+        let cycle = g::seq(
+            g::send::<0, 1, ResourceLoan>(),
+            g::seq(
+                g::send::<3, 0, Request>(),
+                g::seq(g::send::<2, 0, Effect>(), g::send::<1, 0, ResourceLoan>()),
+            ),
+        );
+        let global = g::seq(
+            g::send::<0, 1, FileLoan>(),
+            g::seq(
+                cycle.roll(),
+                g::seq(
+                    g::send::<0, 4, Retire>(),
+                    g::seq(g::send::<4, 3, Published>(), g::send::<4, 1, Next>()),
+                ),
+            ),
+        );
+        let p0 = project::<0>(&global);
+        let p1 = project::<1>(&global);
+        let p2 = project::<2>(&global);
+        let p3 = project::<3>(&global);
+        let p4 = project::<4>(&global);
+        let network = TestTransport::new();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(1705);
+        let mut owner = rv.enter(sid, &p0).unwrap();
+        let mut agent = rv.enter(sid, &p1).unwrap();
+        let mut finalizer = rv.enter(sid, &p4).unwrap();
+        let mut resource = rv.enter(sid, &p2).unwrap();
+        let file = rv.enter(sid, &p3).unwrap();
+        owner.send::<FileLoan>(file).await?;
+        let mut file = agent.recv::<FileLoan>().await?;
+        for visit in 0..2 {
+            if visit != 0 {
+                let mut attempt = core::pin::pin!(file.send::<Request>(&()));
+                assert!(
+                    attempt
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending()
+                );
+                assert!(network.queue_is_empty());
+            }
+            owner.send::<ResourceLoan>(resource).await?;
+            let mut borrowed = agent.recv::<ResourceLoan>().await?;
+            file.send::<Request>(&()).await?;
+            owner.recv::<Request>().await?;
+            borrowed.send::<Effect>(&()).await?;
+            owner.recv::<Effect>().await?;
+            agent.send::<ResourceLoan>(borrowed).await?;
+            resource = owner.recv::<ResourceLoan>().await?;
+        }
+        owner.send::<Retire>(resource).await?;
+        let retired = finalizer.recv::<Retire>().await?;
+        finalizer.send::<Published>(&()).await?;
+        file.recv::<Published>().await?;
+        if drop_retired {
+            drop(retired);
+        }
+        {
+            let mut attempt = core::pin::pin!(file.send::<Request>(&()));
+            let result = attempt
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()));
+            assert!(
+                matches!(result, Poll::Ready(Err(error)) if error.is_unavailable()),
+                "retired resource, dropped={drop_retired}: {result:?}"
+            );
+        }
+        {
+            let mut peers = ();
+            let mut borrowed = file.borrow(&mut peers);
+            let mut attempt = core::pin::pin!(borrowed.send::<Request>(&()));
+            let result = attempt
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()));
+            assert!(
+                matches!(result, Poll::Ready(Err(error)) if error.is_unavailable()),
+                "borrowed retired request: {result:?}"
+            );
+        }
+        assert!(network.queue_is_empty());
+        finalizer.send::<Next>(&()).await?;
+        agent.recv::<Next>().await?;
+        assert!(network.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn a_file_view_waits_for_a_rolled_request_after_temporary_resource_transfer()
+-> core::result::Result<(), hibana::EndpointError> {
+    use core::{
+        future::Future,
+        task::{Context, Waker},
+    };
+    type FileLoan = g::Msg<201, Endpoint<'static, 3>>;
+    type ResourceLoan = g::Msg<202, Endpoint<'static, 2>>;
+    type Retire = g::Msg<207, Endpoint<'static, 2>>;
+    type Return = g::Msg<208, Endpoint<'static, 2>>;
+    type Request = g::Msg<203, ()>;
+    type Effect = g::Msg<204, ()>;
+    type Published = g::Msg<205, ()>;
+    let cycle = g::seq(
+        g::send::<0, 1, ResourceLoan>(),
+        g::seq(
+            g::send::<3, 0, Request>(),
+            g::seq(g::send::<2, 0, Effect>(), g::send::<1, 0, ResourceLoan>()),
+        ),
+    );
+    let global = g::seq(
+        g::send::<0, 1, FileLoan>(),
+        g::seq(
+            cycle.roll(),
+            g::seq(
+                g::send::<0, 4, Retire>(),
+                g::seq(g::send::<4, 3, Published>(), g::send::<4, 0, Return>()),
+            ),
+        ),
+    );
+    let programs = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<2>(&global),
+        project::<3>(&global),
+        project::<4>(&global),
+    );
+    let network = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, network.clone())
+        .unwrap();
+    let sid = SessionId::new(1706);
+    let mut owner = rv.enter(sid, &programs.0).unwrap();
+    let mut agent = rv.enter(sid, &programs.1).unwrap();
+    let mut resource = rv.enter(sid, &programs.2).unwrap();
+    let file = rv.enter(sid, &programs.3).unwrap();
+    let mut temporary = rv.enter(sid, &programs.4).unwrap();
+    owner.send::<FileLoan>(file).await?;
+    let mut file = agent.recv::<FileLoan>().await?;
+    owner.send::<ResourceLoan>(resource).await?;
+    let mut held = agent.recv::<ResourceLoan>().await?;
+    file.send::<Request>(&()).await?;
+    owner.recv::<Request>().await?;
+    held.send::<Effect>(&()).await?;
+    owner.recv::<Effect>().await?;
+    agent.send::<ResourceLoan>(held).await?;
+    resource = owner.recv::<ResourceLoan>().await?;
+    owner.send::<Retire>(resource).await?;
+    let held = temporary.recv::<Retire>().await?;
+    temporary.send::<Published>(&()).await?;
+    file.recv::<Published>().await?;
+    {
+        let mut peers = ();
+        let mut borrowed = file.borrow(&mut peers);
+        let mut attempt = core::pin::pin!(borrowed.send::<Request>(&()));
+        assert!(
+            attempt
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        assert!(network.queue_is_empty());
+    }
+    temporary.send::<Return>(held).await?;
+    resource = owner.recv::<Return>().await?;
+    owner.send::<ResourceLoan>(resource).await?;
+    let mut held = agent.recv::<ResourceLoan>().await?;
+    file.send::<Request>(&()).await?;
+    owner.recv::<Request>().await?;
+    held.send::<Effect>(&()).await?;
+    owner.recv::<Effect>().await?;
+    agent.send::<ResourceLoan>(held).await?;
+    owner.recv::<ResourceLoan>().await?;
+    assert!(network.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn an_unvisited_rolled_arm_cannot_wait_for_a_retired_resource()
+-> core::result::Result<(), hibana::EndpointError> {
+    use core::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    type File = g::Msg<201, Endpoint<'static, 3>>;
+    type Loan = g::Msg<202, Endpoint<'static, 2>>;
+    type Retire = g::Msg<207, Endpoint<'static, 2>>;
+    type Request = g::Msg<203, ()>;
+    type Effect = g::Msg<204, ()>;
+    type Published = g::Msg<205, ()>;
+    type Left = g::Msg<210, ()>;
+    type Right = g::Msg<211, ()>;
+    type Next = g::Msg<206, ()>;
+    let cycle = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::send::<3, 0, Request>(),
+            g::seq(g::send::<2, 0, Effect>(), g::send::<1, 0, Loan>()),
+        ),
+    );
+    let global = g::seq(
+        g::send::<0, 1, File>(),
+        g::seq(
+            g::route(
+                g::seq(g::send::<0, 1, Left>(), cycle),
+                g::seq(g::send::<0, 1, Right>(), cycle),
+            )
+            .roll(),
+            g::seq(
+                g::send::<0, 4, Retire>(),
+                g::seq(g::send::<4, 3, Published>(), g::send::<4, 1, Next>()),
+            ),
+        ),
+    );
+    let programs = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<2>(&global),
+        project::<3>(&global),
+        project::<4>(&global),
+    );
+    let network = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, network.clone())
+        .unwrap();
+    let sid = SessionId::new(1707);
+    let mut owner = rv.enter(sid, &programs.0).unwrap();
+    let mut agent = rv.enter(sid, &programs.1).unwrap();
+    let mut resource = rv.enter(sid, &programs.2).unwrap();
+    let file = rv.enter(sid, &programs.3).unwrap();
+    let mut finalizer = rv.enter(sid, &programs.4).unwrap();
+    owner.send::<File>(file).await?;
+    let mut file = agent.recv::<File>().await?;
+    owner.send::<Left>(&()).await?;
+    agent.recv::<Left>().await?;
+    owner.send::<Loan>(resource).await?;
+    let mut held = agent.recv::<Loan>().await?;
+    file.send::<Request>(&()).await?;
+    owner.recv::<Request>().await?;
+    held.send::<Effect>(&()).await?;
+    owner.recv::<Effect>().await?;
+    agent.send::<Loan>(held).await?;
+    resource = owner.recv::<Loan>().await?;
+    owner.send::<Retire>(resource).await?;
+    finalizer.recv::<Retire>().await?;
+    finalizer.send::<Published>(&()).await?;
+    file.recv::<Published>().await?;
+    {
+        let mut attempt = core::pin::pin!(file.send::<Request>(&()));
+        let result = attempt
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()));
+        assert!(
+            matches!(result, Poll::Ready(Err(error)) if error.is_unavailable()),
+            "unvisited alternative: {result:?}"
+        );
+    }
+    assert!(network.queue_is_empty());
+    finalizer.send::<Next>(&()).await?;
+    agent.recv::<Next>().await?;
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
 async fn a_completed_rolled_prefix_allows_its_parallel_continuation()
 -> core::result::Result<(), hibana::EndpointError> {
     type Prefix = g::Msg<21, ()>;

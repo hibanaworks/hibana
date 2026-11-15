@@ -24,7 +24,7 @@ impl<'r> SendKernelEndpoint<'r> for WaitingEndpoint {
         _index: Option<StateIndex>,
         _authority: SendRouteAuthority,
         _payload: Option<lane_port::SendInput>,
-    ) -> SendInitOutcome<'r> {
+    ) -> SendResult<PendingSendIo<'r>> {
         panic!("a waiting preview cannot initialize transport")
     }
 

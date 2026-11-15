@@ -54,4 +54,31 @@ where
         >(out)
         .write(poll);
     }
+
+    pub(super) unsafe fn poll_send_admission_public_endpoint(
+        ptr: NonNull<()>,
+        handle: OperationHandle,
+        payload: Option<crate::endpoint::kernel::lane_port::SendInput>,
+        cx: &mut Context<'_>,
+        out: *mut (),
+    ) {
+        let mut waiters = WaiterTransfer::with_replacement(cx.waker());
+        // SAFETY: the issued handle selects the uniquely borrowed operation.
+        // Its input is retained only by the same resident send as normal poll.
+        let poll = unsafe {
+            Self::with_public_endpoint_mut::<'cfg, _>(
+                ptr,
+                handle,
+                Poll::Ready(Err(crate::endpoint::SendError::Transport(
+                    crate::transport::TransportError::Failed,
+                ))),
+                |kernel| kernel.poll_public_send_admission(payload, &mut waiters),
+            )
+        };
+        if matches!(poll, Poll::Ready(Err(_))) {
+            // SAFETY: the carrier borrow ended before waking other views.
+            unsafe { Self::wake_public_actor_waiters(ptr, handle.endpoint) };
+        }
+        OutSlot::erased::<Poll<crate::endpoint::SendResult<()>>>(out).write(poll);
+    }
 }

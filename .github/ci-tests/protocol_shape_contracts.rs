@@ -5,6 +5,48 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) use super::catalog_counts::CONTRACTS as COUNT;
 pub(super) const VARIANTS: usize = 5;
 
+/// An unresolved choice cannot distinguish two identical public sends at its
+/// single entry. An enclosing callback does not resolve that inner choice.
+/// Keep compound/parallel entry sets unclassified rather than guessing which
+/// participant will first observe them.
+pub(super) fn unresolved_entry_witnesses(source: &Protocol) -> Vec<(u8, u8)> {
+    fn first(source: &Protocol) -> Option<(u8, u8, u8, bool, u8)> {
+        match source {
+            Protocol::Message {
+                from,
+                to,
+                contract,
+                owned,
+                event,
+            } if from != to => Some((*from, *to, *contract, *owned, *event)),
+            Protocol::Seq(left, _) => first(left),
+            _ => None,
+        }
+    }
+    fn walk(source: &Protocol, found: &mut Vec<(u8, u8)>) {
+        match source {
+            Protocol::Message { .. } => (),
+            Protocol::Roll(body) => walk(body, found),
+            Protocol::Seq(a, b)
+            | Protocol::Par(a, b)
+            | Protocol::Route(a, b)
+            | Protocol::Resolved(a, b, _) => {
+                if matches!(source, Protocol::Route(..))
+                    && let (Some(a), Some(b)) = (first(a), first(b))
+                    && (a.0, a.1, a.2, a.3) == (b.0, b.1, b.2, b.3)
+                {
+                    found.push((a.4, b.4));
+                }
+                walk(a, found);
+                walk(b, found);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(source, &mut found);
+    found
+}
+
 /// Source positions whose sends have the same public selector in opposite
 /// parallel arms. The receiver is inferred by send(), so it cannot distinguish
 /// these calls. Receives have distinct source-occurrence evidence.
@@ -144,6 +186,211 @@ pub(super) fn protocol(rank: usize) -> Protocol {
         owned,
     };
     let seq = |left, right| Protocol::Seq(Box::new(left), Box::new(right));
+    if rank == 38 {
+        // A completed review closes an inner request loop even when receive
+        // coloring put that review on another lane. An idle parallel source
+        // must not hide the second outer review behind its old completion.
+        let requests = Protocol::Roll(Box::new(seq(
+            message(0, 0, false),
+            Protocol::Route(
+                Box::new(seq(message(0, 1, false), message(1, 0, false))),
+                Box::new(seq(
+                    message(0, 1, false),
+                    Protocol::Resolved(
+                        Box::new(seq(message(1, 1, false), message(1, 0, false))),
+                        Box::new(message(1, 0, false)),
+                        1,
+                    ),
+                )),
+            ),
+        )));
+        let work = Protocol::Roll(Box::new(seq(
+            Protocol::Par(Box::new(requests), Box::new(message(2, 0, false))),
+            seq(
+                message(0, 2, false),
+                Protocol::Resolved(
+                    Box::new(seq(
+                        message(2, 1, false),
+                        seq(message(1, 2, false), message(2, 0, false)),
+                    )),
+                    Box::new(seq(
+                        message(2, 1, false),
+                        seq(message(1, 2, false), message(2, 0, false)),
+                    )),
+                    2,
+                ),
+            ),
+        )));
+        return Protocol::Par(
+            Box::new(work),
+            Box::new(Protocol::Roll(Box::new(Protocol::Route(
+                Box::new(message(3, 1, false)),
+                Box::new(message(3, 1, false)),
+            )))),
+        );
+    }
+    if rank == 33 || rank == 34 {
+        // A foreign sequential tail must not hide the sender's three local
+        // parallel leaves. The receiver still needs its actual inner join.
+        let parallel = Protocol::Par(
+            Box::new(message(if rank == 33 { 0 } else { 1 }, 2, false)),
+            Box::new(seq(
+                Protocol::Par(
+                    Box::new(message(
+                        if rank == 33 { 0 } else { 1 },
+                        if rank == 33 { 2 } else { 0 },
+                        rank == 34,
+                    )),
+                    Box::new(message(if rank == 33 { 0 } else { 1 }, 2, false)),
+                ),
+                message(
+                    if rank == 33 { 2 } else { 0 },
+                    if rank == 33 { 1 } else { 2 },
+                    false,
+                ),
+            )),
+        );
+        return if rank == 33 {
+            parallel
+        } else {
+            seq(
+                message(0, 1, true),
+                seq(message(3, 2, false), seq(message(2, 3, false), parallel)),
+            )
+        };
+    }
+    if rank == 32 {
+        // One affine resource view and its holder's ordinary view originate
+        // the same implicit choice. The actual public send chooses the arm;
+        // neither an allocation flag nor a resolver preselects the request.
+        return seq(
+            message(0, 1, true),
+            Protocol::Route(
+                Box::new(seq(message(3, 0, false), message(1, 2, false))),
+                Box::new(seq(message(1, 2, false), message(1, 0, false))),
+            ),
+        );
+    }
+    if rank == 37 {
+        let loan = || {
+            seq(
+                message(0, 1, true),
+                seq(
+                    message(3, 2, false),
+                    seq(message(2, 3, false), message(1, 0, true)),
+                ),
+            )
+        };
+        return Protocol::Roll(Box::new(Protocol::Roll(Box::new(Protocol::Resolved(
+            Box::new(Protocol::Par(
+                Box::new(Protocol::Resolved(Box::new(loan()), Box::new(loan()), 1)),
+                Box::new(message(0, 2, false)),
+            )),
+            Box::new(loan()),
+            0,
+        )))));
+    }
+    if rank == 36 {
+        return Protocol::Roll(Box::new(seq(
+            Protocol::Resolved(
+                Box::new(seq(message(0, 2, false), message(0, 1, false))),
+                Box::new(seq(message(0, 2, false), message(2, 1, false))),
+                0,
+            ),
+            Protocol::Par(
+                Box::new(message(0, 1, false)),
+                Box::new(message(2, 1, false)),
+            ),
+        )));
+    }
+    if rank == 35 {
+        return Protocol::Resolved(
+            Box::new(Protocol::Roll(Box::new(Protocol::Resolved(
+                Box::new(seq(
+                    message(0, 2, false),
+                    seq(message(0, 1, false), message(1, 0, false)),
+                )),
+                Box::new(seq(
+                    message(0, 2, false),
+                    seq(message(2, 1, false), message(1, 0, false)),
+                )),
+                0,
+            )))),
+            Box::new(seq(message(0, 2, false), message(0, 1, false))),
+            0,
+        );
+    }
+    if rank == 31 {
+        // Distinct peer lanes cannot identify the first receive of a repeated
+        // choice when its old relay is delayed. Without an ACK or actual FIFO
+        // fence this source must be rejected, including aliased contracts.
+        return Protocol::Resolved(
+            Box::new(Protocol::Roll(Box::new(Protocol::Resolved(
+                Box::new(seq(message(0, 2, false), message(0, 1, false))),
+                Box::new(seq(message(0, 2, false), message(2, 1, false))),
+                0,
+            )))),
+            Box::new(seq(message(0, 2, false), message(0, 1, false))),
+            0,
+        );
+    }
+    if rank == 30 {
+        // A receive waiting for a rolled retry must preserve an arriving
+        // completion from the alternative arm for its own typed receive.
+        return Protocol::Resolved(
+            Box::new(Protocol::Roll(Box::new(message(0, 1, false)))),
+            Box::new(message(0, 1, false)),
+            0,
+        );
+    }
+    if rank == 29 {
+        // API close: after a rejected request and a typed forward operation,
+        // the result resolver begins a parallel group. A legal repeat must
+        // not hide this still-unexecuted local continuation from offer/par.
+        let request = message(0, 1, false);
+        let result = Protocol::Resolved(
+            Box::new(Protocol::Par(
+                Box::new(message(1, 2, false)),
+                Box::new(message(1, 3, false)),
+            )),
+            Box::new(Protocol::Par(
+                Box::new(message(1, 2, false)),
+                Box::new(message(1, 3, false)),
+            )),
+            1,
+        );
+        let approved = seq(message(1, 2, false), seq(result, message(1, 0, false)));
+        let retry = seq(message(1, 0, false), request.clone());
+        return seq(
+            request,
+            Protocol::Resolved(
+                Box::new(approved.clone()),
+                Box::new(seq(Protocol::Roll(Box::new(retry)), approved)),
+                0,
+            ),
+        );
+    }
+    if rank == 28 {
+        // Dining: a completed rejection/request roll still has a legal next
+        // preview when the controller borrows the parallel approved suffix.
+        let request = message(0, 1, false);
+        let approved = seq(
+            Protocol::Par(
+                Box::new(message(1, 2, false)),
+                Box::new(message(1, 3, false)),
+            ),
+            message(1, 0, false),
+        );
+        let retry = seq(message(1, 0, false), request.clone());
+        return seq(
+            request,
+            Protocol::Resolved(
+                Box::new(approved.clone()),
+                Box::new(seq(Protocol::Roll(Box::new(retry)), approved)),
+                0,
+            ),
+        );
+    }
     if rank == 27 {
         // 14H's effect owner releases the material only after consuming its
         // formulation prefix. The holder cannot use an older elastic assay
@@ -794,6 +1041,52 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cross_lane_reviews_repeat_while_the_other_source_stays_idle() {
+        let mut source = protocol(38);
+        super::super::syntax::number(&mut source);
+        assert!(
+            source.executions().any(|execution| {
+                let trace = execution.trace();
+                let count = |event| trace.messages.iter().filter(|(at, _)| *at == event).count();
+                count(1) == 2
+                    && count(3) == 2
+                    && count(12) == 2
+                    && count(15) == 2
+                    && count(9) == 0
+                    && count(16) == 0
+                    && trace
+                        .messages
+                        .first()
+                        .is_some_and(|(event, _)| *event == 15)
+            }),
+            "the open/commit/rework repeat must exist after the independent source's two baseline visits park"
+        );
+    }
+
+    #[test]
+    fn rejected_requests_reach_both_parallel_continuation_orders() {
+        let mut source = protocol(28);
+        super::super::syntax::number(&mut source);
+        for reverse in [false, true] {
+            assert!(source.executions().any(|execution| {
+                let trace = execution.trace();
+                let count = |event| trace.messages.iter().filter(|(at, _)| *at == event).count();
+                count(4) == 2
+                    && count(5) == 2
+                    && count(6) == 1
+                    && count(7) == 1
+                    && trace
+                        .messages
+                        .iter()
+                        .position(|(at, _)| *at == 6)
+                        .zip(trace.messages.iter().position(|(at, _)| *at == 7))
+                        .is_some_and(|(left, right)| (right < left) == reverse)
+                    && trace.messages.last().map(|(event, _)| *event) == Some(8)
+            }));
+        }
+    }
 
     #[test]
     fn service_prefix_and_returned_loan_have_two_enclosing_visits() {

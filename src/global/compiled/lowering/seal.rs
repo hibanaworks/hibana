@@ -149,7 +149,7 @@ const fn validate_route_scope<const E: usize>(
     scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
     route_enter_marker_idx: usize,
 ) -> Option<ProgramSourceError> {
-    let controller = match route_controller_and_selectors(eff_list, route_enter_marker_idx) {
+    let controller = match route_controller_and_selectors(eff_list, route_enter_marker_idx, None) {
         Ok(controller) => controller,
         Err(error) => return Some(error),
     };
@@ -175,6 +175,7 @@ const fn validate_route_scope<const E: usize>(
 /// local operations separately.
 pub(crate) const fn validate_route_control_shapes<const E: usize>(
     eff_list: &EffList<E>,
+    actors: Option<&[crate::g::ActorPair]>,
 ) -> Option<ProgramSourceError> {
     let markers = eff_list.scope_markers();
     let mut index = 0;
@@ -182,7 +183,7 @@ pub(crate) const fn validate_route_control_shapes<const E: usize>(
         let marker = markers.at(index);
         if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && marker.event.is_primary_enter()
-            && let Err(error) = route_controller_and_selectors(eff_list, index)
+            && let Err(error) = route_controller_and_selectors(eff_list, index, actors)
         {
             return Some(error);
         }
@@ -194,19 +195,27 @@ pub(crate) const fn validate_route_control_shapes<const E: usize>(
 const fn route_controller_and_selectors<const E: usize>(
     eff_list: &EffList<E>,
     route_enter_marker_idx: usize,
+    actors: Option<&[crate::g::ActorPair]>,
 ) -> Result<u8, ProgramSourceError> {
     let scope_markers = eff_list.scope_markers();
     let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
     let route_scope = scope_markers.at(route_enter_marker_idx).scope_id;
     let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
-    let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)
-        .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
+    // A resolver is issued to one logical view. An implicit choice can instead
+    // originate in distinct views owned by the same source-derived actor.
+    let owners = if has_dynamic_resolver { None } else { actors };
+    if first_visible_controller(eff_list, (arm0_start, arm0_end), owners)
+        .merge(first_visible_controller(
+            eff_list,
+            (arm1_start, arm1_end),
+            owners,
+        ))
         .unique()
+        .is_none()
     {
-        Some(controller) => controller,
-        None => return Err(ProgramSourceError::RouteControllerMismatch),
-    };
+        return Err(ProgramSourceError::RouteControllerMismatch);
+    }
     if !has_dynamic_resolver
         && first_visible_endpoint_selector_conflicts_from_markers(
             eff_list,
@@ -220,7 +229,7 @@ const fn route_controller_and_selectors<const E: usize>(
     {
         return Err(ProgramSourceError::ProjectionRouteUnprojectable);
     }
-    Ok(controller)
+    Ok(eff_list.atom_at(arm0_start).from)
 }
 
 #[inline(always)]

@@ -342,13 +342,18 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     let mut next = [[0; W]; 256];
                     let first_seed = self.seeds.before(range.start);
                     let last_seed = self.seeds.before(end);
+                    let mut masks = [0; W];
+                    let mut word = first_seed / 64;
+                    while word < last_seed.div_ceil(64) {
+                        masks[word] = interval(first_seed, last_seed, word);
+                        word += 1;
+                    }
                     let mut members = participants;
                     while let Some(actor) = members.pop_first() {
                         let actor = actor as usize;
                         let mut word = first_seed / 64;
                         while word < last_seed.div_ceil(64) {
-                            let mask = interval(first_seed, last_seed, word);
-                            next[actor][word] = facts[actor][word] & mask;
+                            next[actor][word] = facts[actor][word] & masks[word];
                             word += 1;
                         }
                     }
@@ -364,19 +369,27 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                     let seed_start = self.seeds.before(range.start);
                     let seed_split = self.seeds.before(split);
                     let seed_end = self.seeds.before(end);
+                    // Both branch masks depend only on this source scope and
+                    // word, not on an actor. Reuse them for the fork and join.
+                    // A parallel join uses neither conditional mask.
+                    let mut left_masks = [0; W];
+                    let mut right_masks = [0; W];
+                    if matches!(kind, ScopeKind::Route) {
+                        let mut word = 0;
+                        while word < self.words {
+                            left_masks[word] = interval(seed_start, seed_split, word);
+                            right_masks[word] = interval(seed_split, seed_end, word);
+                            word += 1;
+                        }
+                    }
+
                     let mut members = participants;
                     while let Some(actor) = members.pop_first() {
                         let actor = actor as usize;
                         let mut word = 0;
                         while word < self.words {
-                            let (left_mask, right_mask) = if matches!(kind, ScopeKind::Route) {
-                                (
-                                    interval(seed_start, seed_split, word),
-                                    interval(seed_split, seed_end, word),
-                                )
-                            } else {
-                                (0, 0)
-                            };
+                            let left_mask = left_masks[word];
+                            let right_mask = right_masks[word];
                             right[actor][word] = facts[actor][word];
                             // An event in the other arm cannot coexist with
                             // this arm's send: its implication is true.
@@ -400,8 +413,8 @@ impl<const E: usize, const D: usize> Builder<'_, E, D> {
                         let actor = actor as usize;
                         let mut word = 0;
                         while word < self.words {
-                            let left_mask = interval(seed_start, seed_split, word);
-                            let right_mask = interval(seed_split, seed_end, word);
+                            let left_mask = left_masks[word];
+                            let right_mask = right_masks[word];
                             let a = facts[actor][word];
                             let b = right[actor][word];
                             facts[actor][word] = if matches!(kind, ScopeKind::Parallel) {

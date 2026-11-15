@@ -52,6 +52,88 @@ pub(super) const fn check<const S: usize, const E: usize, const D: usize>(
     .nested(source, 0, &Context::new(&[]))
 }
 
+#[cfg(hibana_profile)]
+pub(super) fn conflict<const S: usize, const E: usize, const D: usize>(
+    source: &Source<'_>,
+    image: &ActorImage<E, D>,
+    facts: &Scratch<S, E>,
+) -> Option<(usize, EndpointKey)> {
+    let checker = Checker::new(
+        source,
+        image,
+        (
+            Query::new(
+                source,
+                facts.symbols.split_at(facts.symbol_len).0,
+                &facts.initial,
+            ),
+            facts.events.split_at(facts.event_len).0,
+        ),
+    );
+    fn walk<const E: usize, const D: usize>(
+        checker: &Checker<'_, E, D>,
+        source: &Source<'_>,
+        start: usize,
+        path: &Context<'_>,
+    ) -> Option<(usize, EndpointKey)> {
+        match source {
+            Source::Send(_) => None,
+            Source::Seq(left, right, _) | Source::Par(left, right, _) => {
+                walk(checker, left, start, path)
+                    .or_else(|| walk(checker, right, start + left.event_count(), path))
+            }
+            Source::Route { left, right, .. } => {
+                let split = start + left.event_count();
+                let scope = Scope {
+                    start: start as u16,
+                    split: split as u16,
+                    stop: (split + right.event_count()) as u16,
+                };
+                walk(
+                    checker,
+                    left,
+                    start,
+                    &path.select(Selection {
+                        scope,
+                        arm: Arm::Left,
+                    }),
+                )
+                .or_else(|| {
+                    walk(
+                        checker,
+                        right,
+                        split,
+                        &path.select(Selection {
+                            scope,
+                            arm: Arm::Right,
+                        }),
+                    )
+                })
+            }
+            Source::Roll(inner, _) => {
+                for symbol in checker.query.symbols {
+                    let symbol = symbol.as_ref().expect("collected reentry resource");
+                    if matches!(symbol.kind, EndpointKind::Delegated)
+                        && inner.uses(symbol.key)
+                        && !checker.body(
+                            &Body {
+                                source: inner,
+                                start,
+                                key: symbol.key,
+                            },
+                            path,
+                        )
+                    {
+                        return Some((start, symbol.key));
+                    }
+                }
+                walk(checker, inner, start, path)
+            }
+        }
+    }
+    walk(&checker, source, 0, &Context::new(&[]))
+}
+
 struct Checker<'a, const E: usize, const D: usize> {
     root: &'a Source<'a>,
     image: &'a ActorImage<E, D>,

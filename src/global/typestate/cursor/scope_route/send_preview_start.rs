@@ -55,21 +55,29 @@ impl EventCursor {
                     committed_arm_for_scope,
                 ),
             };
-            match self.event_enabled(idx, event, &mut arms) {
+            match self.event_enabled_borrowing(idx, event, selector.borrowed, &mut arms) {
                 Ok(_) => return Ok(Some(idx)),
                 Err(EventAdmissionError::OtherViewPending) => {
                     blocked = Some(SendPreviewError::OtherViewPending);
                 }
                 Err(
                     EventAdmissionError::PredecessorPending
-                    | EventAdmissionError::PayloadPredecessorPending,
+                    | EventAdmissionError::HeldPredecessorPending,
+                ) if matches!(selector.payload_kind, crate::eff::EventPayload::Wire(_)) => {
+                    if blocked != Some(SendPreviewError::OtherViewPending) {
+                        blocked = Some(SendPreviewError::Unavailable);
+                    }
+                }
+                Err(
+                    EventAdmissionError::PredecessorPending
+                    | EventAdmissionError::HeldPredecessorPending,
                 ) if blocked.is_none() => {
                     blocked = Some(SendPreviewError::OutOfOrder);
                 }
                 Err(
                     EventAdmissionError::Invariant
                     | EventAdmissionError::PredecessorPending
-                    | EventAdmissionError::PayloadPredecessorPending,
+                    | EventAdmissionError::HeldPredecessorPending,
                 ) => {}
             }
         }
@@ -80,17 +88,19 @@ impl EventCursor {
                 .outbound_candidates(selector, source, indexed)
                 .all(|idx| {
                     self.local_event_done(idx)
-                        && self
-                            .machine()
-                            .event_program()
-                            .roll_ancestors(idx)
-                            .next()
-                            .is_none()
+                        || matches!(
+                            self.event_conflict_row_admission_with_preview(
+                                self.machine().event_conflict_for_index(idx),
+                                self.machine().event_conflict_for_index(idx),
+                                committed_arm_for_scope,
+                            ),
+                            super::ConflictAdmission::Excluded { .. }
+                        )
                 })
         {
-            // Every declared occurrence is spent and outside every source roll.
-            // No callback, transfer preparation or I/O has started. Do not let
-            // the fallback head misidentify another contract as this request.
+            // Reentry admission above found no enabled or independently waiting
+            // occurrence. Every remaining row is completed or excluded by the
+            // committed choice. No callback, ownership transfer or I/O started.
             Err(SendPreviewError::Unavailable)
         } else {
             Ok(None)

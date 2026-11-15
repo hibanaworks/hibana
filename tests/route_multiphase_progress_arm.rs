@@ -57,15 +57,21 @@ async fn route_arm_future_phase_blocks_post_route_send() {
                         .expect("recv first route step"),
                     10
                 );
+                let before = rv.tap().checkpoint();
                 let err = local
                     .send::<Msg<POST_ROUTE, u8>>(&0)
                     .await
                     .expect_err("post-route send must wait for the selected route path");
                 let rendered = format!("{err:?}");
                 assert!(
-                    rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+                    err.is_unavailable(),
                     "post-route send must be rejected by selected path progress: {rendered}"
                 );
+                assert_eq!(rv.tap().checkpoint(), before);
+                local.send::<Msg<ROUTE_SECOND, u8>>(&20).await.unwrap();
+                assert_eq!(worker.recv::<Msg<ROUTE_SECOND, u8>>().await.unwrap(), 20);
+                local.send::<Msg<POST_ROUTE, u8>>(&30).await.unwrap();
+                assert_eq!(worker.recv::<Msg<POST_ROUTE, u8>>().await.unwrap(), 30);
             }
 
             {

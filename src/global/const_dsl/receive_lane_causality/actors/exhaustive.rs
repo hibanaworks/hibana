@@ -254,6 +254,7 @@ fn prefix_queries_cover_every_u8_actor_triple_and_visit() {
                             earlier,
                             end: 4,
                             repeated,
+                            passive_entry: None,
                         };
                         let accepted = query.check(paths, Some(3));
                         let witness = query.conflict(paths, Some(3));
@@ -304,6 +305,7 @@ fn pointwise_failure<const E: usize, const D: usize>(
                 actors: query.actors,
                 earlier: query.earlier,
                 repeated: query.repeated,
+                passive_entry: query.passive_entry,
             })
             .check(paths, Some(later))
     })
@@ -341,6 +343,7 @@ fn unpruned_pair<const E: usize>(
         earlier,
         end: later + 1,
         repeated: None,
+        passive_entry: None,
     };
     if earlier < later && !ordinary.check(paths, Some(later)) {
         return false;
@@ -374,6 +377,7 @@ fn unpruned_pair<const E: usize>(
                 goal: FlowGoal::Closure,
                 body_start: start,
                 iteration_start: 0,
+                choice_entry: None,
             };
             let facts = match flow.advance_as(range, super::CausalRoles::empty(), &actors) {
                 Ok(Ok(facts)) => facts,
@@ -515,6 +519,7 @@ fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources()
                             earlier,
                             end,
                             repeated: None,
+                            passive_entry: None,
                         };
                         let expected = pointwise_failure(&obligation, paths);
                         assert_eq!(
@@ -536,6 +541,7 @@ fn bulk_failure_witnesses_match_pointwise_queries_for_small_structured_sources()
                                 earlier,
                                 end,
                                 repeated: Some(RollBodyRange::new(start, stop)),
+                                passive_entry: None,
                             };
                             let expected = pointwise_failure(&obligation, paths);
                             assert_eq!(
@@ -576,6 +582,7 @@ fn dropping_an_enclosing_parallel_fork_changes_the_causal_answer() {
         earlier: 1,
         end: 4,
         repeated: None,
+        passive_entry: None,
     };
     assert!(!obligation.check(paths, Some(3)));
     assert!(!obligation.check_from(paths, Some(3), 0));

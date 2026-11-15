@@ -2699,3 +2699,213 @@ async fn nested_parallel_delegation_preserves_a_child_when_its_parent_restarts_l
     }
     Ok(())
 }
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_foreign_sequential_suffix_preserves_the_local_parallel_width()
+-> Result<(), hibana::EndpointError> {
+    type Reply = g::Msg<0, ()>;
+    type First = g::Msg<1, ()>;
+    type Second = g::Msg<2, ()>;
+    type Forward = g::Msg<3, ()>;
+    let global = g::par(
+        g::send::<0, 1, Reply>(),
+        g::seq(
+            g::par(g::send::<0, 1, First>(), g::send::<0, 1, Second>()),
+            g::send::<1, 2, Forward>(),
+        ),
+    );
+    assert_eq!(g::diagnose(&global), None);
+    let (p0, p1, p2) = (
+        project::<0>(&global),
+        project::<1>(&global),
+        project::<2>(&global),
+    );
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let (mut s0, mut s1, mut s2) = (
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+    );
+    let r0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let r1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let r2 = s2.init().rendezvous(&mut slab2, network).unwrap();
+    let session = SessionId::new(12000);
+    let mut sender = r0.enter(session, &p0).unwrap();
+    let mut receiver = r1.enter(session, &p1).unwrap();
+    let mut sink = r2.enter(session, &p2).unwrap();
+    async {
+        // The suffix has no operation in this logical view.
+        let [mut reply, mut first, mut second] = sender.par()?;
+        async {
+            reply.send::<Reply>(&()).await?;
+        };
+        async {
+            first.send::<First>(&()).await?;
+        };
+        async {
+            second.send::<Second>(&()).await?;
+        };
+    };
+    async {
+        let [mut reply, mut work] = receiver.par()?;
+        async {
+            reply.recv::<Reply>().await?;
+        };
+        async {
+            async {
+                let [mut first, mut second] = work.par()?;
+                async {
+                    first.recv::<First>().await?;
+                };
+                async {
+                    second.recv::<Second>().await?;
+                };
+                Ok::<(), hibana::EndpointError>(())
+            }
+            .await?;
+            work.send::<Forward>(&()).await?;
+        };
+    };
+    async {
+        sink.recv::<Forward>().await?;
+    };
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_local_sequential_suffix_cannot_be_flattened_into_its_parallel_prefix()
+-> Result<(), hibana::EndpointError> {
+    type Reply = g::Msg<0, ()>;
+    type First = g::Msg<1, ()>;
+    type Second = g::Msg<2, ()>;
+    type Tail = g::Msg<3, ()>;
+    let global = g::par(
+        g::send::<0, 1, Reply>(),
+        g::seq(
+            g::par(g::send::<0, 1, First>(), g::send::<0, 1, Second>()),
+            g::send::<0, 1, Tail>(),
+        ),
+    );
+    let (p0, p1) = (project::<0>(&global), project::<1>(&global));
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1] = [[0; 32 * 1024]; 2];
+    let (mut s0, mut s1) = (SessionKitStorage::uninit(), SessionKitStorage::uninit());
+    let r0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let r1 = s1.init().rendezvous(&mut slab1, network).unwrap();
+    let sid = SessionId::new(12001);
+    let mut sender = r0.enter(sid, &p0).unwrap();
+    let mut receiver = r1.enter(sid, &p1).unwrap();
+    assert!(sender.par::<3>().is_err());
+    async {
+        let [mut reply, mut work] = sender.par()?;
+        async {
+            reply.send::<Reply>(&()).await?;
+        };
+        async {
+            async {
+                let [mut first, mut second] = work.par()?;
+                async {
+                    first.send::<First>(&()).await?;
+                };
+                async {
+                    second.send::<Second>(&()).await?;
+                };
+                Ok::<(), hibana::EndpointError>(())
+            }
+            .await?;
+            work.send::<Tail>(&()).await?;
+        };
+    };
+    async {
+        let [mut reply, mut work] = receiver.par()?;
+        async {
+            reply.recv::<Reply>().await?;
+        };
+        async {
+            async {
+                let [mut first, mut second] = work.par()?;
+                async {
+                    first.recv::<First>().await?;
+                };
+                async {
+                    second.recv::<Second>().await?;
+                };
+                Ok::<(), hibana::EndpointError>(())
+            }
+            .await?;
+            work.recv::<Tail>().await?;
+        };
+    };
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_resource_receive_for_its_future_holder_is_unavailable_before_the_loan()
+-> Result<(), hibana::EndpointError> {
+    use hibana::Endpoint;
+    type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
+    type Read = g::Msg<1, ()>;
+    type Value = g::Msg<2, ()>;
+    type Returned<'r> = g::Msg<3, Endpoint<'r, 3>>;
+    let source = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::send::<3, 2, Read>(),
+            g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Returned>()),
+        ),
+    );
+    let (p0, p1, p2, p3) = (
+        project::<0>(&source),
+        project::<1>(&source),
+        project::<2>(&source),
+        project::<3>(&source),
+    );
+    let network = common::TestTransport::new();
+    let [mut slab0, mut slab1, mut slab2] = [[0; 32 * 1024]; 3];
+    let (mut s0, mut s1, mut s2) = (
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+        SessionKitStorage::uninit(),
+    );
+    let r0 = s0.init().rendezvous(&mut slab0, network.clone()).unwrap();
+    let r1 = s1.init().rendezvous(&mut slab1, network.clone()).unwrap();
+    let r2 = s2.init().rendezvous(&mut slab2, network.clone()).unwrap();
+    let session = SessionId::new(12002);
+    let mut owner = r0.enter(session, &p0).unwrap();
+    let mut resource = r0.enter(session, &p3).unwrap();
+    let mut worker = r1.enter(session, &p1).unwrap();
+    let mut service = r2.enter(session, &p2).unwrap();
+    let error = resource.recv::<Value>().await.unwrap_err();
+    assert!(
+        error.is_unavailable(),
+        "future holder's receive faulted the current owner: {error:?}"
+    );
+    assert!(network.queue_is_empty());
+    async {
+        owner.send::<Loan>(resource).await?;
+        let mut resource = owner.recv::<Returned>().await?;
+        assert!(resource.recv::<Value>().await.unwrap_err().is_unavailable());
+        assert!(
+            !resource
+                .recv::<g::Msg<99, ()>>()
+                .await
+                .unwrap_err()
+                .is_unavailable()
+        );
+        assert!(network.queue_is_empty());
+    };
+    async {
+        let mut resource = worker.recv::<Loan>().await?;
+        resource.send::<Read>(&()).await?;
+        resource.recv::<Value>().await?;
+        worker.send::<Returned>(resource).await?;
+    };
+    async {
+        service.recv::<Read>().await?;
+        service.send::<Value>(&()).await?;
+    };
+    Ok(())
+}

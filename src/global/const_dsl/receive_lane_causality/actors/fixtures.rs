@@ -68,6 +68,7 @@ pub(super) fn receive_conflict<const E: usize, const D: usize>(
         earlier: 0,
         end: events.len(),
         repeated: None,
+        passive_entry: None,
     }
     .check(
         Paths {

@@ -25,7 +25,7 @@ impl<P: WireEncode + WirePayload> PayloadSpec for P {
     fn send<'a, 'e, 'r, M, const ROLE: u8>(
         endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
         payload: &'a P,
-    ) -> impl Future<Output = Result<(), EndpointError>> + 'a
+    ) -> impl crate::SendRequest + 'a
     where
         M: Message<Payload = Self> + 'a,
         Self: 'a,
@@ -53,7 +53,7 @@ impl<P: WireEncode + WirePayload> PayloadSpec for P {
     fn branch_send<'a, 'e, 'r, M, const ROLE: u8>(
         branch: RouteBranch<'e, 'r, ROLE>,
         payload: &'a P,
-    ) -> impl Future<Output = Result<(), EndpointError>> + 'a
+    ) -> impl crate::SendRequest + 'a
     where
         M: Message<Payload = Self> + 'a,
         Self: 'a,
@@ -100,7 +100,7 @@ impl<const RESOURCE: u8> PayloadSpec for Endpoint<'_, RESOURCE> {
     fn send<'a, 'e, 'r, M, const ROLE: u8>(
         endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
         payload: Endpoint<'r, RESOURCE>,
-    ) -> impl Future<Output = Result<(), EndpointError>> + 'a
+    ) -> impl crate::SendRequest + 'a
     where
         M: Message<Payload = Self> + 'a,
         Self: 'a,
@@ -121,7 +121,7 @@ impl<const RESOURCE: u8> PayloadSpec for Endpoint<'_, RESOURCE> {
     fn branch_send<'a, 'e, 'r, M, const ROLE: u8>(
         branch: RouteBranch<'e, 'r, ROLE>,
         payload: Endpoint<'r, RESOURCE>,
-    ) -> impl Future<Output = Result<(), EndpointError>> + 'a
+    ) -> impl crate::SendRequest + 'a
     where
         M: Message<Payload = Self> + 'a,
         Self: 'a,

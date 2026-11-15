@@ -38,6 +38,30 @@ def SourceOccurrenceCut.resumptionReady (plan : SourceOccurrenceCut source)
   (sourceVisitPoints plan.path.bindings).all fun before =>
     !plan.resumptionDepends plan.observed before point || plan.observed before
 
+/-- A target outside every resumed continuation cannot acquire an additional
+resumption dependency, independently of the observed history or actor. -/
+theorem a_target_outside_resumption_tails_has_no_extra_dependency
+    (plan : SourceOccurrenceCut source) (observed : SourcePoint → Bool)
+    (prior : SourcePoint) (after : Nat)
+    (outside : ∀ scope ∈ plan.unfolding.resumptions 0, scope.tail.contains after = false) :
+    plan.resumptionDepends observed prior (.accepted after) = false := by
+  cases prior with
+  | accepted => rfl
+  | committed before =>
+    simp only [SourceOccurrenceCut.resumptionDepends]
+    cases actorAt : occurrenceActor? plan (.accepted after) with
+    | none => rfl
+    | some actor =>
+      have absent : (plan.unfolding.resumptions 0).any (fun scope =>
+          scope.inBody before.event && scope.inTail after &&
+            (occurrenceLocalDomain plan actor).any (fun point =>
+              scope.committedPoint point && observed point)) = false := by
+        apply List.any_eq_false.mpr
+        intro scope present
+        simp only [SourceResumption.inTail, outside scope present, Bool.and_false, Bool.false_and]
+        decide
+      simp only [absent, Bool.and_false]
+
 /-- Immutable inputs to one resumption check. Storing values instead of a
 partially applied function keeps the source-domain work outside later queries. -/
 structure ResumptionQuery where

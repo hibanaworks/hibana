@@ -279,7 +279,7 @@ impl EventCursor {
     /// Execute the supplied decision, then its sealed ancestors from inner
     /// to outer. The final absent row retains the depth-bound termination
     /// check, including raw decisions whose scope is not local to this image.
-    fn route_conflict_guard_rows(
+    pub(crate) fn route_conflict_guard_rows(
         &self,
         conflict: PackedEventConflict,
     ) -> impl Iterator<Item = PackedEventConflict> + '_ {
@@ -355,6 +355,28 @@ impl EventCursor {
             ),
             super::ConflictAdmission::Allowed
         )
+    }
+
+    /// A required prefix must hold on the candidate's actual path. Merely
+    /// compatible unknown alternatives are insufficient to prove impossibility.
+    pub(super) fn event_conflict_row_required_with_preview(
+        &self,
+        conflict: PackedEventConflict,
+        preview_conflict: PackedEventConflict,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        for conflict in self.route_conflict_guard_rows(conflict) {
+            let Some(LocalConflict::RouteArm { scope, arm }) = conflict.to_conflict() else {
+                return true;
+            };
+            if selected_arm_for_scope(scope)
+                .or_else(|| self.preview_conflict_arm(preview_conflict, scope))
+                != Some(arm)
+            {
+                return false;
+            }
+        }
+        false
     }
 
     pub(super) fn event_conflict_row_admission_with_preview(

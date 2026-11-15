@@ -72,6 +72,24 @@ where
         if applies_route_completion {
             self.apply_prepared_route_completion_cursor(delta.selected_routes());
         }
+        // A different, source-later operation has committed on this view.
+        // Release its superseded outgoing preview without clearing committed
+        // branch knowledge or discarding any retained incoming frame.
+        if let Some(event) = delta.event()
+            && self
+                .operation
+                .public_route_branch
+                .as_ref()
+                .is_some_and(|branch| {
+                    branch.branch_meta.kind == super::BranchKind::ArmSend
+                        && self.context.program.source_precedes(
+                            branch.branch_meta.eff_index.dense_ordinal(),
+                            event.eff_index().dense_ordinal(),
+                        )
+                })
+        {
+            self.operation.public_route_branch = None;
+        }
         let committed = CommittedCommitDelta::from_applied(
             delta.event(),
             delta.take_selected_routes(),

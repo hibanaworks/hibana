@@ -25,28 +25,25 @@ private theorem unfolding_keeps_resource_membership
     · intro observed
       exact observed.elim id (fun member => Or.inl (context.contains_resource _ member))
     · exact Or.inl
-  | @resumeAlongsideContinuation body continuation earlierSource nextSource focus
-      context insertion earlier next tail first second third
-  | @resumeBeforeContinuation body continuation earlierSource nextSource focus
-      context insertion earlier next tail first second third =>
+  | @resumeAlongsideContinuation body continuation nextSource focus
+      context insertion earlier next first second
+  | @resumeBeforeContinuation body continuation nextSource focus
+      context insertion earlier next first second =>
     have unionPar := insertion.resource_plug_union
       (key := key) (first := .par nextSource focus) (second := focus) nextSource.resources
       (by simp only [Source.resources, List.mem_eraseDups, List.mem_append])
     have unionSeq := insertion.resource_plug_union
       (key := key) (first := .seq nextSource focus) (second := focus) nextSource.resources
       (by simp only [Source.resources, List.mem_eraseDups, List.mem_append])
-    simp only [Source.resources, List.mem_eraseDups, List.mem_append]
     first | rw [unionPar] | rw [unionSeq]
-    rw [first, second, third]
-    simp only [Source.resources]
+    rw [first, second]
     constructor
     · intro observed
-      rcases observed with first | second | tail
-      · exact Or.inl first
-      · exact Or.inl (context.contains_resource _ second)
-      · exact Or.inr tail
-    · intro observed
-      exact observed.elim Or.inl (fun tail => Or.inr (Or.inr tail))
+      rcases observed with repeated | original
+      · simpa only [Source.resources, List.mem_eraseDups, List.mem_append] using
+          Or.inl (b := key ∈ continuation.resources) (context.contains_resource _ repeated)
+      · exact original
+    · exact Or.inr
 
 /-- Finite expansion does not create another initial owner, even when visits
 overlap a continuation or independent parallel work. -/

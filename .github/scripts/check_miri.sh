@@ -79,6 +79,11 @@ run_miri_test \
 
 (
   hibana_disable_repo_tests_cfg
+  run_miri_test send-preparation-and-transport -p hibana --test tap_send_poll
+)
+
+(
+  hibana_disable_repo_tests_cfg
   run_miri_test public-initial-issuance -p hibana --test endpoint_initial_issuance
 )
 
@@ -89,6 +94,10 @@ run_miri_test \
 run_miri_test \
   nested-shared-send-contract \
   -p hibana --test nested_shared_contract
+
+run_miri_test \
+  retired-and-temporary-resource-reentry \
+  -p hibana --lib a_file_view_ -- --test-threads=1
 
 (
   hibana_disable_repo_tests_cfg
@@ -104,6 +113,20 @@ run_miri_test \
   hibana_disable_repo_tests_cfg
   run_miri_test pre-io-rejection-owner -p hibana --test callsite_regression \
     an_unavailable -- --test-threads=1
+  run_miri_test retained-choice-frame-rejection -p hibana --test callsite_regression \
+    another_legal_choice_frame_survives_a_nonmatching_receive -- --exact --test-threads=1
+  run_miri_test alternative-receive-lanes -p hibana --test callsite_regression \
+    an_excluded_receive_does_not_wait_for_another_alternative_lane -- --exact --test-threads=1
+  run_miri_test independent-receive-lane -p hibana --test callsite_regression \
+    an_independent_arrived_frame_does_not_reject_a_pending_receive -- --exact --test-threads=1
+  run_miri_test co-resident-file-choice -p hibana --test callsite_regression \
+    co_resident_file_requests_select_their_own_implicit_arm -- --exact --test-threads=1
+  run_miri_test close-authority-and-parallel-borrow -p hibana --test callsite_regression \
+    close -- --test-threads=1
+  run_miri_test local-parallel-suffix-boundary -p hibana --test nested_parallel_reentry \
+    sequential_suffix_ -- --test-threads=1
+  run_miri_test future-holder-receive -p hibana --test nested_parallel_reentry \
+    a_resource_receive_for_its_future_holder_is_unavailable_before_the_loan -- --exact --test-threads=1
 )
 fi
 
@@ -190,7 +213,6 @@ echo "Miri public Endpoint delegation example passed"
   hibana_disable_repo_tests_cfg
   run_miri_test selected-owner-reentry -p hibana --test selected_owner_reentry
   run_miri_test overlapping-owner-reentry -p hibana --test overlapping_owner_reentry
-  run_miri_test tap-send-poll -p hibana --test tap_send_poll
 )
 
 (
@@ -219,7 +241,8 @@ echo "Miri public Endpoint delegation example passed"
   hibana_disable_repo_tests_cfg
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-repeat-entry -p hibana --test nested_parallel_reentry \
-      -- --skip nested_parallel_
+      -- --skip nested_parallel_ --skip sequential_suffix_ \
+      --skip a_resource_receive_for_its_future_holder_is_unavailable_before_the_loan
   MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" \
     run_miri_test public-nested-parallel-borrows -p hibana --test nested_parallel_reentry \
       nested_parallel_ -- --skip nested_parallel_delegation --skip nested_parallel_resolver

@@ -23,9 +23,9 @@ pub(crate) enum EventArmView {
 pub(crate) enum EventAdmissionError {
     Invariant,
     PredecessorPending,
-    /// A preceding action needs the endpoint payload. A send future would
-    /// hold that value, while a parallel borrow leaves it available.
-    PayloadPredecessorPending,
+    /// A preceding action needs an Endpoint held by this operation, either
+    /// its owned payload or exclusively borrowed peer storage.
+    HeldPredecessorPending,
     /// The view's own preceding actions are complete. Another co-resident view
     /// must commit first; waiting grants no transport or progress authority.
     OtherViewPending,
@@ -68,9 +68,13 @@ impl EventCursor {
         &self,
         index: usize,
         blocked: (u8, Option<u8>),
+        borrowed: Option<&dyn Fn(u8) -> bool>,
         conflict: PackedEventConflict,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> EventAdmissionError {
+        if self.retired_receipt_blocks(index, ScopeId::none(), selected) {
+            return EventAdmissionError::PredecessorPending;
+        }
         let mut wait = EventAdmissionError::OtherViewPending;
         let (after, after_direction) = self
             .machine()
@@ -87,7 +91,10 @@ impl EventCursor {
                 .work
                 .hit(super::super::work::Metric::Predecessor);
             let uses_caller = self.uses_view_at(prior, blocked.0);
-            if !(uses_caller || blocked.1.is_some_and(|role| self.uses_view_at(prior, role))) {
+            if !(uses_caller
+                || blocked.1.is_some_and(|role| self.uses_view_at(prior, role))
+                || self.uses_borrowed_view_at(prior, borrowed))
+            {
                 continue;
             }
             let (before, before_direction) = self
@@ -112,7 +119,7 @@ impl EventCursor {
                         if uses_caller {
                             return EventAdmissionError::PredecessorPending;
                         }
-                        wait = EventAdmissionError::PayloadPredecessorPending;
+                        wait = EventAdmissionError::HeldPredecessorPending;
                     }
                     super::ConflictAdmission::Excluded { scope, arm } => {
                         let next = self.excluded_arm_end(prior, scope, arm).min(index);
@@ -209,6 +216,16 @@ impl EventCursor {
         event: EventCommitMeta,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<EnabledEventCommit, EventAdmissionError> {
+        self.event_enabled_borrowing(idx, event, None, arm_for_scope)
+    }
+
+    pub(crate) fn event_enabled_borrowing(
+        &self,
+        idx: usize,
+        event: EventCommitMeta,
+        borrowed: Option<&dyn Fn(u8) -> bool>,
+        arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
+    ) -> Result<EnabledEventCommit, EventAdmissionError> {
         let row = self
             .machine()
             .event_program()
@@ -230,11 +247,14 @@ impl EventCursor {
                     self.source_predecessor_wait(
                         idx,
                         (row.logical_role(), moved_role),
+                        borrowed,
                         row.conflict(),
                         &mut |scope| arm_for_scope(scope, EventArmView::Preview),
                     )
                 }
-                EventBlocker::Reentry => self.reentry_view_wait(idx, event, arm_for_scope),
+                EventBlocker::Reentry => {
+                    self.reentry_view_wait(idx, event, borrowed, arm_for_scope)
+                }
             })
     }
 
@@ -460,7 +480,7 @@ mod tests {
                                     } else if payload.is_some_and(|role| {
                                         live.iter().any(|&prior| cursor.uses_view_at(prior, role))
                                     }) {
-                                        EventAdmissionError::PayloadPredecessorPending
+                                        EventAdmissionError::HeldPredecessorPending
                                     } else {
                                         EventAdmissionError::OtherViewPending
                                     };
@@ -468,6 +488,7 @@ mod tests {
                                         cursor.source_predecessor_wait(
                                             index,
                                             (caller, payload),
+                                            None,
                                             conflict,
                                             &mut |scope| selected(scope)
                                         ),
@@ -525,7 +546,7 @@ mod tests {
                             assert!(
                                 matches!(
                                     admission,
-                                    Err(EventAdmissionError::PayloadPredecessorPending)
+                                    Err(EventAdmissionError::HeldPredecessorPending)
                                 ),
                                 "hint={hint}"
                             );

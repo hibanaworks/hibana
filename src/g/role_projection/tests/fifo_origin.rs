@@ -32,6 +32,32 @@ type Ordered = g::Roll<OrderedBody>;
 type Closed = g::Roll<g::Seq<OrderedBody, g::Send<1, 2, Complete>>>;
 
 #[test]
+fn receive_fences_keep_their_actual_direction_colors() {
+    type Fenced = g::Roll<
+        g::Seq<
+            g::Resolve<
+                g::Route<
+                    g::Seq<g::Send<0, 2, LeftNotice>, g::Send<0, 1, LeftData>>,
+                    g::Seq<g::Send<0, 2, RightNotice>, g::Send<2, 1, RightData>>,
+                >,
+                0,
+            >,
+            g::Par<g::Send<0, 1, Tail>, g::Send<2, 1, Complete>>,
+        >,
+    >;
+    let source = g::ProgramProjection::<Fenced, 32>::SOURCE_EFF_LIST;
+    let lanes = core::array::from_fn::<_, 6, _>(|event| {
+        let atom = source.atom_at(event);
+        (atom.from, atom.to, atom.lane)
+    });
+    assert!(
+        g::ProgramProjection::<Fenced, 32>::RECEIVE_CAUSAL,
+        "source lanes={lanes:?}; passive={:?}",
+        crate::global::const_dsl::passive_choice_conflict::<32, 0>(source, None, None)
+    );
+}
+
+#[test]
 fn branch_and_reentry_sender_changes_require_receive_causality() {
     const {
         let source = g::ProgramProjection::<Unordered, 32>::SOURCE_EFF_LIST;
@@ -54,12 +80,12 @@ fn branch_and_reentry_sender_changes_require_receive_causality() {
         assert!(!crate::global::const_dsl::validate_receive_lane_causality(
             &merged
         ));
-        assert!(g::ProgramProjection::<Unordered, 32>::RECEIVE_CAUSAL);
+        assert!(!g::ProgramProjection::<Unordered, 32>::RECEIVE_CAUSAL);
         // The ACK orders the right branch's notification before its tail.
         assert!(g::ProgramProjection::<OrderedBody, 32>::RECEIVE_CAUSAL);
-        // Distinct receive lanes also separate a later visit's notice from
-        // the earlier acknowledgment. The public test delays that ACK.
-        assert!(g::ProgramProjection::<Ordered, 32>::RECEIVE_CAUSAL);
+        // Separate lanes do not distinguish the first passive receive of
+        // different visits. The receiver's ACK must reach the controller.
+        assert!(!g::ProgramProjection::<Ordered, 32>::RECEIVE_CAUSAL);
         assert!(g::ProgramProjection::<Closed, 32>::ERROR.is_none());
         let () = g::ProgramProjection::<Closed, 32>::VALIDATION;
     }

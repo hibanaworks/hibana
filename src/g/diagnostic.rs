@@ -22,7 +22,7 @@ pub enum ProjectionProblem {
     RollChangesOwner,
     /// Both arms must have the same first-visible controller.
     RouteControllerMismatch,
-    /// A shared receive lane changes sender without a causal handoff.
+    /// Receive order or a repeated passive choice lacks a causal/FIFO guard.
     ReceiveLaneCausality,
     /// Parallel endpoint selectors overlap.
     ParallelSelector,

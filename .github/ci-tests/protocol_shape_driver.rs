@@ -538,9 +538,8 @@ async fn replay(
                             // SAFETY: this actual pinned InMemoryTransport view
                             // remains borrowed by branch, between polls and
                             // without any held kernel operation lease.
-                            observed_preview = Some(unsafe {
-                                tag.operation_cut::<InMemoryTransport>()
-                            });
+                            observed_preview =
+                                Some(unsafe { tag.operation_cut::<InMemoryTransport>() });
                             drop(branch);
                         }
                         Ok(Err(_)) | Err(_) => return (outcome, None, None),
@@ -608,12 +607,21 @@ async fn replay(
                 if let Some(preview) = observed_preview.as_ref() {
                     assert!(preview.target.whole, "whole replay uses a whole Endpoint");
                     let mut released = preview.actor.clone();
-                    let view = released.views.iter_mut()
-                        .find(|view| view.role == preview.target.view).unwrap();
+                    let view = released
+                        .views
+                        .iter_mut()
+                        .find(|view| view.role == preview.target.view)
+                        .unwrap();
                     assert_eq!(view.operation, "RouteBranch");
                     view.operation = "Idle".into();
-                    assert_eq!(released, cut.actor, "preview Drop may release only its operation lease");
-                    assert_eq!(preview.target, cut.target, "preview Drop must keep the same borrow target");
+                    assert_eq!(
+                        released, cut.actor,
+                        "preview Drop may release only its operation lease"
+                    );
+                    assert_eq!(
+                        preview.target, cut.target,
+                        "preview Drop must keep the same borrow target"
+                    );
                 }
                 let actor = usize::from(cut.actor.actor);
                 let payload_available = command.receive
@@ -677,6 +685,10 @@ async fn replay(
                     Ok(Ok(_)) => Outcome::Accepted,
                     Ok(Err(error)) => {
                         rejected_before_io = error.is_unavailable();
+                        if command.receive && observation.is_some() {
+                            assert!(error.is_unavailable(),
+                                "a declared whole receive probe faulted a valid source execution: {command:?}: {error:?}");
+                        }
                         if index + 1 != commands.len() {
                             std::eprintln!(
                                 "prefix operation error at {index}: {command:?}: {error:?}"
@@ -725,6 +737,10 @@ async fn replay(
                                 }
                                 Ok(Err(error)) => {
                                     rejected_before_io = error.is_unavailable();
+                                    if observation.is_some() {
+                                        assert!(error.is_unavailable(),
+                                            "a declared owned receive probe faulted a valid source execution: {command:?}: {error:?}");
+                                    }
                                     if index + 1 != commands.len() {
                                         std::eprintln!("owned prefix operation error at {index}: {command:?}: {error:?}");
                                     }

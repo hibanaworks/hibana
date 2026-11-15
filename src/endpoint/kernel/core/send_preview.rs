@@ -37,7 +37,7 @@ where
             }
             Err(
                 crate::global::typestate::EventAdmissionError::PredecessorPending
-                | crate::global::typestate::EventAdmissionError::PayloadPredecessorPending,
+                | crate::global::typestate::EventAdmissionError::HeldPredecessorPending,
             ) => Poll::Ready(Err(SendError::OutOfOrder)),
         }
     }
@@ -60,9 +60,9 @@ where
 
     /// Preview the current send transition without advancing the cursor.
     ///
-    /// A spent non-repeating borrowed-payload contract is rejected before
-    /// callbacks or I/O without faulting. Other preview errors remain terminal;
-    /// resolver rejection cannot become another decision for the same run.
+    /// A declared borrowed-payload contract with an unavailable source prefix
+    /// is refused before callbacks or I/O without faulting. Scope mismatches,
+    /// owned sends and resolver rejection retain their terminal boundaries.
     #[inline(never)]
     pub(crate) fn poll_send_preview(
         &mut self,
@@ -90,14 +90,20 @@ where
                     return Poll::Ready(Err(SendError::PhaseInvariant));
                 }
             }
-            let selector = crate::global::typestate::MessageSelector::new(
-                self.public_header.role(),
-                target_label,
-                target_payload,
-            );
             let preview_error = Cell::new(None::<SendError>);
             let preview_result = {
                 let endpoint = &*self;
+                let held = endpoint.held;
+                let actor = endpoint.public_header.actor();
+                let borrowed = |role| held.is_some_and(|views| views.contains(actor, role));
+                let mut selector = crate::global::typestate::MessageSelector::new(
+                    self.public_header.role(),
+                    target_label,
+                    target_payload,
+                );
+
+                selector.borrowed = held.map(|_| &borrowed as &dyn Fn(u8) -> bool);
+
                 let mut committed_arm_for_scope = |scope| endpoint.selected_arm_for_scope(scope);
                 let mut preview_controller_arm_for_scope =
                     |scope| match endpoint.preview_controller_send_arm_for_scope(scope) {

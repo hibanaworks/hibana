@@ -33,6 +33,7 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
             super::OperationHandle {
                 endpoint: handle,
                 region: super::OperationRegion::WHOLE,
+                held: None,
             },
             false,
             |kernel| {
@@ -47,6 +48,7 @@ fn reentrant_carrier_entry_is_rejected_before_mutable_actor_borrow() {
                     super::OperationHandle {
                         endpoint: handle,
                         region: super::OperationRegion::WHOLE,
+                        held: None,
                     },
                     false,
                     |_| {

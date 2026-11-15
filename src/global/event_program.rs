@@ -342,7 +342,11 @@ impl LocalEventProgram {
         self.rows().roll_entry_receipts(index)
     }
 
-    pub(crate) fn owned_receipt(&self, index: usize) -> u16 {
+    pub(crate) fn owned_receipt_count(&self) -> usize {
+        self.rows().owned_receipt_count()
+    }
+
+    pub(crate) fn owned_receipt(&self, index: usize) -> (u16, Option<u16>) {
         self.rows().owned_receipt(index)
     }
 

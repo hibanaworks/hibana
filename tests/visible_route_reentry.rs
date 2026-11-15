@@ -1106,7 +1106,7 @@ async fn rolled_par_reenters_only_after_both_lanes_settle() {
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {PAR_LEFT} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -1146,7 +1146,7 @@ async fn rolled_par_reenters_only_after_both_lanes_settle() {
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {PAR_EXIT} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -1210,7 +1210,7 @@ async fn rolled_par_reenters_only_after_both_lanes_settle() {
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {PAR_EXIT} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -1583,7 +1583,7 @@ async fn nested_roll_scopes_reenter_inner_until_outer_scope_completes() {
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {NESTED_EXIT} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -2493,7 +2493,7 @@ async fn rolled_right_spine_rejects_deep_response_without_reentered_request() {
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "worker send label {SPINE_H_ACK} must remain blocked by roll progress: {rendered}"
     );
 };
@@ -4627,7 +4627,7 @@ async fn rolled_route_left_par_roll_arm_reenters_only_after_parallel_settles() {
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {ROUTE_PAR_ROLL_OTHER_REQ} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -4980,7 +4980,7 @@ async fn rolled_route_right_par_roll_arm_reenters_only_after_parallel_settles() 
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {ROUTE_PAR_ROLL_OTHER_REQ} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -5232,7 +5232,7 @@ async fn rolled_par_left_route_roll_arm_reenters_before_parallel_sibling_settles
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {PAR_ROUTE_ROLL_EXIT_REQ} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -6097,7 +6097,7 @@ async fn rolled_route_route_par_seq_route_roll_mixed_reentry_keeps_single_author
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {MIX_OUTER_LEFT_REQ} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -6280,7 +6280,7 @@ async fn rolled_route_route_par_seq_route_roll_mixed_reentry_keeps_single_author
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {MIX_OUTER_LEFT_REQ} must remain blocked by roll/par progress: {rendered}"
     );
 };
@@ -6950,7 +6950,7 @@ async fn rolled_left_route_left_route_par_seq_route_roll_mixed_reentry_keeps_sin
     };
     let rendered = format!("{err:?}");
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
+        err.is_unavailable(),
         "controller send label {MIX_OUTER_LEFT_REQ} must remain blocked by roll/par progress: {rendered}"
     );
 };

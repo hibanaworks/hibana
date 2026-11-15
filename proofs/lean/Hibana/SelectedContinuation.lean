@@ -23,8 +23,8 @@ private def overlappingPlan : SourceOccurrenceCut source := {
   original := original
   originalAccepted := by decide
   expanded := overlapping
-  unfolding := .resumeAlongsideContinuation .hole .hole
-    (.rollOnce (.oneCopy body)) (.rollOnce (.oneCopy body)) (.oneCopy continuation)
+  unfolding := .resumeAlongsideContinuation .hole (.seqRight body .hole)
+    (.seq (.rollOnce (.oneCopy body)) (.oneCopy continuation)) (.rollOnce (.oneCopy body))
   normalized := overlappingNormalization
   accepted := by decide
   sameIssuance := by decide
@@ -47,8 +47,8 @@ private def interruptedPlan : SourceOccurrenceCut source := {
   original := original
   originalAccepted := by decide
   expanded := interrupted
-  unfolding := .resumeBeforeContinuation .hole insertion
-    (.rollOnce (.oneCopy body)) (.rollOnce (.oneCopy body)) (.oneCopy continuation)
+  unfolding := .resumeBeforeContinuation .hole (.seqRight body insertion)
+    (.seq (.rollOnce (.oneCopy body)) (.oneCopy continuation)) (.rollOnce (.oneCopy body))
   normalized := interruptedNormalization
   accepted := by decide
   sameIssuance := by decide

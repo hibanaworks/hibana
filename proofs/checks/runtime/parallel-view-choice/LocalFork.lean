@@ -55,4 +55,38 @@ theorem an_unfinished_prefix_cannot_be_skipped (left right : Bool) :
 #print axioms multi_fragment_search_is_independent_of_exact_width
 #print axioms unary_source_groups_are_transparent
 #print axioms an_unfinished_prefix_cannot_be_skipped
+
+/-- Rows use the compiler's immutable (logical view, source event, lane) facts.
+Removing a source suffix with no row in this view keeps every local operation,
+its order, its multiplicity and hence the lane set used by a parallel borrow. -/
+theorem foreign_suffix_preserves_local_rows
+    (events : List (Nat × Nat × Nat)) (view first cut limit : Nat)
+    (bounded : cut ≤ limit)
+    (foreign : ∀ row ∈ events, row.1 = view → cut ≤ row.2.1 → row.2.1 < limit → False) :
+    events.filter (fun row => decide (row.1 = view ∧ first ≤ row.2.1 ∧ row.2.1 < limit)) =
+    events.filter (fun row => decide (row.1 = view ∧ first ≤ row.2.1 ∧ row.2.1 < cut)) := by
+  apply List.filter_congr
+  intro row member
+  apply decide_eq_decide.mpr
+  constructor
+  · rintro ⟨same, afterFirst, beforeLimit⟩
+    refine ⟨same, afterFirst, ?_⟩
+    by_cases beforeCut : row.2.1 < cut
+    · exact beforeCut
+    · exact False.elim (foreign row member same (by omega) beforeLimit)
+  · rintro ⟨same, afterFirst, beforeCut⟩
+    exact ⟨same, afterFirst, Nat.lt_of_lt_of_le beforeCut bounded⟩
+
+/-- The empty-range fast path returns the same empty local projection without
+searching any row. This law holds for arbitrary views and row populations. -/
+theorem an_empty_source_range_has_no_local_rows
+    (events : List (Nat × Nat × Nat)) (view boundary : Nat) :
+    events.filter (fun row => decide (row.1 = view ∧ boundary ≤ row.2.1 ∧ row.2.1 < boundary)) = [] := by
+  apply List.filter_eq_nil_iff.mpr
+  intro row _
+  simp only [Bool.not_eq_true, decide_eq_false_iff_not]
+  omega
+
+#print axioms foreign_suffix_preserves_local_rows
+#print axioms an_empty_source_range_has_no_local_rows
 end ParallelLocalFork

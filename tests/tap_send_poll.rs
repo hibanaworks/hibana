@@ -5,7 +5,7 @@ use core::{
     task::{Context, Poll, Waker},
 };
 use hibana::{
-    Endpoint, g,
+    Endpoint, SendRequest, g,
     runtime::{
         SessionKitStorage,
         ids::SessionId,
@@ -176,6 +176,17 @@ fn each_checked_wire_poll_precedes_frame_delivery_and_keeps_its_prepared_scope()
     for visit in 0..2 {
         let begin = captured.len();
         let mut sending = pin!(sender.send::<Message>(&()));
+        for _ in 0..2 {
+            assert!(matches!(
+                sending.as_mut().poll_admission(&mut cx),
+                Poll::Ready(Ok(()))
+            ));
+        }
+        captured.extend(tap.by_ref());
+        assert!(!captured[begin..].iter().any(|row| matches!(
+            row.id(),
+            tap::SEND_POLL | tap::ENDPOINT_SEND | tap::ROUTE_ARM_SELECTION
+        )));
         assert!(sending.as_mut().poll(&mut cx).is_pending());
         captured.extend(tap.by_ref());
         let first = captured[begin..]
@@ -233,6 +244,181 @@ fn each_checked_wire_poll_precedes_frame_delivery_and_keeps_its_prepared_scope()
 }
 
 #[test]
+fn a_prepared_borrowed_send_can_be_dropped_without_a_frame_or_progress() {
+    type Message = g::Msg<7, ()>;
+    let global = g::send::<0, 1, Message>();
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let mut slab = [0; 32768];
+    let mut storage = SessionKitStorage::uninit();
+    let kit = storage
+        .init()
+        .rendezvous(
+            &mut slab,
+            DelayedPublication {
+                inbox: Cell::new(Ok(None)),
+                reader: Cell::new(None),
+                resource: None,
+            },
+        )
+        .unwrap();
+    let sid = SessionId::new(105);
+    let mut sender = kit.enter(sid, &p0).unwrap();
+    let mut receiver = kit.enter(sid, &p1).unwrap();
+    let mut tap = kit.tap();
+    let _: Vec<_> = tap.by_ref().collect();
+    let mut cx = Context::from_waker(Waker::noop());
+    {
+        let mut cancelled = pin!(sender.send::<Message>(&()));
+        assert!(matches!(
+            cancelled.as_mut().poll_admission(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert!(
+        !tap.by_ref()
+            .any(|row| matches!(row.id(), tap::SEND_POLL | tap::ENDPOINT_SEND))
+    );
+    {
+        let mut receiving = pin!(receiver.recv::<Message>());
+        assert!(receiving.as_mut().poll(&mut cx).is_pending());
+    }
+    let mut send = pin!(sender.send::<Message>(&()));
+    assert!(send.as_mut().poll(&mut cx).is_pending());
+    assert!(matches!(
+        pin!(receiver.recv::<Message>()).poll(&mut cx),
+        Poll::Ready(Ok(()))
+    ));
+    assert!(matches!(send.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+}
+
+#[test]
+fn dropping_a_prepared_owned_send_does_not_restore_its_moved_resource() {
+    type Loan = g::Msg<1, Endpoint<'static, 3>>;
+    type Use = g::Msg<2, ()>;
+    let global = g::seq(g::send::<0, 1, Loan>(), g::send::<3, 2, Use>());
+    let p0 = project::<0>(&global);
+    let p3 = project::<3>(&global);
+    let mut slab = [0; 32768];
+    let mut storage = SessionKitStorage::uninit();
+    let kit = storage
+        .init()
+        .rendezvous(
+            &mut slab,
+            DelayedPublication {
+                inbox: Cell::new(Ok(None)),
+                reader: Cell::new(None),
+                // SAFETY: this fixture has one physical resource and one issuing kit.
+                resource: Some(unsafe { EndpointBinding::new() }),
+            },
+        )
+        .unwrap();
+    let sid = SessionId::new(107);
+    let mut owner = kit.enter(sid, &p0).unwrap();
+    let resource = kit.enter(sid, &p3).unwrap();
+    let mut tap = kit.tap();
+    let _: Vec<_> = tap.by_ref().collect();
+    let mut cx = Context::from_waker(Waker::noop());
+    {
+        let mut lending = pin!(owner.send::<Loan>(resource));
+        assert!(matches!(
+            lending.as_mut().poll_admission(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert!(
+        !tap.by_ref()
+            .any(|row| matches!(row.id(), tap::SEND_POLL | tap::ENDPOINT_SEND))
+    );
+    assert!(matches!(
+        pin!(owner.offer()).poll(&mut cx),
+        Poll::Ready(Err(_))
+    ));
+    assert!(
+        kit.enter(sid, &p3).is_err(),
+        "drop cannot mint another initial view"
+    );
+}
+
+#[test]
+fn a_pending_other_view_can_be_refused_before_io_then_retried_after_its_predecessor() {
+    type Loan = g::Msg<1, Endpoint<'static, 3>>;
+    type Gate = g::Msg<2, ()>;
+    type Use = g::Msg<3, ()>;
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(g::send::<1, 2, Gate>(), g::send::<3, 2, Use>()),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p3 = project::<3>(&global);
+    let mut slab = [0; 32768];
+    let mut storage = SessionKitStorage::uninit();
+    let kit = storage
+        .init()
+        .rendezvous(
+            &mut slab,
+            DelayedPublication {
+                inbox: Cell::new(Ok(None)),
+                reader: Cell::new(None),
+                // SAFETY: all runtime views use this fixture's one physical binding.
+                resource: Some(unsafe { EndpointBinding::new() }),
+            },
+        )
+        .unwrap();
+    let sid = SessionId::new(106);
+    let mut owner = kit.enter(sid, &p0).unwrap();
+    let mut worker = kit.enter(sid, &p1).unwrap();
+    let mut service = kit.enter(sid, &p2).unwrap();
+    let resource = kit.enter(sid, &p3).unwrap();
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut resource = {
+        let mut loan = pin!(owner.send::<Loan>(resource));
+        assert!(matches!(
+            loan.as_mut().poll_admission(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(loan.as_mut().poll(&mut cx).is_pending());
+        let Poll::Ready(Ok(resource)) = pin!(worker.recv::<Loan>()).poll(&mut cx) else {
+            panic!("actual loan")
+        };
+        assert!(matches!(loan.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        resource
+    };
+    let mut tap = kit.tap();
+    let _: Vec<_> = tap.by_ref().collect();
+    {
+        let mut not_ready = pin!(resource.send::<Use>(&()));
+        assert!(not_ready.as_mut().poll_admission(&mut cx).is_pending());
+    }
+    assert!(
+        !tap.by_ref()
+            .any(|row| matches!(row.id(), tap::SEND_POLL | tap::ENDPOINT_SEND))
+    );
+    {
+        let mut gate = pin!(worker.send::<Gate>(&()));
+        assert!(gate.as_mut().poll(&mut cx).is_pending());
+        assert!(matches!(
+            pin!(service.recv::<Gate>()).poll(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(matches!(gate.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+    }
+    let mut using = pin!(resource.send::<Use>(&()));
+    assert!(matches!(
+        using.as_mut().poll_admission(&mut cx),
+        Poll::Ready(Ok(()))
+    ));
+    assert!(using.as_mut().poll(&mut cx).is_pending());
+    assert!(matches!(
+        pin!(service.recv::<Use>()).poll(&mut cx),
+        Poll::Ready(Ok(()))
+    ));
+    assert!(matches!(using.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+}
+
+#[test]
 fn an_out_of_order_send_never_reaches_a_transport_poll_observation() {
     type Gate = g::Msg<6, ()>;
     type Message = g::Msg<7, ()>;
@@ -259,7 +445,7 @@ fn an_out_of_order_send_never_reaches_a_transport_poll_observation() {
     let Poll::Ready(Err(error)) = sending.poll(&mut cx) else {
         panic!("a source-order violation must be rejected before polling the transport")
     };
-    assert!(format!("{error:?}").contains("OutOfOrder"));
+    assert!(error.is_unavailable(), "{error:?}");
     captured.extend(tap.by_ref());
     assert!(!captured.iter().any(|row| matches!(
         row.id(),

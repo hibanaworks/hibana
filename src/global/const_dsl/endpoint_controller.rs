@@ -12,7 +12,7 @@ mod kani;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FirstVisibleController {
     Absent,
-    Unique(u8),
+    Unique(u16),
     Ambiguous,
 }
 
@@ -27,7 +27,7 @@ impl FirstVisibleController {
         }
     }
 
-    pub(crate) const fn unique(self) -> Option<u8> {
+    pub(crate) const fn unique(self) -> Option<u16> {
         match self {
             Self::Unique(role) => Some(role),
             Self::Absent | Self::Ambiguous => None,
@@ -37,8 +37,8 @@ impl FirstVisibleController {
 
 pub(crate) const fn first_visible_controller<const E: usize>(
     eff_list: &EffList<E>,
-    start: usize,
-    end: usize,
+    (start, end): (usize, usize),
+    actors: Option<&[crate::g::ActorPair]>,
 ) -> FirstVisibleController {
     let markers = eff_list.scope_markers();
     if start >= end || start >= eff_list.len() {
@@ -47,8 +47,9 @@ pub(crate) const fn first_visible_controller<const E: usize>(
     if let Some(route_enter) = route_enter_at(markers, start, end, 0) {
         let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
             route_arm_ranges_from_first_enter(markers, route_enter);
-        return first_visible_controller(eff_list, arm0_start, arm0_end)
-            .merge(first_visible_controller(eff_list, arm1_start, arm1_end));
+        return first_visible_controller(eff_list, (arm0_start, arm0_end), actors).merge(
+            first_visible_controller(eff_list, (arm1_start, arm1_end), actors),
+        );
     }
     if let Some(par_enter) = parallel_enter_at(markers, start, end, 0) {
         let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
@@ -56,9 +57,15 @@ pub(crate) const fn first_visible_controller<const E: usize>(
         else {
             crate::invariant();
         };
-        return first_visible_controller(eff_list, arm0_start, arm0_end)
-            .merge(first_visible_controller(eff_list, arm1_start, arm1_end));
+        return first_visible_controller(eff_list, (arm0_start, arm0_end), actors).merge(
+            first_visible_controller(eff_list, (arm1_start, arm1_end), actors),
+        );
     }
 
-    FirstVisibleController::Unique(eff_list.atom_at(start).from)
+    // Equal actor references retain the same conditional ownership function;
+    // an equal set of possible owners would not establish one authority.
+    FirstVisibleController::Unique(match actors {
+        Some(actors) => actors[start].sender.0,
+        None => eff_list.atom_at(start).from as u16,
+    })
 }

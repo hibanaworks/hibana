@@ -122,6 +122,7 @@ pub(crate) fn view_tag<const ROLE: u8>(endpoint: &Endpoint<'_, ROLE>) -> ViewTag
         super::carrier::OperationHandle {
             endpoint: endpoint.owner.handle,
             region: super::carrier::OperationRegion::WHOLE,
+            held: None,
         },
     )
 }

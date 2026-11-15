@@ -8,22 +8,23 @@ use core::marker::PhantomData;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
-/// An exclusive borrow of one projected parallel fragment.
+/// An exclusive operation borrow, optionally limited to a parallel fragment.
 ///
-/// Created by [`Endpoint::par`]. Its operations follow the parent's single
+/// Created by [`Endpoint::borrow`] or [`Endpoint::par`]. Operations follow the parent's single
 /// protocol cursor and are restricted to this fragment. The parent cannot be
 /// used or delegated until all its parallel borrows have ended. This borrow
 /// cannot be cloned or sent as an owned [`Endpoint`] payload.
 ///
-/// Dropping a completed fragment releases the borrow. Dropping an unfinished
-/// fragment faults the current session run, including its other fragments.
-pub struct ParallelEndpoint<'p, 'r, const ROLE: u8> {
+/// Dropping a whole-view borrow releases it without changing protocol progress.
+/// Dropping a completed fragment releases it. Dropping an unfinished fragment
+/// faults the current session run, including its other fragments.
+pub struct EndpointBorrow<'p, 'r, const ROLE: u8> {
     borrowed: BorrowedEndpoint,
     _parent: PhantomData<&'p mut Endpoint<'r, ROLE>>,
 }
 
 impl<'e, 'r, const ROLE: u8> OperationTarget<'e, 'r, ROLE> {
-    fn split<const N: usize>(self) -> Result<[ParallelEndpoint<'e, 'r, ROLE>; N], EndpointError> {
+    fn split<const N: usize>(self) -> Result<[EndpointBorrow<'e, 'r, ROLE>; N], EndpointError> {
         const { assert!(N >= 1 && N <= u8::MAX as usize + 1) };
         let (ptr, handle) = self.parts();
         let mut regions = [super::carrier::OperationRegion::WHOLE; N];
@@ -31,11 +32,12 @@ impl<'e, 'r, const ROLE: u8> OperationTarget<'e, 'r, ROLE> {
         // regions derived from its projected global parallel scope.
         unsafe { (ptr.as_ref().ops().split_parallel)(ptr.cast(), handle, &mut regions) }
             .map_err(|error| EndpointError::new(EndpointOp::Par, error))?;
-        Ok(regions.map(|region| ParallelEndpoint {
+        Ok(regions.map(|region| EndpointBorrow {
             borrowed: BorrowedEndpoint {
                 ptr,
                 handle: handle.endpoint,
                 region,
+                held: handle.held,
             },
             _parent: PhantomData,
         }))
@@ -43,6 +45,38 @@ impl<'e, 'r, const ROLE: u8> OperationTarget<'e, 'r, ROLE> {
 }
 
 impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
+    /// Borrow this view while retaining exclusive access to actual peer storage.
+    ///
+    /// Source prerequisites on those peer views cannot run until this borrow
+    /// ends. An unadmitted borrowed-payload send depending on them returns
+    /// `EndpointError::is_unavailable()` before transport or progress changes.
+    /// Other independently driven views retain their ordinary waiting behavior.
+    /// This does not create or delegate a new Endpoint.
+    ///
+    /// Peer storage remains exclusively borrowed:
+    /// ```compile_fail,E0499
+    /// use hibana::{Endpoint, g};
+    /// fn alias<'run>(mut file: Endpoint<'run, 1>, mut root: Endpoint<'run, 0>) {
+    ///     let borrowed = file.borrow(&mut root);
+    ///     let _ = root.send::<g::Msg<1, u32>>(&7);
+    ///     drop(borrowed);
+    /// }
+    /// ```
+    pub fn borrow<'e, P: super::peers::EndpointPeers>(
+        &'e mut self,
+        peers: &'e mut P,
+    ) -> EndpointBorrow<'e, 'r, ROLE> {
+        EndpointBorrow {
+            borrowed: BorrowedEndpoint {
+                ptr: self.owner.ptr,
+                handle: self.owner.handle,
+                region: super::carrier::OperationRegion::WHOLE,
+                held: Some(super::peers::HeldViews::new(peers)),
+            },
+            _parent: PhantomData,
+        }
+    }
+
     /// Borrow the independent fragments of the current projected `g::par`.
     ///
     /// The array length is inferred from the binding pattern. Fragments follow
@@ -117,12 +151,12 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// borrow, matching the transport lane range. The core uses no heap storage.
     pub fn par<'p, const N: usize>(
         &'p mut self,
-    ) -> Result<[ParallelEndpoint<'p, 'r, ROLE>; N], EndpointError> {
+    ) -> Result<[EndpointBorrow<'p, 'r, ROLE>; N], EndpointError> {
         OperationTarget::new(self).split()
     }
 }
 
-impl<'p, 'r, const ROLE: u8> ParallelEndpoint<'p, 'r, ROLE> {
+impl<'p, 'r, const ROLE: u8> EndpointBorrow<'p, 'r, ROLE> {
     #[cfg(all(test, any(hibana_repo_tests, hibana_generated_protocols)))]
     pub(crate) fn proof_tag(&self) -> super::proof_snapshot::ViewTagObservation {
         super::proof_snapshot::operation_tag(
@@ -130,6 +164,7 @@ impl<'p, 'r, const ROLE: u8> ParallelEndpoint<'p, 'r, ROLE> {
             OperationHandle {
                 endpoint: self.borrowed.handle,
                 region: self.borrowed.region,
+                held: self.borrowed.held,
             },
         )
     }
@@ -140,7 +175,7 @@ impl<'p, 'r, const ROLE: u8> ParallelEndpoint<'p, 'r, ROLE> {
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: <M::Payload as crate::global::PayloadSpec>::SendArgument<'a, 'r>,
-    ) -> impl core::future::Future<Output = Result<(), EndpointError>> + 'a + use<'a, 'e, 'p, 'r, M, ROLE>
+    ) -> impl super::SendRequest + 'a + use<'a, 'e, 'p, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
         M::Payload: 'a,
@@ -185,14 +220,17 @@ impl<'p, 'r, const ROLE: u8> ParallelEndpoint<'p, 'r, ROLE> {
     /// Borrow a nested parallel phase using the same rules as [`Endpoint::par`].
     pub fn par<'e, const N: usize>(
         &'e mut self,
-    ) -> Result<[ParallelEndpoint<'e, 'r, ROLE>; N], EndpointError> {
+    ) -> Result<[EndpointBorrow<'e, 'r, ROLE>; N], EndpointError> {
         OperationTarget::parallel(&mut self.borrowed).split()
     }
 }
 
-impl<const ROLE: u8> Drop for ParallelEndpoint<'_, '_, ROLE> {
+impl<const ROLE: u8> Drop for EndpointBorrow<'_, '_, ROLE> {
     fn drop(&mut self) {
         let arm = &self.borrowed;
+        if arm.region.is_whole() {
+            return;
+        }
         // SAFETY: all operation futures and borrowed payloads end before the
         // exclusive arm borrow. The parent continues to own the resident view.
         unsafe {
@@ -201,6 +239,7 @@ impl<const ROLE: u8> Drop for ParallelEndpoint<'_, '_, ROLE> {
                 OperationHandle {
                     endpoint: arm.handle,
                     region: arm.region,
+                    held: arm.held,
                 },
             );
         }

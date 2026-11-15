@@ -616,16 +616,23 @@ impl EventCursor {
                     selected_arm_for_scope,
                 )
             };
-            self.event_enabled(
+            self.event_enabled_borrowing(
                 *idx,
                 EventCommitMeta::from(current_meta),
+                selector.borrowed,
                 &mut arm_for_scope,
             )
             .map_err(|error| match error {
                 super::EventAdmissionError::OtherViewPending => SendPreviewError::OtherViewPending,
                 super::EventAdmissionError::Invariant => SendPreviewError::Invariant,
+                super::EventAdmissionError::HeldPredecessorPending
+                    if selector.borrowed.is_some()
+                        && matches!(target_payload, crate::eff::EventPayload::Wire(_)) =>
+                {
+                    SendPreviewError::Unavailable
+                }
                 super::EventAdmissionError::PredecessorPending
-                | super::EventAdmissionError::PayloadPredecessorPending => {
+                | super::EventAdmissionError::HeldPredecessorPending => {
                     SendPreviewError::OutOfOrder
                 }
             })?;

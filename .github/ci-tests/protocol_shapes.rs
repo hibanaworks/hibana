@@ -1545,6 +1545,12 @@ fn syntax_violations(source: &Protocol) -> Vec<(&'static str, &'static str)> {
     let ownership = ownership::violations(source);
     if ownership.is_empty() {
         let mut violations = choice::violations(source);
+        if !contracts::unresolved_entry_witnesses(source).is_empty() {
+            violations.push((
+                "UnprojectableRoute",
+                "Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation; help: inspect route selectors and passive-child scope structure",
+            ));
+        }
         if !contracts::parallel_selector_witnesses(source).is_empty() {
             violations.push((
                 "ParallelSelector",
@@ -1553,6 +1559,9 @@ fn syntax_violations(source: &Protocol) -> Vec<(&'static str, &'static str)> {
         }
         for (_, _, role) in contracts::reentry_selector_witnesses(source) {
             violations.push(("ReentrySelector", contracts::reentry_diagnostic(role)));
+        }
+        for role in causality::repeated_passive_entry_witnesses(source) {
+            violations.push(("ReceiveLaneCausality", causality::reentry_diagnostic(role)));
         }
         violations
     } else {
@@ -2493,8 +2502,8 @@ mod population_tests {
         assert_eq!(paths[&0], [(0, false)]);
         assert_eq!(paths[&1], [(0, false)]);
         assert_eq!(paths[&2], [(0, true)]);
-        // The already completed contract populations have no partially
-        // resolved path. Their original stronger assertion is unchanged.
+        // Preserve the exact paths for the new intrinsic request choice that
+        // contains a result resolver. Older catalogs have no such mixed path.
         for rank in 0..contracts::COUNT {
             let mut source = contracts::protocol(rank);
             syntax::number(&mut source);
@@ -2502,8 +2511,18 @@ mod population_tests {
             source.message_selected_events(&mut intrinsic);
             let mut paths = BTreeMap::new();
             source.resolver_choices(&mut Vec::new(), &mut paths);
-            for event in intrinsic {
-                assert!(paths[&event].is_empty(), "contract population {rank}");
+            if rank == 38 {
+                assert_eq!(intrinsic, BTreeSet::from([1, 2, 3, 4, 5, 6, 15, 16]));
+                for event in [1, 2, 3, 15, 16] {
+                    assert!(paths[&event].is_empty());
+                }
+                assert_eq!(paths[&4], [(0, false)]);
+                assert_eq!(paths[&5], [(0, false)]);
+                assert_eq!(paths[&6], [(0, true)]);
+            } else {
+                for event in intrinsic {
+                    assert!(paths[&event].is_empty(), "contract population {rank}");
+                }
             }
         }
     }
@@ -2739,6 +2758,59 @@ mod population_tests {
         assert!(representative_cases(1, 93, 2).is_err());
         assert!(representative_cases(1, 0, 0).is_err());
         assert!(representative_cases(3, 0, 1).is_err());
+    }
+
+    #[test]
+    fn an_outer_callback_does_not_disambiguate_an_aliased_inner_loan_choice() {
+        let catalog = contract_cases(template_cases(2, 4, 32));
+        let (_, _, _, _, source, _) = catalog.cases.iter().find(|c| c.0 == 3543).unwrap();
+        assert_eq!(contracts::unresolved_entry_witnesses(source), vec![(4, 8)]);
+        assert_eq!(
+            catalog.expected_rejections.get(&3543),
+            Some(&"UnprojectableRoute")
+        );
+        assert!(
+            catalog
+                .negative_sources
+                .values()
+                .any(|(s, reason)| s == source
+                    && reason.starts_with("Route unprojectable for this role"))
+        );
+    }
+
+    #[test]
+    fn an_explicit_callback_or_distinct_entry_contracts_remove_the_collision() {
+        let message = |event, contract| Protocol::Message {
+            from: 0,
+            to: 1,
+            event,
+            contract,
+            owned: true,
+        };
+        let a = message(0, 0);
+        let b = message(1, 0);
+        assert_eq!(
+            contracts::unresolved_entry_witnesses(&Protocol::Route(
+                Box::new(a.clone()),
+                Box::new(b.clone())
+            )),
+            vec![(0, 1)]
+        );
+        assert!(
+            contracts::unresolved_entry_witnesses(&Protocol::Resolved(
+                Box::new(a.clone()),
+                Box::new(b),
+                0
+            ))
+            .is_empty()
+        );
+        assert!(
+            contracts::unresolved_entry_witnesses(&Protocol::Route(
+                Box::new(a),
+                Box::new(message(1, 1))
+            ))
+            .is_empty()
+        );
     }
 
     #[test]

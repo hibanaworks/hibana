@@ -5,7 +5,7 @@ use core::task::Poll;
 use super::{
     core::{
         OperationKernel, PublicActiveOp, PublicOpEdge, SendCommitOutcome, SendState,
-        kernel_branch_recv, kernel_recv, kernel_send,
+        kernel_branch_recv, kernel_prepare_send, kernel_recv, kernel_send,
     },
     lane_port,
     offer::OfferState,
@@ -222,6 +222,86 @@ where
         }
     }
 
+    fn begin_public_send_poll(&mut self, waiters: &mut WaiterTransfer) -> SendResult<bool> {
+        let active_op = self.operation.public_active_op;
+        let branch_send = active_op == PublicActiveOp::BranchSend;
+        if let Some(kind) = self.session_fault() {
+            self.clear_endpoint_waiter(waiters);
+            self.fail_session(kind);
+            return Err(SendError::SessionFault(kind));
+        }
+        if active_op != PublicActiveOp::Send && active_op != PublicActiveOp::BranchSend {
+            self.public_op_busy_fault();
+            let err = SendError::PhaseInvariant;
+            self.poison_for_send_error(&err);
+            return Err(err);
+        }
+        self.register_endpoint_waiter(waiters);
+        Ok(branch_send)
+    }
+
+    fn finish_public_send<R>(
+        &mut self,
+        branch_send: bool,
+        result: SendResult<R>,
+        waiters: &mut WaiterTransfer,
+    ) -> SendResult<R> {
+        self.clear_endpoint_waiter(waiters);
+        let edge = if branch_send {
+            PublicOpEdge::FinishBranchSend
+        } else {
+            PublicOpEdge::FinishSend
+        };
+        let _ = self.transition_public_op(edge);
+        self.operation.public_send_state = SendState::Done;
+        match result {
+            Ok(outcome) => {
+                if branch_send {
+                    let branch = crate::invariant_some(self.operation.public_route_branch.take());
+                    if branch.offered_frame.is_some() {
+                        crate::invariant();
+                    }
+                }
+                Ok(outcome)
+            }
+            Err(SendError::Unavailable) if !branch_send => Err(SendError::Unavailable),
+            Err(err) => {
+                if branch_send && let Some(branch) = self.operation.public_route_branch.take() {
+                    branch.discard_terminal();
+                }
+                self.poison_for_send_error(&err);
+                Err(err)
+            }
+        }
+    }
+
+    /// Retain the same prepared send and input as ordinary polling, without
+    /// invoking the transport or publishing a send commit.
+    pub(in crate::endpoint) fn poll_public_send_admission(
+        &mut self,
+        payload: Option<lane_port::SendInput>,
+        waiters: &mut WaiterTransfer,
+    ) -> Poll<SendResult<()>> {
+        let branch_send = self.begin_public_send_poll(waiters)?;
+        let mut state = core::mem::replace(&mut self.operation.public_send_state, SendState::Done);
+        let mut payload = payload;
+        let poll = kernel_prepare_send(self, &mut state, &mut payload);
+        if payload.is_some() {
+            crate::invariant();
+        }
+        self.operation.public_send_state = state;
+        match poll {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(())) => {
+                self.clear_endpoint_waiter(waiters);
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(error)) => {
+                Poll::Ready(self.finish_public_send(branch_send, Err(error), waiters))
+            }
+        }
+    }
+
     #[inline]
     pub(in crate::endpoint) fn poll_public_send(
         &mut self,
@@ -229,20 +309,7 @@ where
         payload: Option<lane_port::SendInput>,
         waiters: &mut WaiterTransfer,
     ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
-        let active_op = self.operation.public_active_op;
-        let branch_send = active_op == PublicActiveOp::BranchSend;
-        if let Some(kind) = self.session_fault() {
-            self.clear_endpoint_waiter(waiters);
-            self.fail_session(kind);
-            return Poll::Ready(Err(SendError::SessionFault(kind)));
-        }
-        if active_op != PublicActiveOp::Send && active_op != PublicActiveOp::BranchSend {
-            self.public_op_busy_fault();
-            let err = SendError::PhaseInvariant;
-            self.poison_for_send_error(&err);
-            return Poll::Ready(Err(err));
-        }
-        self.register_endpoint_waiter(waiters);
+        let branch_send = self.begin_public_send_poll(waiters)?;
         let mut send_state =
             core::mem::replace(&mut self.operation.public_send_state, SendState::Done);
         let mut payload = payload;
@@ -256,37 +323,7 @@ where
                 Poll::Pending
             }
             Poll::Ready(result) => {
-                self.clear_endpoint_waiter(waiters);
-                if branch_send {
-                    let _ = self.transition_public_op(PublicOpEdge::FinishBranchSend);
-                } else {
-                    let _ = self.transition_public_op(PublicOpEdge::FinishSend);
-                }
-                self.operation.public_send_state = SendState::Done;
-                match result {
-                    Ok(outcome) => {
-                        if branch_send {
-                            let branch =
-                                crate::invariant_some(self.operation.public_route_branch.take());
-                            if branch.offered_frame.is_some() {
-                                crate::invariant();
-                            }
-                        }
-                        Poll::Ready(Ok(outcome))
-                    }
-                    Err(SendError::Unavailable) if !branch_send => {
-                        Poll::Ready(Err(SendError::Unavailable))
-                    }
-                    Err(err) => {
-                        if branch_send
-                            && let Some(branch) = self.operation.public_route_branch.take()
-                        {
-                            branch.discard_terminal();
-                        }
-                        self.poison_for_send_error(&err);
-                        Poll::Ready(Err(err))
-                    }
-                }
+                Poll::Ready(self.finish_public_send(branch_send, result, waiters))
             }
         }
     }

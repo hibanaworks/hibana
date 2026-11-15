@@ -247,14 +247,26 @@ impl EventCursor {
         let Some(row) = self.machine().roll_scope_row(scope) else {
             return false;
         };
+        let source = crate::invariant_some(self.machine().event_program().operation_at(idx))
+            .0
+            .dense_ordinal();
         let mut scan = idx + 1;
         while scan < row.end() && self.contains_node_index(scan) {
             if !exclude_scope.is_none() && self.roll_scope_contains_index(exclude_scope, scan) {
                 scan += 1;
                 continue;
             }
+            // Receive-order coloring can put a sequential continuation on
+            // another lane. Its source order still closes the child's visit;
+            // an unrelated parallel sibling supplies no such evidence.
             if let Some(candidate_lane) = self.event_lane_at(scan)
-                && candidate_lane == lane
+                && (candidate_lane == lane
+                    || self.program_ref().source_precedes(
+                        source,
+                        crate::invariant_some(self.machine().event_program().operation_at(scan))
+                            .0
+                            .dense_ordinal(),
+                    ))
                 && self.node_event_done_for_lane(scan, candidate_lane)
             {
                 // A conditional dependency guards its prerequisite, not the

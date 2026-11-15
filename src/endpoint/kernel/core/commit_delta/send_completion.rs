@@ -3,8 +3,8 @@
 //! It does not validate source admission, carrier delivery or the commit body.
 use super::*;
 use crate::endpoint::kernel::core::{
-    PendingSendIo, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendInitOutcome,
-    SendKernelEndpoint, SendPreview, SendRouteAuthority, SendRuntimeDesc, SendState, kernel_send,
+    PendingSendIo, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendKernelEndpoint,
+    SendPreview, SendRouteAuthority, SendRuntimeDesc, SendState, kernel_prepare_send, kernel_send,
 };
 use crate::endpoint::kernel::lane_port;
 use crate::endpoint::{SendError, SendResult};
@@ -48,7 +48,7 @@ impl<'r> SendKernelEndpoint<'r> for CompletionEndpoint {
         _: Option<StateIndex>,
         _: SendRouteAuthority,
         _: Option<lane_port::SendInput>,
-    ) -> SendInitOutcome<'r> {
+    ) -> SendResult<PendingSendIo<'r>> {
         panic!("a prepared send must not initialize again")
     }
 
@@ -90,10 +90,14 @@ struct Observation {
 }
 
 fn observe(boundary: ResultClass) -> Observation {
-    observe_admission(boundary, ResultClass::Success)
+    observe_admission(boundary, ResultClass::Success, false)
 }
 
-fn observe_admission(boundary: ResultClass, admission: ResultClass) -> Observation {
+fn observe_admission(
+    boundary: ResultClass,
+    admission: ResultClass,
+    prepare_first: bool,
+) -> Observation {
     // The real loop treats this private plan as opaque. No mock plan is ever
     // passed to a real OperationKernel or used to authorize a source step.
     let plan = SendCommitPlan {
@@ -133,12 +137,27 @@ fn observe_admission(boundary: ResultClass, admission: ResultClass) -> Observati
         polls: 0,
         publications: 0,
     };
-    let result = kernel_send(
-        &mut endpoint,
-        &mut state,
-        &mut None,
-        &mut Context::from_waker(Waker::noop()),
-    );
+    let preparation = if prepare_first {
+        let result = kernel_prepare_send(&mut endpoint, &mut state, &mut None);
+        assert_eq!(endpoint.polls, 0, "admission cannot poll transport");
+        assert_eq!(
+            endpoint.publications, 0,
+            "admission cannot publish progress"
+        );
+        result
+    } else {
+        Poll::Ready(Ok(()))
+    };
+    let result = match preparation {
+        Poll::Pending => Poll::Pending,
+        Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        Poll::Ready(Ok(())) => kernel_send(
+            &mut endpoint,
+            &mut state,
+            &mut None,
+            &mut Context::from_waker(Waker::noop()),
+        ),
+    };
     let returned = match result {
         Poll::Pending => ResultClass::Pending,
         Poll::Ready(Ok(_)) => ResultClass::Success,
@@ -182,7 +201,10 @@ fn a_resumed_send_requires_admission_before_transport_or_publication() {
     };
     let boundary = class(kani::any());
     let admission = class(kani::any());
-    check_admission(observe_admission(boundary, admission), admission);
+    check_admission(
+        observe_admission(boundary, admission, kani::any()),
+        admission,
+    );
 }
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -198,7 +220,12 @@ fn resumed_send_admission_can_wait_or_reject_without_io() {
             ResultClass::Success,
             ResultClass::Failure,
         ] {
-            check_admission(observe_admission(boundary, admission), admission);
+            for prepare_first in [false, true] {
+                check_admission(
+                    observe_admission(boundary, admission, prepare_first),
+                    admission,
+                );
+            }
         }
     }
 }

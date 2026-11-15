@@ -1,20 +1,20 @@
 //! Assign lanes that preserve receive order and parallel ownership.
-use super::lane_matching::{LaneCompatibility, LaneEndpointIndex, maximum_lane_matching};
+use super::lane_matching::{LaneCompatibility, maximum_lane_matching};
 use super::{BYTE_DOMAIN, BYTE_DOMAIN_MASK_BYTES};
 use crate::global::const_dsl::{
     receive_lane_causality::{
-        FlowIndex, LogicalDirections, Participants, ReceiveOrder, ReceiveRelations, ReceiveScan,
-        ReceiveSeeds, has_receive_sender_changes, receive_lane_conflict_in,
+        CausalRoles, Direction, FlowIndex, LogicalDirections, ReceiveDirectionIndex, ReceiveLanes,
+        ReceiveOrder, ReceiveRelations, ReceiveScan, ReceiveSeeds, passive_choice_conflict,
+        receive_lane_conflict_in, receive_lane_conflict_indexed,
     },
     receive_pair_is_causal,
 };
 use crate::{
     g::SourceActorImage,
-    global::const_dsl::{
-        EffList, ScopeEvent, ScopeKind, route_arm_ranges_from_first_enter, scope::ScopeEntry,
-    },
+    global::const_dsl::{EffList, ScopeKind, route_arm_ranges_from_first_enter},
 };
 
+mod coloring;
 #[cfg(kani)]
 mod kani;
 #[cfg(all(test, hibana_repo_tests))]
@@ -27,76 +27,33 @@ const fn direction_members<const E: usize>(
     scopes: &FlowIndex<E>,
     directions: &LogicalDirections<E>,
     proposal: (usize, u8, u8),
-    colored: &mut Participants<E>,
 ) -> [bool; E] {
     let (source_event, old_lane, color) = proposal;
     let mut selected = [false; E];
-    let mut count = 0;
-    let mut selected_start = events.len();
-    let mut selected_end = 0;
-    let head = directions.first(source_event);
-    let mut position = head;
+    let mut position = directions.first(source_event);
     while position != u16::MAX {
         let event = position as usize;
         if events.atom_at(event).lane == old_lane {
-            selected[event] = true;
-            count += 1;
-            if event < selected_start {
-                selected_start = event;
+            let endpoints = scopes.participants_at(event);
+            let mut eligible = true;
+            // Only ancestors can place this event opposite another parallel arm.
+            // The source index already contains their complete nesting chain.
+            let mut scope = scopes.enclosing_scope(event);
+            while scope != u16::MAX {
+                if let Some((start, end)) = scopes.parallel_sibling(scope, event, event + 1) {
+                    let mut colors = [0; BYTE_DOMAIN_MASK_BYTES];
+                    colors[color as usize / 8] = 1 << (color % 8);
+                    scopes.exclude_lane_colors(events, (start, end, endpoints), &mut colors);
+                    if colors[color as usize / 8] == 0 {
+                        eligible = false;
+                        break;
+                    }
+                }
+                scope = scopes.parent_scope(scope);
             }
-            selected_end = event + 1;
+            selected[event] = eligible;
         }
         position = directions.next(position);
-    }
-    if count == 0 {
-        return selected;
-    }
-    scopes.lane_participants(events, color, colored);
-    let markers = events.scope_markers();
-    let mut marker = 0;
-    while marker < markers.len() {
-        let scope = markers.at(marker);
-        if let ScopeEvent::Enter(ScopeEntry::Parallel { split }) = scope.event {
-            if scope.segment_end() <= selected_start || selected_end <= scope.offset() {
-                marker += 1;
-                continue;
-            }
-            let split = split as usize;
-            let mut side = 0;
-            while side < 2 {
-                let (start, end, sibling_start, sibling_end) = if side == 0 {
-                    (scope.offset(), split, split, scope.segment_end())
-                } else {
-                    (split, scope.segment_end(), scope.offset(), split)
-                };
-                let mut first = head;
-                while first != u16::MAX && ((first as usize) < start || !selected[first as usize]) {
-                    first = directions.next(first);
-                }
-                if first == u16::MAX || first as usize >= end {
-                    side += 1;
-                    continue;
-                }
-                let siblings = colored.members(sibling_start, sibling_end);
-                position = first;
-                while position != u16::MAX && (position as usize) < end {
-                    let event = position as usize;
-                    if selected[event] {
-                        let endpoints = scopes.participants_at(event);
-                        if !endpoints.is_disjoint(siblings) {
-                            selected[event] = false;
-                            count -= 1;
-                            if count == 0 {
-                                return selected;
-                            }
-                        }
-                    }
-                    position = directions.next(position);
-                }
-                side += 1;
-            }
-        }
-        marker += 1;
     }
     selected
 }
@@ -108,13 +65,13 @@ const fn expand_direction<const E: usize>(
     directions: &LogicalDirections<E>,
     proposal: (usize, u8, u8),
     closures: Option<ReceiveOrder<'_>>,
-    colored: &mut Participants<E>,
+    changed_receivers: &mut CausalRoles,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) {
     let (source_event, _, color) = proposal;
     let before = events.atom_at(source_event);
     let head = directions.first(source_event);
-    let mut selected = direction_members(events, scopes, directions, proposal, colored);
+    let mut selected = direction_members(events, scopes, directions, proposal);
     let mut outside = [0u16; E];
     let mut outside_len = 0;
     let mut candidate = scopes.first_receive_to(before.to);
@@ -170,6 +127,9 @@ const fn expand_direction<const E: usize>(
             let mut atom = events.atom_at(event);
             atom.lane = color;
             events.replace_atom(event, atom);
+            if atom.from != atom.to {
+                changed_receivers.insert(atom.to);
+            }
         }
         position = directions.next(position);
     }
@@ -181,6 +141,7 @@ const fn inspect<const E: usize>(
     actors: Option<&SourceActorImage<E>>,
     scan: ReceiveScan,
     closures: Option<ReceiveOrder<'_>>,
+    directions: &ReceiveDirectionIndex<'_>,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> Result<(), (usize, usize, Option<u16>)> {
     #[cfg(hibana_profile)]
@@ -189,7 +150,7 @@ const fn inspect<const E: usize>(
     } else {
         counters.full_inspections += 1;
     }
-    match receive_lane_conflict_in(events, scope_offsets, actors, scan, closures) {
+    match receive_lane_conflict_indexed(events, scope_offsets, actors, scan, closures, directions) {
         Some(pair) => Err(pair),
         None => Ok(()),
     }
@@ -197,14 +158,19 @@ const fn inspect<const E: usize>(
 
 const fn align_range<const E: usize>(
     events: &mut EffList<E>,
-    scope_offsets: &FlowIndex<E>,
-    actors: Option<&SourceActorImage<E>>,
+    indexes: (
+        &FlowIndex<E>,
+        &ReceiveLanes<E>,
+        Option<&SourceActorImage<E>>,
+    ),
     arm: (usize, usize),
     conflict: (usize, usize),
     palette: (u16, u16),
     closures: Option<ReceiveOrder<'_>>,
+    changed_receivers: &mut CausalRoles,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> Option<u16> {
+    let (scope_offsets, receives, actors) = indexes;
     let (span, colors) = palette;
     #[cfg(hibana_profile)]
     {
@@ -212,20 +178,31 @@ const fn align_range<const E: usize>(
     }
     let row_bytes = (colors as usize).div_ceil(8);
     let mut edges = [0u8; BYTE_DOMAIN * BYTE_DOMAIN_MASK_BYTES];
-    let members =
-        LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(events, actors, arm.0, arm.1);
+    let mut members = [CausalRoles::empty(); BYTE_DOMAIN];
+    let mut event = arm.0;
+    while event < arm.1 {
+        let lane = events.atom_at(event).lane as usize;
+        members[lane] = members[lane].union(scope_offsets.participants_at(event));
+        event += 1;
+    }
+    let arm_participants = scope_offsets.participants_in(arm.0, arm.1);
     let mut vertices = [u16::MAX; BYTE_DOMAIN];
     let mut vertex_count = 0;
     let mut lane = 0;
     while lane < span {
-        if members.contains_lane(lane as u8) {
+        if !members[lane as usize].is_empty() {
             let vertex = vertex_count;
             vertices[lane as usize] = vertex;
             vertex_count += 1;
-            let mut color = 0;
-            while color < colors {
-                edges[vertex as usize * row_bytes + color as usize / 8] |= 1 << (color % 8);
-                color += 1;
+            let mut byte = 0;
+            while byte < row_bytes {
+                edges[vertex as usize * row_bytes + byte] =
+                    if byte + 1 == row_bytes && colors % 8 != 0 {
+                        ((1u16 << (colors % 8)) - 1) as u8
+                    } else {
+                        u8::MAX
+                    };
+                byte += 1;
             }
         }
         lane += 1;
@@ -233,23 +210,19 @@ const fn align_range<const E: usize>(
     // Only enclosing parallel scopes can have one side outside this arm.
     let mut scope = scope_offsets.enclosing_scope(arm.0);
     while scope != u16::MAX {
-        if let Some((start, end)) = scope_offsets.parallel_sibling(scope, arm.0, arm.1) {
-            let siblings =
-                LaneEndpointIndex::<BYTE_DOMAIN_MASK_BYTES>::from_range(events, actors, start, end);
+        if let Some((start, end)) = scope_offsets.parallel_sibling(scope, arm.0, arm.1)
+            && !arm_participants.is_disjoint(scope_offsets.participants_in(start, end))
+        {
             lane = 0;
             while lane < span {
-                if members.contains_lane(lane as u8) {
-                    let mut color = 0;
-                    while color < span {
-                        if !members
-                            .endpoint_set(lane as u8)
-                            .is_disjoint(siblings.endpoint_set(color as u8))
-                        {
-                            edges[vertices[lane as usize] as usize * row_bytes
-                                + color as usize / 8] &= !(1 << (color % 8));
-                        }
-                        color += 1;
-                    }
+                if !members[lane as usize].is_empty() {
+                    let offset = vertices[lane as usize] as usize * row_bytes;
+                    let row = edges.split_at_mut(offset).1.split_at_mut(row_bytes).0;
+                    scope_offsets.exclude_lane_colors(
+                        events,
+                        (start, end, members[lane as usize]),
+                        row,
+                    );
                 }
                 lane += 1;
             }
@@ -318,7 +291,7 @@ const fn align_range<const E: usize>(
                     inside += 1;
                     continue;
                 }
-                let mut receiver_event = scope_offsets.first_receive_to(a.to);
+                let mut receiver_event = receives.first(a.to, color);
                 while receiver_event != u16::MAX {
                     let outside = receiver_event as usize;
                     #[cfg(hibana_profile)]
@@ -367,7 +340,7 @@ const fn align_range<const E: usize>(
                             }
                         }
                     }
-                    receiver_event = scope_offsets.next_receive_to(receiver_event);
+                    receiver_event = receives.next(receiver_event);
                 }
                 inside += 1;
             }
@@ -393,6 +366,9 @@ const fn align_range<const E: usize>(
             assigned_span = needed;
         }
         events.replace_atom(index, atom);
+        if atom.from != atom.to {
+            changed_receivers.insert(atom.to);
+        }
         index += 1;
     }
     Some(assigned_span)
@@ -402,13 +378,41 @@ const fn align_range<const E: usize>(
 /// the existing colors; use the wire domain when no such coloring exists.
 /// All actor and causal facts come from this source.
 /// The returned verdict is checked before any endpoint program is published.
-pub(crate) const fn assign_receive_lanes<const E: usize>(
+const fn assign_ordered_receive_lanes<const E: usize>(
     events: &mut EffList<E>,
     actors: Option<&SourceActorImage<E>>,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
-    if !has_receive_sender_changes(events) {
+    let mut direction_storage = [Direction::EMPTY; E];
+    let mut direction_storage_homogeneous = [false; E];
+    #[cfg(hibana_profile)]
+    {
+        counters.receive_index_builds += 1;
+    }
+    let mut receive_directions = ReceiveDirectionIndex::new(
+        events,
+        &mut direction_storage,
+        &mut direction_storage_homogeneous,
+    );
+    if !receive_directions.has_changes() {
         return true;
+    }
+    if coloring::refine(
+        events,
+        #[cfg(hibana_profile)]
+        counters,
+    ) {
+        #[cfg(hibana_profile)]
+        {
+            counters.recolorings += 1;
+            counters.receive_index_builds += 1;
+        }
+        let checked = ReceiveDirectionIndex::new(
+            events,
+            &mut direction_storage,
+            &mut direction_storage_homogeneous,
+        );
+        return !checked.has_changes();
     }
     let scope_offsets = FlowIndex::new(events, actors);
     let fixed = match actors {
@@ -423,6 +427,7 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
                 assign_fixed::<E, $words>(
                     events,
                     (&scope_offsets, actors, &seeds),
+                    &mut receive_directions,
                     #[cfg(hibana_profile)]
                     counters,
                 )
@@ -458,6 +463,7 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
             actors,
             ReceiveScan::From(None),
             None,
+            &receive_directions,
             #[cfg(hibana_profile)]
             counters,
         );
@@ -468,10 +474,131 @@ pub(crate) const fn assign_receive_lanes<const E: usize>(
             events,
             (&scope_offsets, actors, None),
             checked,
+            &mut receive_directions,
             #[cfg(hibana_profile)]
             counters,
         )
     }
+}
+
+/// Refine only after the ordinary receive-order map is valid. A compatible
+/// same-direction merge can retain an existing FIFO fence across visits.
+/// Every candidate is checked in compiler scratch and restored on failure;
+/// no intermediate map is published. Strict conflict order bounds the search.
+pub(crate) const fn assign_receive_lanes<const E: usize>(
+    events: &mut EffList<E>,
+    actors: Option<&SourceActorImage<E>>,
+    #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
+) -> bool {
+    if !assign_ordered_receive_lanes(
+        events,
+        actors,
+        #[cfg(hibana_profile)]
+        counters,
+    ) {
+        return false;
+    }
+    let Some(mut conflict) = passive_choice_conflict(events, actors, None) else {
+        return true;
+    };
+    let scopes = FlowIndex::new(events, actors);
+    let directions = LogicalDirections::new(events);
+    loop {
+        let entry = conflict.1;
+        let target = events.atom_at(entry);
+        let mut candidate = directions.first(entry);
+        let mut repaired = false;
+        while candidate != u16::MAX {
+            let color = events.atom_at(candidate as usize).lane;
+            if color != target.lane {
+                let members =
+                    direction_members(events, &scopes, &directions, (entry, target.lane, color));
+                if members[entry] {
+                    let mut event = 0;
+                    while event < events.len() {
+                        if members[event] {
+                            let mut atom = events.atom_at(event);
+                            atom.lane = color;
+                            events.replace_atom(event, atom);
+                        }
+                        event += 1;
+                    }
+                    let ordered = receive_lane_conflict_in(
+                        events,
+                        &scopes,
+                        actors,
+                        ReceiveScan::From(None),
+                        None,
+                    )
+                    .is_none();
+                    if ordered {
+                        let next = passive_choice_conflict(events, actors, Some(&scopes));
+                        if let Some(next) = next {
+                            if passive_conflict_advances(events, conflict, next) {
+                                conflict = next;
+                                repaired = true;
+                            }
+                        } else {
+                            #[cfg(hibana_profile)]
+                            {
+                                counters.recolorings += 1;
+                            }
+                            return true;
+                        }
+                    }
+                    if repaired {
+                        break;
+                    }
+                    let mut event = 0;
+                    while event < events.len() {
+                        if members[event] {
+                            let mut atom = events.atom_at(event);
+                            atom.lane = target.lane;
+                            events.replace_atom(event, atom);
+                        }
+                        event += 1;
+                    }
+                }
+            }
+            candidate = directions.next(candidate);
+        }
+        if !repaired {
+            return false;
+        }
+        #[cfg(hibana_profile)]
+        {
+            counters.recolorings += 1;
+        }
+    }
+}
+
+const fn passive_conflict_advances<const E: usize>(
+    events: &EffList<E>,
+    before: (usize, usize, Option<u16>),
+    after: (usize, usize, Option<u16>),
+) -> bool {
+    let markers = events.scope_markers();
+    let mut first = usize::MAX;
+    let mut second = usize::MAX;
+    let mut index = 0;
+    while index < markers.len() {
+        let marker = markers.at(index);
+        if marker.event.is_primary_enter() {
+            let ordinal = marker.scope_id.local_ordinal();
+            if matches!(before.2, Some(scope) if scope == ordinal) {
+                first = index;
+            }
+            if matches!(after.2, Some(scope) if scope == ordinal) {
+                second = index;
+            }
+        }
+        index += 1;
+    }
+    if first == usize::MAX || second == usize::MAX {
+        crate::invariant();
+    }
+    first < second
+        || first == second && (before.0 < after.0 || before.0 == after.0 && before.1 < after.1)
 }
 
 const fn assign_fixed<const E: usize, const W: usize>(
@@ -481,6 +608,7 @@ const fn assign_fixed<const E: usize, const W: usize>(
         Option<&SourceActorImage<E>>,
         &ReceiveSeeds<E>,
     ),
+    receive_directions: &mut ReceiveDirectionIndex<'_>,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
     let (scopes, actors, seeds) = source;
@@ -492,6 +620,7 @@ const fn assign_fixed<const E: usize, const W: usize>(
         actors,
         ReceiveScan::From(None),
         closures,
+        receive_directions,
         #[cfg(hibana_profile)]
         counters,
     );
@@ -502,6 +631,7 @@ const fn assign_fixed<const E: usize, const W: usize>(
         events,
         (scopes, actors, closures),
         checked,
+        receive_directions,
         #[cfg(hibana_profile)]
         counters,
     )
@@ -515,11 +645,11 @@ const fn assign_prepared<const E: usize>(
         Option<ReceiveOrder<'_>>,
     ),
     mut checked: Result<(), (usize, usize, Option<u16>)>,
+    receive_directions: &mut ReceiveDirectionIndex<'_>,
     #[cfg(hibana_profile)] counters: &mut crate::g::profiling::Counters,
 ) -> bool {
     let (scope_offsets, actors, closures) = source;
     let directions = LogicalDirections::new(events);
-    let mut colored = Participants::empty(events.len());
     let mut span = 0;
     let mut index = 0;
     while index < events.len() {
@@ -540,6 +670,8 @@ const fn assign_prepared<const E: usize>(
             Ok(()) => crate::invariant(),
             Err(pair) => pair,
         };
+        let receives = ReceiveLanes::new(events);
+        let mut changed_receivers = CausalRoles::empty();
         let mut changed = false;
         let mut palette = 0;
         while palette != 2 && !changed {
@@ -551,12 +683,12 @@ const fn assign_prepared<const E: usize>(
             let before = events.atom_at(second);
             let assigned = align_range(
                 events,
-                scope_offsets,
-                actors,
+                (scope_offsets, &receives, actors),
                 (second, second + 1),
                 (first, second),
                 (span, colors),
                 closures,
+                &mut changed_receivers,
                 #[cfg(hibana_profile)]
                 counters,
             );
@@ -573,14 +705,31 @@ const fn assign_prepared<const E: usize>(
                     &directions,
                     (second, before.lane, color),
                     closures,
-                    &mut colored,
+                    &mut changed_receivers,
                     #[cfg(hibana_profile)]
                     counters,
                 );
             }
-            let mut marker_index = events.scope_markers().len();
-            while marker_index != 0 && !changed {
-                marker_index -= 1;
+            // A route separating this pair must enclose one of its events.
+            // Merge the two ancestor chains in the same descending source
+            // order as the former marker traversal, without visiting siblings.
+            let mut left_scope = scope_offsets.enclosing_scope(first);
+            let mut right_scope = scope_offsets.enclosing_scope(second);
+            while (left_scope != u16::MAX || right_scope != u16::MAX) && !changed {
+                let marker_index = if left_scope == u16::MAX {
+                    right_scope
+                } else if right_scope == u16::MAX || left_scope > right_scope {
+                    left_scope
+                } else {
+                    right_scope
+                };
+                if left_scope == marker_index {
+                    left_scope = scope_offsets.parent_scope(left_scope);
+                }
+                if right_scope == marker_index {
+                    right_scope = scope_offsets.parent_scope(right_scope);
+                }
+                let marker_index = marker_index as usize;
                 let markers = events.scope_markers();
                 let marker = markers.at(marker_index);
                 if marker.event.is_primary_enter()
@@ -595,12 +744,12 @@ const fn assign_prepared<const E: usize>(
                         if (start <= first && first < end) != (start <= second && second < end) {
                             let assigned = align_range(
                                 events,
-                                scope_offsets,
-                                actors,
+                                (scope_offsets, &receives, actors),
                                 (start, end),
                                 (first, second),
                                 (span, colors),
                                 closures,
+                                &mut changed_receivers,
                                 #[cfg(hibana_profile)]
                                 counters,
                             );
@@ -628,12 +777,14 @@ const fn assign_prepared<const E: usize>(
         // the failed seed. If that suffix passes, recheck every earlier seed
         // in the final coloring. Each seed still checks its complete target
         // range, so the two scans cover the same obligations as a full scan.
+        receive_directions.refresh(events, scope_offsets, changed_receivers);
         checked = inspect(
             events,
             scope_offsets,
             actors,
             ReceiveScan::From(Some((first, scope))),
             closures,
+            receive_directions,
             #[cfg(hibana_profile)]
             counters,
         );
@@ -644,6 +795,7 @@ const fn assign_prepared<const E: usize>(
                 actors,
                 ReceiveScan::Before((first, scope)),
                 closures,
+                receive_directions,
                 #[cfg(hibana_profile)]
                 counters,
             )

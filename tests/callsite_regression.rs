@@ -53,6 +53,410 @@ const SCHEMA_ROUTE_RESOLVER: u16 = 4120;
 
 #[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
+async fn co_resident_file_requests_select_their_own_implicit_arm()
+-> Result<(), hibana::EndpointError> {
+    type FirstFile<'r> = Msg<1, hibana::Endpoint<'r, 9>>;
+    type SecondFile<'r> = Msg<2, hibana::Endpoint<'r, 10>>;
+    type First = Msg<3, u32>;
+    type Second = Msg<4, u32>;
+    type NoticeFirst = Msg<5, ()>;
+    type NoticeSecond = Msg<6, ()>;
+    let source = g::seq(
+        g::par(g::send::<0, 2, FirstFile>(), g::send::<1, 2, SecondFile>()),
+        g::route(
+            g::seq(g::send::<9, 0, First>(), g::send::<2, 1, NoticeFirst>()),
+            g::seq(g::send::<10, 1, Second>(), g::send::<2, 0, NoticeSecond>()),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p9 = project::<9>(&source);
+    let p10 = project::<10>(&source);
+    for right in [false, true] {
+        let transport = TestTransport::new();
+        let mut slab = [0; 128 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, transport.clone())
+            .unwrap();
+        let session = SessionId::new(8199);
+        let mut first = rv.enter(session, &p0).unwrap();
+        let first_file = rv.enter(session, &p9).unwrap();
+        let mut second = rv.enter(session, &p1).unwrap();
+        let second_file = rv.enter(session, &p10).unwrap();
+        let mut service = rv.enter(session, &p2).unwrap();
+        async {
+            async { first.send::<FirstFile>(first_file).await };
+            async { second.send::<SecondFile>(second_file).await };
+            Ok(())
+        }
+        .await?;
+        let (mut first_file, mut second_file) = async {
+            let [mut a, mut b] = service.par()?;
+            async { a.recv::<FirstFile>().await };
+            async { b.recv::<SecondFile>().await };
+        }
+        .await?;
+        async {
+            async {
+                if right {
+                    second_file.send::<Second>(&73).await?;
+                    service.send::<NoticeSecond>(&()).await?;
+                    assert!(
+                        first_file
+                            .send::<First>(&99)
+                            .await
+                            .unwrap_err()
+                            .is_unavailable()
+                    );
+                } else {
+                    first_file.send::<First>(&73).await?;
+                    service.send::<NoticeFirst>(&()).await?;
+                    assert!(
+                        second_file
+                            .send::<Second>(&99)
+                            .await
+                            .unwrap_err()
+                            .is_unavailable()
+                    );
+                }
+                Ok(())
+            };
+            async {
+                if right {
+                    first.recv::<NoticeSecond>().await?;
+                } else {
+                    assert_eq!(first.recv::<First>().await?, 73);
+                }
+                Ok(())
+            };
+            async {
+                if right {
+                    assert_eq!(second.recv::<Second>().await?, 73);
+                } else {
+                    second.recv::<NoticeFirst>().await?;
+                }
+                Ok(())
+            };
+            Ok(())
+        }
+        .await?;
+        assert!(transport.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn another_legal_choice_frame_survives_a_nonmatching_receive()
+-> Result<(), hibana::EndpointError> {
+    type Retry = Msg<181, u32>;
+    type Finished = Msg<182, u32>;
+    const CHOOSE: u16 = 8182;
+    let source =
+        g::route(g::send::<0, 1, Retry>().roll(), g::send::<0, 1, Finished>()).resolve::<CHOOSE>();
+    let sender_program = project::<0>(&source);
+    let receiver_program = project::<1>(&source);
+    for arrival in 0..3 {
+        let queued = arrival != 0;
+        let transport = TestTransport::new();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, transport.clone())
+            .unwrap();
+        rv.set_resolver(
+            &sender_program,
+            ResolverRef::<CHOOSE>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+        )
+        .unwrap();
+        let session = SessionId::new(8182 + u32::from(queued));
+        let mut sender = rv.enter(session, &sender_program).unwrap();
+        let mut receiver = rv.enter(session, &receiver_program).unwrap();
+        if queued {
+            sender.send::<Finished>(&73).await?;
+        }
+        if arrival == 2 {
+            let preview = receiver.offer().await?;
+            assert_eq!(preview.label(), 182);
+            drop(preview);
+        }
+        async {
+            async {
+                let rejected = receiver.recv::<Retry>().await.unwrap_err();
+                assert!(rejected.is_unavailable(), "queued={queued}: {rejected:?}");
+                assert_eq!(receiver.recv::<Finished>().await?, 73);
+            };
+            async {
+                if !queued {
+                    in_process::sleep(core::time::Duration::from_millis(1)).await;
+                    sender.send::<Finished>(&73).await?;
+                }
+                Ok::<(), hibana::EndpointError>(())
+            };
+            Ok::<(), hibana::EndpointError>(())
+        }
+        .await?;
+        assert!(transport.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_excluded_receive_does_not_wait_for_another_alternative_lane()
+-> Result<(), hibana::EndpointError> {
+    type Retry = Msg<181, u32>;
+    type Finished = Msg<182, u32>;
+    type FromFirst = Msg<183, u32>;
+    type FromSecond = Msg<184, u32>;
+    type Done = Msg<185, u32>;
+    type RetryReceived = Msg<180, ()>;
+    const CHOOSE: u16 = 8183;
+    const RETRY_FROM: u16 = 8184;
+    let source = g::route(
+        g::route(
+            g::seq(g::send::<0, 2, FromFirst>(), g::send::<0, 1, Retry>()),
+            g::seq(g::send::<0, 2, FromSecond>(), g::send::<2, 1, Retry>()),
+        )
+        .resolve::<RETRY_FROM>()
+        .roll(),
+        g::seq(g::send::<0, 2, Done>(), g::send::<0, 1, Finished>()),
+    )
+    .resolve::<CHOOSE>();
+    // Both Retry inputs were previously unexecuted here. Without a receiver
+    // acknowledgement their first inputs cannot distinguish repeated visits.
+    let diagnostic = g::diagnose(&source).expect("an unfenced retry is not projectable");
+    assert!(matches!(
+        diagnostic.problem,
+        g::ProjectionProblem::ReceiveLaneCausality
+    ));
+    let source = g::route(
+        g::route(
+            g::seq(
+                g::seq(g::send::<0, 2, FromFirst>(), g::send::<0, 1, Retry>()),
+                g::send::<1, 0, RetryReceived>(),
+            ),
+            g::seq(
+                g::seq(g::send::<0, 2, FromSecond>(), g::send::<2, 1, Retry>()),
+                g::send::<1, 0, RetryReceived>(),
+            ),
+        )
+        .resolve::<RETRY_FROM>()
+        .roll(),
+        g::seq(g::send::<0, 2, Done>(), g::send::<0, 1, Finished>()),
+    )
+    .resolve::<CHOOSE>();
+    let sender_program = project::<0>(&source);
+    let receiver_program = project::<1>(&source);
+    let other_program = project::<2>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    rv.set_resolver(
+        &sender_program,
+        ResolverRef::<CHOOSE>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+    )
+    .unwrap();
+    let session = SessionId::new(8183);
+    let mut sender = rv.enter(session, &sender_program).unwrap();
+    let mut receiver = rv.enter(session, &receiver_program).unwrap();
+    let mut other = rv.enter(session, &other_program).unwrap();
+    sender.send::<Done>(&73).await?;
+    other.recv::<Done>().await?;
+    sender.send::<Finished>(&73).await?;
+    let rejected = hibana_runtime::race(receiver.recv::<Retry>(), async {
+        in_process::sleep(core::time::Duration::from_millis(20)).await;
+        panic!("a different choice's pending lane hid the arrived alternative");
+    })
+    .await
+    .unwrap_err();
+    assert!(rejected.is_unavailable(), "{rejected:?}");
+    assert_eq!(receiver.recv::<Finished>().await?, 73);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_independent_arrived_frame_does_not_reject_a_pending_receive()
+-> Result<(), hibana::EndpointError> {
+    type First = Msg<186, u32>;
+    type Second = Msg<187, u32>;
+    let source = g::par(g::send::<0, 1, First>(), g::send::<2, 1, Second>());
+    let first_program = project::<0>(&source);
+    let receiver_program = project::<1>(&source);
+    let second_program = project::<2>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let session = SessionId::new(8185);
+    let mut first = rv.enter(session, &first_program).unwrap();
+    let mut receiver = rv.enter(session, &receiver_program).unwrap();
+    let mut second = rv.enter(session, &second_program).unwrap();
+    second.send::<Second>(&19).await?;
+    async {
+        async {
+            assert_eq!(receiver.recv::<First>().await?, 73);
+            assert_eq!(receiver.recv::<Second>().await?, 19);
+        };
+        async {
+            in_process::sleep(core::time::Duration::from_millis(1)).await;
+            first.send::<First>(&73).await?;
+        };
+        Ok::<(), hibana::EndpointError>(())
+    }
+    .await?;
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn offer_receives_the_input_prefix_before_calling_its_result_resolver()
+-> Result<(), hibana::EndpointError> {
+    use std::cell::Cell;
+    type Request = Msg<61, u32>;
+    type Accepted = Msg<62, u32>;
+    type Rejected = Msg<63, u32>;
+    const DECIDE: u16 = 4121;
+    let request = g::send::<0, 1, Request>();
+    let accepted = g::send::<1, 0, Accepted>();
+    let retry = g::seq(g::send::<1, 0, Rejected>(), request);
+    let global = g::seq(
+        request,
+        g::route(accepted, g::seq(retry.roll(), accepted)).resolve::<DECIDE>(),
+    );
+    let client_program = project::<0>(&global);
+    let server_program = project::<1>(&global);
+    let input = (Cell::new(None::<u32>), Cell::new(0usize));
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, TestTransport::new())
+        .unwrap();
+    rv.set_resolver(
+        &server_program,
+        ResolverRef::<DECIDE>::decision_state(&input, |input| {
+            input.1.set(input.1.get() + 1);
+            match input.0.get() {
+                Some(0) => Ok(DecisionArm::Right),
+                Some(_) => Ok(DecisionArm::Left),
+                None => Err(ResolverError::reject()),
+            }
+        }),
+    )
+    .unwrap();
+    let mut client = rv.enter(SessionId::new(4121), &client_program).unwrap();
+    let mut server = rv.enter(SessionId::new(4121), &server_program).unwrap();
+    client.send::<Request>(&7).await?;
+    let preview = server.offer().await?;
+    assert_eq!(preview.label(), 61);
+    assert_eq!(
+        input.1.get(),
+        0,
+        "the resolver's input receive has not committed"
+    );
+    let value = preview.recv::<Request>().await?;
+    input.0.set(Some(value));
+    server.send::<Accepted>(&value).await?;
+    assert_eq!(client.recv::<Accepted>().await?, 7);
+    assert!(input.1.get() > 0);
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn parallel_offer_receives_its_input_before_resolving_the_reply()
+-> Result<(), hibana::EndpointError> {
+    use std::cell::Cell;
+    type IoRequest = Msg<64, u32>;
+    type IoReply = Msg<65, u32>;
+    type Request = Msg<66, u32>;
+    type Accepted = Msg<67, u32>;
+    type Rejected = Msg<68, u32>;
+    type Exit = Msg<69, u32>;
+    const DECIDE: u16 = 4122;
+    let request = g::send::<0, 1, Request>();
+    let accepted = g::send::<1, 0, Accepted>();
+    let retry = g::seq(g::send::<1, 0, Rejected>(), request);
+    let operation = g::seq(
+        request,
+        g::route(accepted, g::seq(retry.roll(), accepted)).resolve::<DECIDE>(),
+    );
+    let source = g::seq(
+        g::par(
+            g::seq(g::send::<0, 1, IoRequest>(), g::send::<1, 0, IoReply>()).roll(),
+            operation,
+        ),
+        g::send::<0, 1, Exit>(),
+    );
+    let client_program = project::<0>(&source);
+    let server_program = project::<1>(&source);
+    let input = (Cell::new(None::<u32>), Cell::new(0usize));
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, TestTransport::new())
+        .unwrap();
+    rv.set_resolver(
+        &server_program,
+        ResolverRef::<DECIDE>::decision_state(&input, |input| {
+            input.1.set(input.1.get() + 1);
+            match input.0.get() {
+                Some(0) => Ok(DecisionArm::Right),
+                Some(_) => Ok(DecisionArm::Left),
+                None => Err(ResolverError::reject()),
+            }
+        }),
+    )
+    .unwrap();
+    let mut client = rv.enter(SessionId::new(4122), &client_program).unwrap();
+    let mut server = rv.enter(SessionId::new(4122), &server_program).unwrap();
+    client.send::<IoRequest>(&3).await?;
+    {
+        let [mut io, mut operation] = server.par()?;
+        let preview = hibana_runtime::race(io.offer(), operation.offer()).await?;
+        assert_eq!(preview.label(), 64);
+        assert_eq!(preview.recv::<IoRequest>().await?, 3);
+        io.send::<IoReply>(&3).await?;
+        assert_eq!(client.recv::<IoReply>().await?, 3);
+        client.send::<Request>(&7).await?;
+        let preview = hibana_runtime::race(io.offer(), operation.offer()).await?;
+        assert_eq!(preview.label(), 66);
+        assert_eq!(
+            input.1.get(),
+            0,
+            "a future reply cannot resolve before its input receive"
+        );
+        let value = preview.recv::<Request>().await?;
+        input.0.set(Some(value));
+        drop(operation.offer().await?);
+        let value = input.0.take().unwrap();
+        operation.send::<Accepted>(&value).await?;
+        assert_eq!(client.recv::<Accepted>().await?, value);
+    }
+    client.send::<Exit>(&0).await?;
+    assert_eq!(server.recv::<Exit>().await?, 0);
+    assert!(input.1.get() > 0);
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
 async fn an_unavailable_borrowed_send_preserves_queued_input_and_later_rolls()
 -> Result<(), hibana::EndpointError> {
     let source = g::seq(
@@ -1048,4 +1452,289 @@ async fn filtered_entirely_empty_role_drops_without_visit_storage() {
             .await;
         };
     };
+}
+
+/// Success transfers the reply authority away from the service. Its ordinary
+/// file-I/O view remains usable; no extra rejection can be sent by that service.
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn successful_close_returns_its_authority_without_reopening_a_rejection()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        cell::Cell,
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    use hibana::Endpoint;
+    type Authority = g::Msg<10, Endpoint<'static, 36>>;
+    type Request = g::Msg<162, u32>;
+    type Approved = g::Msg<163, ()>;
+    type Rejected = g::Msg<164, ()>;
+    type Read = g::Msg<90, ()>;
+    type Value = g::Msg<91, u32>;
+    const CHECK: u16 = 8120;
+    for rejected in [0, 2] {
+        let request = g::send::<1, 36, Request>();
+        let approved = g::seq(g::send::<36, 1, Approved>(), g::send::<0, 1, Authority>());
+        let retry = g::seq(g::send::<36, 1, Rejected>(), request);
+        let operation = g::seq(
+            request,
+            g::route(approved, g::seq(retry.roll(), approved)).resolve::<CHECK>(),
+        );
+        let global = g::par(
+            operation,
+            g::seq(g::send::<1, 0, Read>(), g::send::<0, 1, Value>()),
+        );
+        let owner_program = project::<0>(&global);
+        let client_program = project::<1>(&global);
+        let authority_program = project::<36>(&global);
+        let input = Cell::new(None::<u32>);
+        let transport = common::TestTransport::new();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, transport.clone())
+            .unwrap();
+        rv.set_resolver(
+            &authority_program,
+            ResolverRef::<CHECK>::decision_state(&input, |input| match input.get() {
+                Some(0) => Ok(DecisionArm::Right),
+                Some(_) => Ok(DecisionArm::Left),
+                None => Err(ResolverError::reject()),
+            }),
+        )
+        .unwrap();
+        let sid = SessionId::new(8120);
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let mut client = rv.enter(sid, &client_program).unwrap();
+        let mut authority = rv.enter(sid, &authority_program).unwrap();
+        for _ in 0..rejected {
+            let value = 0;
+            client.send::<Request>(&value).await?;
+            let request = authority.offer().await?;
+            assert_eq!(request.label(), 162);
+            input.set(Some(request.recv::<Request>().await?));
+            assert_eq!(authority.offer().await?.label(), 164);
+            authority.send::<Rejected>(&()).await?;
+            client.recv::<Rejected>().await?;
+        }
+        client.send::<Request>(&1).await?;
+        let request = authority.offer().await?;
+        assert_eq!(request.label(), 162);
+        input.set(Some(request.recv::<Request>().await?));
+        drop(authority.offer().await?);
+        authority.send::<Approved>(&()).await?;
+        client.recv::<Approved>().await?;
+        owner.send::<Authority>(authority).await?;
+        let mut returned = client.recv::<Authority>().await?;
+        assert!(transport.queue_is_empty());
+        {
+            let mut preview = core::pin::pin!(owner.offer());
+            assert!(matches!(
+                preview
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+        }
+        {
+            let mut file = client.borrow(&mut returned);
+            let mut repeated = core::pin::pin!(file.send::<Request>(&1));
+            let observed = repeated
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()));
+            assert!(
+                matches!(&observed, Poll::Ready(Err(error)) if error.is_unavailable()),
+                "closed authority admitted or waited for a new request: {observed:?}"
+            );
+        }
+        assert!(transport.queue_is_empty());
+        drop(returned);
+        client.send::<Read>(&()).await?;
+        let request = owner.offer().await?;
+        assert_eq!(request.label(), 90);
+        request.recv::<Read>().await?;
+        owner.send::<Value>(&7).await?;
+        assert_eq!(client.recv::<Value>().await?, 7);
+        assert!(transport.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_parallel_continuation_can_follow_rejected_close_retries()
+-> Result<(), hibana::EndpointError> {
+    use core::cell::Cell;
+    type Request = g::Msg<162, u32>;
+    type Approved = g::Msg<163, ()>;
+    type Rejected = g::Msg<164, ()>;
+    type First = g::Msg<28, ()>;
+    type Second = g::Msg<29, ()>;
+    const CHECK: u16 = 8122;
+    for rejected in [0, 2] {
+        let request = g::send::<0, 1, Request>();
+        let approved = g::seq(
+            g::par(g::send::<1, 2, First>(), g::send::<1, 3, Second>()),
+            g::send::<1, 0, Approved>(),
+        );
+        let retry = g::seq(g::send::<1, 0, Rejected>(), request);
+        let global = g::seq(
+            request,
+            g::route(approved, g::seq(retry.roll(), approved)).resolve::<CHECK>(),
+        );
+        let client_program = project::<0>(&global);
+        let server_program = project::<1>(&global);
+        let first_program = project::<2>(&global);
+        let second_program = project::<3>(&global);
+        let input = Cell::new(None::<u32>);
+        let transport = common::TestTransport::new();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, transport.clone())
+            .unwrap();
+        rv.set_resolver(
+            &server_program,
+            ResolverRef::<CHECK>::decision_state(&input, |input| match input.get() {
+                Some(0) => Ok(DecisionArm::Right),
+                Some(_) => Ok(DecisionArm::Left),
+                None => Err(ResolverError::reject()),
+            }),
+        )
+        .unwrap();
+        let sid = SessionId::new(8122);
+        let mut client = rv.enter(sid, &client_program).unwrap();
+        let mut server = rv.enter(sid, &server_program).unwrap();
+        let mut first = rv.enter(sid, &first_program).unwrap();
+        let mut second = rv.enter(sid, &second_program).unwrap();
+        for _ in 0..rejected {
+            client.send::<Request>(&0).await?;
+            input.set(Some(server.recv::<Request>().await?));
+            assert_eq!(server.offer().await?.label(), 164);
+            server.send::<Rejected>(&()).await?;
+            client.recv::<Rejected>().await?;
+        }
+        client.send::<Request>(&1).await?;
+        input.set(Some(server.recv::<Request>().await?));
+        drop(server.offer().await?);
+        {
+            let [mut left, mut right] = server.par()?;
+            async {
+                async {
+                    left.send::<First>(&()).await?;
+                };
+                async {
+                    right.send::<Second>(&()).await?;
+                };
+                Ok(())
+            }
+            .await?;
+        }
+        first.recv::<First>().await?;
+        second.recv::<Second>().await?;
+        server.send::<Approved>(&()).await?;
+        client.recv::<Approved>().await?;
+        assert!(transport.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_close_retry_input_is_not_lost_when_an_unrelated_parallel_borrow_is_rejected()
+-> Result<(), hibana::EndpointError> {
+    type Request = g::Msg<162, ()>;
+    type Other = g::Msg<164, ()>;
+    type Reply = g::Msg<163, ()>;
+    type First = g::Msg<28, ()>;
+    type Second = g::Msg<29, ()>;
+    let visit = g::route(
+        g::seq(g::send::<0, 1, Request>(), g::send::<1, 0, Reply>()),
+        g::seq(g::send::<0, 1, Other>(), g::send::<1, 0, Reply>()),
+    );
+    let global = g::seq(
+        visit.roll(),
+        g::par(g::send::<1, 2, First>(), g::send::<1, 3, Second>()),
+    );
+    let client_program = project::<0>(&global);
+    let server_program = project::<1>(&global);
+    let first_program = project::<2>(&global);
+    let second_program = project::<3>(&global);
+    let transport = common::TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(8123);
+    let mut client = rv.enter(sid, &client_program).unwrap();
+    let mut server = rv.enter(sid, &server_program).unwrap();
+    let mut first = rv.enter(sid, &first_program).unwrap();
+    let mut second = rv.enter(sid, &second_program).unwrap();
+    client.send::<Request>(&()).await?;
+    server.recv::<Request>().await?;
+    server.send::<Reply>(&()).await?;
+    client.recv::<Reply>().await?;
+    client.send::<Request>(&()).await?;
+    let input = server.offer().await?;
+    assert_eq!(input.label(), 162);
+    drop(input);
+    assert!(
+        server.par::<2>().is_err(),
+        "borrow discarded accepted input"
+    );
+    server.recv::<Request>().await?;
+    server.send::<Reply>(&()).await?;
+    client.recv::<Reply>().await?;
+    {
+        let [mut left, mut right] = server.par()?;
+        async {
+            async {
+                left.send::<First>(&()).await?;
+            };
+            async {
+                right.send::<Second>(&()).await?;
+            };
+            Ok(())
+        }
+        .await?;
+    }
+    first.recv::<First>().await?;
+    second.recv::<Second>().await?;
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_unadmitted_wire_send_keeps_its_required_receive_and_later_send_available()
+-> Result<(), hibana::EndpointError> {
+    type Input = g::Msg<180, u32>;
+    type Output = g::Msg<181, u32>;
+    let global = g::seq(g::send::<1, 0, Input>(), g::send::<0, 1, Output>());
+    let owner_program = project::<0>(&global);
+    let peer_program = project::<1>(&global);
+    let transport = TestTransport::new();
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let session = SessionId::new(8121);
+    let mut owner = rv.enter(session, &owner_program).unwrap();
+    let mut peer = rv.enter(session, &peer_program).unwrap();
+    let error = owner.send::<Output>(&7).await.unwrap_err();
+    assert!(error.is_unavailable(), "{error:?}");
+    assert!(transport.queue_is_empty());
+    peer.send::<Input>(&5).await?;
+    assert_eq!(owner.recv::<Input>().await?, 5);
+    owner.send::<Output>(&7).await?;
+    assert_eq!(peer.recv::<Output>().await?, 7);
+    assert!(transport.queue_is_empty());
+    Ok(())
 }

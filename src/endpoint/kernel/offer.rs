@@ -100,6 +100,20 @@ where
         &mut self,
         state: &mut OfferState<'r>,
     ) -> Poll<RecvResult<Option<u8>>> {
+        // Without a choice or any receive/local row, this view cannot expose
+        // an offer. Waiting would require its caller to perform a typed send
+        // through the very borrow held by this future.
+        if !self.progress.cursor.has_route_scopes()
+            && !(0..self.progress.cursor.local_steps_len()).any(|index| {
+                self.progress.cursor.event_row_at(index).is_some_and(|row| {
+                    row.logical_role() == self.public_header.role()
+                        && self.permits_event(index)
+                        && row.direction() != crate::global::role_program::RoleLocalDirection::Send
+                })
+            })
+        {
+            return Poll::Ready(Err(RecvError::PhaseInvariant));
+        }
         state.execution = OfferExecution::Selecting {
             frontier_visited: self.progress.frontier_state.empty_frontier_visit_set(),
         };
@@ -340,7 +354,7 @@ where
                 Poll::Pending => {
                     // No selected-scope frame is owned yet. Keep independent
                     // active receive lanes armed while this scope is waiting.
-                    let incoming = self.read_projected_offer_incoming(inspected_lanes);
+                    let incoming = self.read_projected_incoming(inspected_lanes);
                     match self.poll_any_active_offer_transport_frame(
                         &mut state.pending_recv,
                         cx,

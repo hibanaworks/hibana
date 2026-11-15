@@ -1,2 +1,2 @@
 //! Finite source catalogs shared by generation and CI assignment.
-pub const CONTRACTS: usize = 28;
+pub const CONTRACTS: usize = 39;

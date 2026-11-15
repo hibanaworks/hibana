@@ -10,7 +10,7 @@ pub(crate) struct Participants<const E: usize> {
 }
 
 impl<const E: usize> Participants<E> {
-    pub(crate) const fn empty(len: usize) -> Self {
+    const fn empty(len: usize) -> Self {
         if len > E {
             crate::invariant();
         }
@@ -60,21 +60,53 @@ impl<const E: usize> Participants<E> {
         result
     }
 
-    pub(crate) const fn for_lane(&mut self, events: &EffList<E>, source: &Self, lane: u8) {
-        if events.len() != source.len || self.len != source.len {
+    /// Remove exactly the colors used by a physically intersecting event in
+    /// this interval. Immutable participant unions prune disjoint subtrees;
+    /// current colors are read only at relevant leaves, after recoloring.
+    pub(crate) const fn exclude_colors(
+        &self,
+        events: &EffList<E>,
+        (start, stop, members): (usize, usize, CausalRoles),
+        colors: &mut [u8],
+    ) {
+        if start > stop || stop > self.len || events.len() != self.len {
             crate::invariant();
         }
-        let mut event = 0;
-        while event < self.len {
-            let members = if events.atom_at(event).lane == lane {
-                source.at(event)
-            } else {
-                CausalRoles::empty()
-            };
-            self.set(self.len + event, members);
-            event += 1;
+        let mut left = self.len + start;
+        let mut right = self.len + stop;
+        while left < right {
+            if !left.is_multiple_of(2) {
+                self.exclude_node(events, left, members, colors);
+                left += 1;
+            }
+            if !right.is_multiple_of(2) {
+                right -= 1;
+                self.exclude_node(events, right, members, colors);
+            }
+            left /= 2;
+            right /= 2;
         }
-        self.build_parents();
+    }
+
+    const fn exclude_node(
+        &self,
+        events: &EffList<E>,
+        node: usize,
+        members: CausalRoles,
+        colors: &mut [u8],
+    ) {
+        if self.get(node).is_disjoint(members) {
+            return;
+        }
+        if node >= self.len {
+            let lane = events.atom_at(node - self.len).lane as usize;
+            if lane / 8 < colors.len() {
+                colors[lane / 8] &= !(1 << (lane % 8));
+            }
+        } else {
+            self.exclude_node(events, node * 2, members, colors);
+            self.exclude_node(events, node * 2 + 1, members, colors);
+        }
     }
 
     const fn build_parents(&mut self) {
@@ -157,6 +189,41 @@ mod tests {
     };
 
     #[test]
+    fn color_exclusion_reads_current_colors_across_the_complete_wire_domain() {
+        let mut events = EffList::<3>::new();
+        for role in [0, 127, 255] {
+            events.push_event_mut(EffAtom {
+                from: role,
+                to: role,
+                label: 0,
+                payload: EventPayload::Wire(0),
+                origin: EventOrigin::User,
+                lane: 0,
+            });
+        }
+        let source = Participants::new::<0>(&events, None);
+        for position in 0..3 {
+            let mut query = CausalRoles::empty();
+            query.insert(events.atom_at(position).from);
+            for color in 0..=u8::MAX {
+                let mut row = events.atom_at(position);
+                row.lane = color;
+                events.replace_atom(position, row);
+                for width in [1, 2, 16, 32] {
+                    let mut colors = [u8::MAX; 32];
+                    source.exclude_colors(&events, (0, 3, query), &mut colors[..width]);
+                    for observed in 0..width * 8 {
+                        assert_eq!(
+                            colors[observed / 8] & (1 << (observed % 8)) != 0,
+                            observed != color as usize
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn interval_unions_match_every_selected_physical_participant() {
         let roles = [0, 63, 64, 127, 128, 191, 192, 255];
         let first = SourceScope {
@@ -197,15 +264,7 @@ mod tests {
             );
             for actors in [None, Some(&image)] {
                 let source = Participants::new(&events, actors);
-                let mut filtered = Participants::empty(events.len());
                 for lane in [None, Some(0), Some(1), Some(2), Some(0)] {
-                    let index = match lane {
-                        None => &source,
-                        Some(lane) => {
-                            filtered.for_lane(&events, &source, lane);
-                            &filtered
-                        }
-                    };
                     for encoding in 0..256u16 {
                         let mut facts = CausalRoles::empty();
                         for (bit, role) in roles.iter().enumerate() {
@@ -248,18 +307,37 @@ mod tests {
                                             facts.contains(atom.from) && facts.contains(atom.to);
                                     }
                                 }
-                                assert_eq!(
-                                    index.covered(start, stop, &facts),
-                                    expected,
-                                    "len={len} encoding={encoding} range={start}..{stop} owned={}",
-                                    actors.is_some()
-                                );
-                                assert_eq!(
-                                    index.members(start, stop).is_subset_of(&facts),
-                                    expected
-                                );
-                                if start + 1 == stop {
-                                    assert_eq!(index.at(start).0, index.members(start, stop).0);
+                                if let Some(lane) = lane {
+                                    let outside = CausalRoles([
+                                        !facts.0[0],
+                                        !facts.0[1],
+                                        !facts.0[2],
+                                        !facts.0[3],
+                                    ]);
+                                    let mut colors = [u8::MAX; 32];
+                                    source.exclude_colors(
+                                        &events,
+                                        (start, stop, outside),
+                                        &mut colors,
+                                    );
+                                    assert_eq!(
+                                        colors[lane as usize / 8] & (1 << (lane % 8)) != 0,
+                                        expected,
+                                        "len={len} encoding={encoding} range={start}..{stop} lane={lane} owned={}",
+                                        actors.is_some()
+                                    );
+                                } else {
+                                    assert_eq!(source.covered(start, stop, &facts), expected);
+                                    assert_eq!(
+                                        source.members(start, stop).is_subset_of(&facts),
+                                        expected
+                                    );
+                                    if start + 1 == stop {
+                                        assert_eq!(
+                                            source.at(start).0,
+                                            source.members(start, stop).0
+                                        );
+                                    }
                                 }
                                 checks += 1;
                             }

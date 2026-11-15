@@ -158,6 +158,15 @@ impl<const E: usize, const D: usize> ActorImage<E, D> {
         reentry::check(source, self, facts)
     }
 
+    #[cfg(hibana_profile)]
+    pub(crate) fn reentry_conflict<const S: usize>(
+        &self,
+        source: &Source<'_>,
+        facts: &Scratch<S, E>,
+    ) -> Option<(usize, super::EndpointKey)> {
+        reentry::conflict(source, self, facts)
+    }
+
     pub const fn decision_count(&self) -> usize {
         self.choice_len
     }

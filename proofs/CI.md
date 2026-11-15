@@ -37,6 +37,27 @@ generated conformance. It assigns the complete budget-2 population across all
 its own assignment, alongside the 32 constructor shards and the common controls
 assignment, with every source, variant and script executed once. There is no
 old-implementation rebuild job.
+The shared-contract catalog also covers a view-local parallel prefix followed
+by a foreign sequential suffix, both with ordinary messages and after an
+actual resource loan, request and reply. Generated localsides retain the join
+for the actor that performs the suffix. Strict-provenance Miri includes those
+positive/negative local suffix boundaries and a pre-loan receive that must
+remain unavailable without faulting the run, then completes the real loan and
+reply. These three tests belong to the ordinary memory contract and are not
+repeated by the extended selection. The standalone local-fork lemmas establish
+the filtered-row equivalence for a foreign suffix and an empty range; they do
+not establish a refinement theorem for arbitrary Rust executions.
+Repeated passive choices also have a negative mixed-peer source and positive
+causal-ACK, FIFO-fence and delegated/parallel/nested-roll sources. The compiler
+checks current and next actor paths separately; separating wire lanes alone
+does not distinguish those visits. The exact delayed relay has a source-model
+obstruction proof in `SourceOccurrenceProgress.lean`, not a general Rust
+validator soundness proof. The cross-lane rework catalog contains an inner
+request loop, an outer review loop and an independent sender. Its ordinary
+two-visit scripts complement the unchanged native 17-event regression, which
+uses one independent input before three outer reviews. Completed continuation
+on another lane is checked using source precedence; parallel completion alone
+does not authorize a parent restart.
 Its tests reject missing or duplicate assignments. Catalog sizes are
 shared with the generator rather than copied into workflow inputs.
 `check_protocol_ci.sh ID [SEED]` obtains that ID's canonical assignment and runs
@@ -87,7 +108,11 @@ the capture to remain unchanged. This checks progress, custody, fault and parked
 previews on the actual target, including parallel borrows. It is a finite Rust
 state comparison, separate from the Lean permission predicate. Native and Miri
 regressions additionally continue through the next valid communication with a
-queued frame, a parked preview and a returned owned Endpoint. This recoverable
+queued frame, a parked preview and a returned owned Endpoint. Whole receive
+probes on the valid generated fixtures require recoverable rejection, rather
+than counting a faulting rejection as equivalent. Native and Miri tests also
+start a receive before the peer chooses a different arm, retain that legal
+frame and then consume it with the matching typed receive. This recoverable
 pre-I/O rejection covers declared receives and completed borrowed-payload sends
 outside repeating source bodies. A wrong fragment or a failed owned send remains
 terminal. This is distinct from an absent affine handle and from a terminal
@@ -145,6 +170,16 @@ for, or first perform, the receipt. Preview eligibility and call completion
 are distinct source questions. A completed old return cannot stand in for an
 outstanding one. Existing native regressions also keep the independent-view
 wait and the same-view rejection cases.
+The direct file-view regressions also distinguish a permanently transferred
+entry resource from a temporary loan. An immutable receipt row may name a
+mandatory, non-repeated receive from a terminal owner, causally after its
+handoff. Existing completion of that notice rules out waiting for an old
+receipt; it does not close a roll or add a holder table. Direct and borrowed
+calls reject before transport and leave an independent continuation usable.
+Temporary departure remains Pending and resumes after the actual return.
+The symbolic ownership-fold lemma proves the sink property under explicit
+source-conformance assumptions; it is not a complete Rust refinement proof.
+The ordinary Miri contract includes both actual Endpoint regressions.
 Assignment 20 combines a resolver at a repeated entry, actual resource return,
 and an incoming continuation after that repeated prefix. Its generated
 localsides start the continuation's `offer()` before the peer sends and retain

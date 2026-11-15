@@ -260,7 +260,7 @@ where
             Some(ProgramSourceError::RouteControllerMismatch) => {
                 Some(crate::global::compiled::lowering::projection_diagnostic(
                     &Self::IMAGE,
-                    Self::SOURCE_EFF_LIST,
+                    &Self::SOURCE,
                     ProgramSourceError::RouteControllerMismatch,
                 ))
             }
@@ -285,10 +285,17 @@ where
                 if matches!(error, ProgramSourceError::ReceiveLaneCausalityConflict)
                     && let Some(actors) = Self::SOURCE.actors()
                     && let Some((first, second, scope)) =
-                        crate::global::const_dsl::owned_receive_lane_conflict(
+                        match crate::global::const_dsl::owned_receive_lane_conflict(
                             Self::SOURCE_EFF_LIST,
                             actors,
-                        )
+                        ) {
+                            Some(pair) => Some(pair),
+                            None => crate::global::const_dsl::passive_choice_conflict(
+                                Self::SOURCE_EFF_LIST,
+                                Some(actors),
+                                None,
+                            ),
+                        }
                 {
                     let earlier = Self::SOURCE_EFF_LIST.atom_at(first);
                     diagnostic.role = Some(earlier.to);
@@ -349,7 +356,7 @@ where
             } else {
                 crate::global::compiled::lowering::projection_diagnostic(
                     &Self::IMAGE,
-                    Self::SOURCE_EFF_LIST,
+                    &Self::SOURCE,
                     error,
                 )
             }),
@@ -372,12 +379,16 @@ where
     const REENTRY_KNOWLEDGE: bool = ProgramSourceData::<CAPACITY>::reentry_knowledge::<Steps>();
     const PASSIVE_ERROR: Option<ProgramSourceError> =
         crate::global::compiled::lowering::validate_passive_child_projection_guarantees(
-            Self::SOURCE_EFF_LIST.scope_markers(),
+            Self::SOURCE_EFF_LIST,
         );
     const ROUTE_ERROR: Option<ProgramSourceError> = if Steps::SOURCE_NODE.has_delegation() {
-        if let Some(error) =
-            crate::global::compiled::lowering::validate_route_control_shapes(Self::SOURCE_EFF_LIST)
-        {
+        if let Some(error) = crate::global::compiled::lowering::validate_route_control_shapes(
+            Self::SOURCE_EFF_LIST,
+            match Self::SOURCE.actors() {
+                Some(actors) => Some(actors.event_actors()),
+                None => None,
+            },
+        ) {
             Some(error)
         } else if !Self::SOURCE.actor_branch_knowledge(&Steps::SOURCE_NODE) {
             Some(ProgramSourceError::ProjectionRouteUnprojectable)

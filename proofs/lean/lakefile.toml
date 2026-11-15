@@ -21,6 +21,12 @@ exeName = "protocol-shapes"
 # Bound concurrent theorem elaboration without reducing the checked cases.
 moreLeanArgs = ["-j1"]
 
+[[lean_lib]]
+name = "ProtocolChecker"
+srcDir = "../../target/lean-proof"
+roots = ["ProtocolChecker.Base", "ProtocolChecker.Cuts"]
+moreLeanArgs = ["-j1"]
+
 [[lean_exe]]
 name = "nestedRollAdmission"
 root = "NestedRollAdmissionGenerated"

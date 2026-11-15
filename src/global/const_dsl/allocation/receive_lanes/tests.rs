@@ -31,17 +31,18 @@ const fn certify_receiver(receiver: u8) {
         .push(row(receiver.wrapping_add(3), receiver.wrapping_add(4), 7))
         .push(row(receiver.wrapping_add(5), receiver, 7));
     let scopes = FlowIndex::new::<0>(&events, None);
+    let receives = ReceiveLanes::new(&events);
     #[cfg(hibana_profile)]
     let mut counters = crate::g::profiling::Counters::new();
     assert!(matches!(
         align_range(
             &mut events,
-            &scopes,
-            None,
+            (&scopes, &receives, None),
             (2, 4),
             (0, 3),
             (8, 8),
             None,
+            &mut CausalRoles::empty(),
             #[cfg(hibana_profile)]
             &mut counters,
         ),
@@ -137,29 +138,52 @@ fn direction_candidates_match_every_enclosing_parallel_constraint() {
         if selected & 64 != 0 {
             events.push_route_scope_mut(ScopeId::route(1), 4, 5, 6, ReentryMark::SinglePass);
         }
-        let candidates = direction_members(
-            &events,
-            &FlowIndex::new::<0>(&events, None),
-            &LogicalDirections::new(&events),
-            (0, events.atom_at(0).lane, 1),
-            &mut Participants::empty(events.len()),
-        );
-        for (event, &candidate) in candidates.iter().enumerate().take(events.len()) {
-            let blocked = parallel
-                .iter()
-                .enumerate()
-                .any(|(bit, &(start, split, end))| {
-                    if selected & (2 << bit) == 0 || event < start || event >= end {
-                        return false;
-                    }
-                    let mut sibling = if event < split {
-                        split..end
-                    } else {
-                        start..split
-                    };
-                    sibling.any(|other| other % 2 == 1)
-                });
-            assert_eq!(candidate, event % 2 == 0 && !blocked);
+        let scopes = FlowIndex::new::<0>(&events, None);
+        let directions = LogicalDirections::new(&events);
+        for source_event in 0..8 {
+            let source = events.atom_at(source_event);
+            for color in 0..3 {
+                let candidates = direction_members(
+                    &events,
+                    &scopes,
+                    &directions,
+                    (source_event, source.lane, color),
+                );
+                for (event, &candidate) in candidates.iter().enumerate().take(events.len()) {
+                    let row = events.atom_at(event);
+                    // Independent interval specification: visit every declared
+                    // parallel, rather than using FlowIndex's parent chain.
+                    let blocked = parallel
+                        .iter()
+                        .enumerate()
+                        .any(|(bit, &(start, split, end))| {
+                            if selected & (2 << bit) == 0 || event < start || event >= end {
+                                return false;
+                            }
+                            let mut sibling = if event < split {
+                                split..end
+                            } else {
+                                start..split
+                            };
+                            sibling.any(|other| {
+                                let other = events.atom_at(other);
+                                other.lane == color
+                                    && (row.from == other.from
+                                        || row.from == other.to
+                                        || row.to == other.from
+                                        || row.to == other.to)
+                            })
+                        });
+                    assert_eq!(
+                        candidate,
+                        row.from == source.from
+                            && row.to == source.to
+                            && row.lane == source.lane
+                            && !blocked,
+                        "scopes={selected}, source={source_event}, color={color}, event={event}"
+                    );
+                }
+            }
         }
     }
 }
@@ -179,7 +203,6 @@ fn direction_candidates_use_physical_participants_of_delegated_roles() {
         &FlowIndex::new(&events, Some(&image)),
         &LogicalDirections::new(&events),
         (0, 0, 1),
-        &mut Participants::empty(events.len()),
     );
     assert!(!candidates[0]);
     assert!(!candidates[1]);
@@ -194,17 +217,18 @@ fn sparse_lane_classes_keep_the_full_wire_color_domain() {
         second.lane = old;
         let mut events = EffList::<2>::new().push(first).push(second);
         let scopes = FlowIndex::new::<0>(&events, None);
+        let receives = ReceiveLanes::new(&events);
         #[cfg(hibana_profile)]
         let mut counters = crate::g::profiling::Counters::new();
         assert_eq!(
             align_range(
                 &mut events,
-                &scopes,
-                None,
+                (&scopes, &receives, None),
                 (1, 2),
                 (0, 1),
                 (old as u16 + 1, 256),
                 None,
+                &mut CausalRoles::empty(),
                 #[cfg(hibana_profile)]
                 &mut counters,
             ),
@@ -234,17 +258,18 @@ fn a_lane_class_checks_its_last_receiver_before_certification() {
         .push(first)
         .push(last);
     let scopes = FlowIndex::new::<0>(&events, None);
+    let receives = ReceiveLanes::new(&events);
     #[cfg(hibana_profile)]
     let mut counters = crate::g::profiling::Counters::new();
     assert_eq!(
         align_range(
             &mut events,
-            &scopes,
-            None,
+            (&scopes, &receives, None),
             (2, 4),
             (0, 3),
             (8, 8),
             None,
+            &mut CausalRoles::empty(),
             #[cfg(hibana_profile)]
             &mut counters,
         ),

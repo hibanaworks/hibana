@@ -1018,7 +1018,7 @@ async fn resolved_choice_reopens_after_parallel_inner_repetition()
                 g::send::<1, 0, Msg<8, ()>>(),
                 g::seq(
                     g::send::<1, 2, Msg<9, ()>>(),
-                    g::send::<0, 2, Msg<10, ()>>(),
+                    g::send::<2, 0, Msg<10, ()>>(),
                 ),
             ),
         )
@@ -1045,7 +1045,11 @@ async fn resolved_choice_reopens_after_parallel_inner_repetition()
             &p1,
             ResolverRef::<0>::decision_state(&calls, |calls| {
                 calls.set(calls.get() + 1);
-                Ok(DecisionArm::Left)
+                Ok(if calls.get() == 1 {
+                    DecisionArm::Right
+                } else {
+                    DecisionArm::Left
+                })
             }),
         )
         .unwrap();
@@ -1056,6 +1060,8 @@ async fn resolved_choice_reopens_after_parallel_inner_repetition()
             rv2.enter(sid, &p2).unwrap(),
         );
         let run0 = async {
+            e0.recv::<Msg<8, ()>>().await?;
+            e0.recv::<Msg<10, ()>>().await?;
             for _ in 0..2 {
                 let branch = e0.offer().await?;
                 assert!([0, 4].contains(&branch.label()));
@@ -1085,6 +1091,9 @@ async fn resolved_choice_reopens_after_parallel_inner_repetition()
             Ok::<_, hibana::EndpointError>(())
         };
         let run1 = async {
+            assert_eq!(e1.offer().await?.label(), 8);
+            e1.send::<Msg<8, ()>>(&()).await?;
+            e1.send::<Msg<9, ()>>(&()).await?;
             for visit in 0..2 {
                 let branch = e1.offer().await?;
                 let label = branch.label();
@@ -1093,7 +1102,7 @@ async fn resolved_choice_reopens_after_parallel_inner_repetition()
                 let branch = e1.offer().await?;
                 assert_eq!(branch.label(), label);
                 drop(branch);
-                assert_eq!(calls.get(), visit + 1);
+                assert_eq!(calls.get(), visit + 2);
                 let [mut repeated, mut once] = e1.par()?;
                 async {
                     async {
@@ -1116,6 +1125,8 @@ async fn resolved_choice_reopens_after_parallel_inner_repetition()
             Ok::<_, hibana::EndpointError>(())
         };
         let run2 = async {
+            e2.recv::<Msg<9, ()>>().await?;
+            e2.send::<Msg<10, ()>>(&()).await?;
             for _ in 0..2 {
                 let branch = e2.offer().await?;
                 assert!([1, 5].contains(&branch.label()));
@@ -1150,7 +1161,7 @@ async fn resolved_choice_reopens_after_parallel_inner_repetition()
         })
         .await
         .unwrap();
-        assert_eq!(calls.get(), 2);
+        assert_eq!(calls.get(), 3);
     };
 
     Ok(())
@@ -1545,10 +1556,10 @@ fn outer_left_kills_nested_right_route_program<const ROLE: u8>() -> RoleProgram<
     ))
 }
 
-fn assert_join_blocked(rendered: &str) {
+fn assert_join_blocked(error: &hibana::EndpointError) {
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("OutOfOrder"),
-        "post-par join must be rejected by resident progress evidence: {rendered}"
+        error.is_unavailable(),
+        "a declared branch or incomplete join must be refused before I/O: {error:?}"
     );
 }
 
@@ -1593,7 +1604,7 @@ async fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations(
                         .send::<Msg<DEAD_RIGHT_B, u8>>(&0)
                         .await
                         .expect_err("unselected right nested-par B must be dead");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box(observer);
             }
@@ -1626,7 +1637,7 @@ async fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations(
                         .send::<Msg<DEAD_RIGHT_C, u8>>(&0)
                         .await
                         .expect_err("unselected right nested-par C must be dead");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box(observer);
             }
@@ -1684,7 +1695,7 @@ async fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
             .expect("register rendezvous");
         (async {
             {
-                let (mut local, mut worker, observer) = {
+                let (mut local, mut worker, mut observer) = {
                     let sid = SessionId::new(101);
                     (
                         rv.enter(
@@ -1721,9 +1732,30 @@ async fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
                         .send::<Msg<DEAD_RIGHT_POST, u8>>(&0)
                         .await
                         .expect_err("outer par join must still wait for sibling E");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
-                core::hint::black_box(observer);
+                local
+                    .send::<Msg<DEAD_RIGHT_E, u8>>(&2)
+                    .await
+                    .expect("send missing sibling");
+                local
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&3)
+                    .await
+                    .expect("send post after sibling");
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_E, u8>>()
+                        .await
+                        .expect("recv E"),
+                    2
+                );
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv post"),
+                    3
+                );
             }
             {
                 let (mut local, mut worker, mut observer) = {
@@ -1803,7 +1835,7 @@ async fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
                 (104, DEAD_RIGHT_C),
                 (105, DEAD_RIGHT_D),
             ] {
-                let (mut local, mut worker, observer) = {
+                let (mut local, mut worker, mut observer) = {
                     let sid = SessionId::new(sid);
                     (
                         rv.enter(
@@ -1842,8 +1874,18 @@ async fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
                     _ => unreachable!(),
                 }
                 .expect_err("nested right event must be dead after outer left selection");
-                assert_join_blocked(&format!("{rejected:?}"));
-                core::hint::black_box(observer);
+                assert_join_blocked(&rejected);
+                local
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
+                    .await
+                    .expect("continue selected left arm");
+                assert_eq!(
+                    observer
+                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .await
+                        .expect("recv selected post"),
+                    2
+                );
             }
             {
                 let (mut local, mut worker, mut observer) = {
@@ -1935,7 +1977,7 @@ async fn route_selected_left_keeps_entire_nested_parallel_path_live() {
                         .send::<Msg<ROUTE_PAR_R, u8>>(&0)
                         .await
                         .expect_err("right arm must be unselected after A commits");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box((side, observer));
             }
@@ -1967,7 +2009,7 @@ async fn route_selected_left_keeps_entire_nested_parallel_path_live() {
                         .send::<Msg<ROUTE_PAR_D, u8>>(&0)
                         .await
                         .expect_err("D must wait for B and C");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box((side, observer));
             }
@@ -2007,7 +2049,7 @@ async fn route_selected_left_keeps_entire_nested_parallel_path_live() {
                         .send::<Msg<ROUTE_PAR_D, u8>>(&0)
                         .await
                         .expect_err("D must still wait for C");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box(observer);
             }
@@ -2118,7 +2160,7 @@ async fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                         .send::<Msg<JOIN, u8>>(&0)
                         .await
                         .expect_err("join must wait for the sibling parallel lane");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box((side, observer));
             }
@@ -2158,7 +2200,7 @@ async fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                         .send::<Msg<JOIN, u8>>(&0)
                         .await
                         .expect_err("join must wait for the sibling lane response");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box(observer);
             }
@@ -2247,7 +2289,7 @@ async fn nested_parallel_join_requires_every_dependency_before_post() {
                         .send::<Msg<PAR_POST, u8>>(&0)
                         .await
                         .expect_err("Post must still wait for the left parallel branch");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box((worker, side));
             }
@@ -2272,7 +2314,7 @@ async fn nested_parallel_join_requires_every_dependency_before_post() {
                         .send::<Msg<PAR_D, u8>>(&0)
                         .await
                         .expect_err("D must wait for B");
-                    assert_join_blocked(&format!("{err:?}"));
+                    assert_join_blocked(&err);
                 }
                 core::hint::black_box((side, observer));
             }

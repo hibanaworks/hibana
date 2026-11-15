@@ -11,6 +11,76 @@ fn direction_index_matches_full_scans_for_every_subrange() {
     check_direction_indexes::<128>();
 }
 
+#[test]
+fn refreshed_receiver_groups_match_independent_subrange_scans() {
+    let mut events = EffList::<8>::new();
+    for (from, to, lane) in [
+        (1, 0, 0),
+        (255, 127, 255),
+        (64, 0, 1),
+        (127, 255, 0),
+        (1, 0, 255),
+        (255, 127, 1),
+        (0, 255, 255),
+        (127, 127, 1),
+    ] {
+        let mut row = event(from, to);
+        row.lane = lane;
+        events.push_event_mut(row);
+    }
+    let scopes = FlowIndex::new::<0>(&events, None);
+    let mut storage = [super::Direction::EMPTY; 8];
+    let mut storage_homogeneous = [false; 8];
+    let mut index =
+        super::ReceiveDirectionIndex::new(&events, &mut storage, &mut storage_homogeneous);
+    for position in 0..events.len() {
+        for color in [0, 1, 31, 128, 255] {
+            let mut row = events.atom_at(position);
+            row.lane = color;
+            events.replace_atom(position, row);
+            let mut changed = CausalRoles::empty();
+            if row.from != row.to {
+                changed.insert(row.to);
+            }
+            index.refresh(&events, &scopes, changed);
+            let mut any_change = false;
+            for query in 0..events.len() {
+                let seed = events.atom_at(query);
+                let homogeneous = seed.from != seed.to
+                    && (0..events.len()).all(|at| {
+                        let other = events.atom_at(at);
+                        other.from == other.to
+                            || other.to != seed.to
+                            || other.lane != seed.lane
+                            || other.from == seed.from
+                    });
+                assert_eq!(index.homogeneous_rows()[query], homogeneous);
+                any_change |= seed.from != seed.to && !homogeneous;
+                for start in 0..=events.len() {
+                    for end in start..=events.len() {
+                        let expected = (start..end)
+                            .rev()
+                            .find(|&candidate| {
+                                let other = events.atom_at(candidate);
+                                other.from != other.to
+                                    && other.to == seed.to
+                                    && other.lane == seed.lane
+                                    && other.from != seed.from
+                            })
+                            .map(|candidate| candidate + 1);
+                        assert_eq!(
+                            index.last_change(seed, (start, end)),
+                            expected,
+                            "changed={position} color={color} query={query} range={start}..{end}"
+                        );
+                    }
+                }
+            }
+            assert_eq!(index.has_changes(), any_change);
+        }
+    }
+}
+
 fn check_direction_indexes<const E: usize>() {
     let mut events = EffList::<E>::new();
     for (from, to, lane) in [
@@ -28,8 +98,23 @@ fn check_direction_indexes<const E: usize>() {
         events.push_event_mut(atom);
     }
     let mut storage = [super::Direction::EMPTY; E];
-    let index = super::ReceiveDirectionIndex::new(&events, &mut storage);
+    let mut storage_homogeneous = [false; E];
+    let index = super::ReceiveDirectionIndex::new(&events, &mut storage, &mut storage_homogeneous);
     assert!(index.has_changes());
+    let homogeneous = index.homogeneous_rows();
+    for (query, &actual) in homogeneous.iter().enumerate().take(events.len()) {
+        let seed = events.atom_at(query);
+        let expected = seed.from != seed.to
+            && (0..events.len()).all(|candidate| {
+                let row = events.atom_at(candidate);
+                row.from == row.to
+                    || row.to != seed.to
+                    || row.lane != seed.lane
+                    || row.from == seed.from
+            });
+        assert_eq!(actual, expected);
+    }
+
     for start in (0..=events.len()).rev().chain(0..=events.len()) {
         for end in start..=events.len() {
             for query in 0..events.len() {
@@ -324,6 +409,7 @@ fn bounded_obligations_match_full_scans_across_routes_parallel_and_reentry() {
                     goal: FlowGoal::ReceiveLane(atom, usize::MAX),
                     body_start: 0,
                     iteration_start: 0,
+                    choice_entry: None,
                 };
                 ordinary &= flow.advance(range, CausalRoles::empty()).is_some();
                 let closure = CausalFlow {

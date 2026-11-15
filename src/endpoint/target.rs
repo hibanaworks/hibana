@@ -13,6 +13,7 @@ pub(super) struct BorrowedEndpoint {
     pub(super) ptr: NonNull<KernelEndpointHeader>,
     pub(super) handle: EndpointHandle,
     pub(super) region: OperationRegion,
+    pub(super) held: Option<super::peers::HeldViews>,
 }
 
 enum TargetKind<'r, const ROLE: u8, D> {
@@ -91,6 +92,7 @@ impl<'e, 'r, const ROLE: u8, D> OperationTarget<'e, 'r, ROLE, D> {
                     OperationHandle {
                         endpoint: endpoint.owner.handle,
                         region: OperationRegion::WHOLE,
+                        held: None,
                     },
                 )
             }
@@ -103,6 +105,7 @@ impl<'e, 'r, const ROLE: u8, D> OperationTarget<'e, 'r, ROLE, D> {
                     OperationHandle {
                         endpoint: arm.handle,
                         region: arm.region,
+                        held: arm.held,
                     },
                 )
             }

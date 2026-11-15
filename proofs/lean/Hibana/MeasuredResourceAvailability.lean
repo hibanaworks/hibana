@@ -39,6 +39,41 @@ theorem a_source_held_view_wait_has_an_unfinished_required_predecessor
       · exact located.trans (congrArg some (Prod.ext (beq_iff_eq.mp eventAt) rfl))
       · simpa only [located] using outside.2
 
+/-- An actual exclusive Rust borrow can retain several views. This predicate
+only classifies an already-unready source action; it grants no authority. -/
+def sourceHeldViewsPending (data : DecodedActorOrder) (path : NormalizedPath)
+    (snapshot : ActorProgressObservation) (target : DecodedActorRow)
+    (held : List Nat) : Bool :=
+  held.any (sourceHeldViewPending data path snapshot target)
+
+theorem a_source_held_group_has_an_actual_prerequisite
+    {data : DecodedActorOrder} {path : NormalizedPath} {snapshot : ActorProgressObservation}
+    {target : DecodedActorRow} {held : List Nat}
+    (blocked : sourceHeldViewsPending data path snapshot target held = true) :
+    ∃ role ∈ held, ∃ prior binding, prior ∈ data.activeRows path ∧
+      snapshot.doneState.done prior.eventId = false ∧
+      prior.eventId ∈ data.sourcePredecessors path target.eventId ∧
+      path.bindings.find? (fun entry => entry.1 == prior.actionId.event) =
+        some (prior.actionId.event, binding) ∧
+      sourceActionRequiresView role binding prior.actionId.side = true := by
+  obtain ⟨role, member, pending⟩ := List.any_eq_true.mp blocked
+  exact ⟨role, member, a_source_held_view_wait_has_an_unfinished_required_predecessor pending⟩
+
+theorem a_source_held_group_cannot_make_a_ready_action_unavailable
+    {data : DecodedActorOrder} {path : NormalizedPath} {snapshot : ActorProgressObservation}
+    {target : DecodedActorRow} {held : List Nat}
+    (blocked : sourceHeldViewsPending data path snapshot target held = true) :
+    sourceRowReady data path snapshot target = false := by
+  obtain ⟨_, _, prior, _, _, pending, prerequisite, _, _⟩ :=
+    a_source_held_group_has_an_actual_prerequisite blocked
+  cases ready : sourceRowReady data path snapshot target with
+  | false => rfl
+  | true =>
+      have done := List.all_eq_true.mp (Bool.and_eq_true_iff.mp ready).2
+        prior.eventId prerequisite
+      rw [pending] at done
+      contradiction
+
 /-- If a required use is ready, every distinct unfinished loan is after it.
 The event coordinates do not order independent work: the order is recovered
 from accepted resource ownership and the source dependency relation. -/

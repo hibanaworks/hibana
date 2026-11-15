@@ -1,5 +1,5 @@
 use super::commit_delta::PreparedCommitDelta;
-use super::{Lane, LaneGuard, Port, ResidentActor, SendResult, Transport, lane_port};
+use super::{Lane, LaneGuard, Port, ResidentActor, Transport, lane_port};
 
 mod commit;
 pub(crate) use commit::{CommitDelta, CommitEventRow, CommitRow};
@@ -31,11 +31,6 @@ impl<'r> PendingSendIo<'r> {
     pub(in crate::endpoint::kernel) fn lane_wire(&self) -> u8 {
         self.lane.as_wire()
     }
-}
-
-pub(crate) enum SendInitOutcome<'r> {
-    Ready(SendResult<SendCommitOutcome<'r>>),
-    Pending { pending: PendingSendIo<'r> },
 }
 
 pub(crate) struct SendCommitOutcome<'rv> {

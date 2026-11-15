@@ -36,6 +36,47 @@ theorem symbolic_owner_flow_preserves_an_untouched_resource
         exact untouched entry (List.mem_cons_of_mem head member)
       simpa only [ownerAfterBindings, if_neg atHead] using (ih (owner := owner) atTail)
 
+/-- Once a resource reaches a sink, a source-conformant suffix cannot hand it
+off again. `legal` ties each handoff's sender to the preceding ownership fold;
+`sink` excludes that actor from every possible outgoing handoff in the suffix.
+The runtime uses a mandatory causal notice to observe entry into this suffix.
+That Rust/observation correspondence is a separate obligation. -/
+theorem a_terminal_resource_owner_cannot_have_a_later_handoff
+    {key : EndpointKey} {owner : OwnerExpr} {bindings : List (Nat × SymbolicBinding)}
+    (assignment : EndpointKey → Nat) (actor : Nat)
+    (initial : owner.eval assignment = actor)
+    (legal : ∀ earlier entry suffix, bindings = earlier ++ entry :: suffix →
+      entry.2.message.payload = .endpoint key →
+      entry.2.sender.eval assignment = (ownerAfterBindings key owner earlier).eval assignment)
+    (sink : ∀ entry ∈ bindings, entry.2.message.payload = .endpoint key →
+      entry.2.sender.eval assignment ≠ actor) :
+    (∀ entry ∈ bindings, entry.2.message.payload ≠ .endpoint key) ∧
+      (ownerAfterBindings key owner bindings).eval assignment = actor := by
+  induction bindings with
+  | nil => exact ⟨by simp, initial⟩
+  | cons head tail ih =>
+      have untouched : head.2.message.payload ≠ .endpoint key := by
+        intro moved
+        have sender := legal [] head tail rfl moved
+        exact sink head (by simp) moved (sender.trans initial)
+      have tailLegal : ∀ earlier entry suffix, tail = earlier ++ entry :: suffix →
+          entry.2.message.payload = .endpoint key →
+          entry.2.sender.eval assignment = (ownerAfterBindings key owner earlier).eval assignment := by
+        intro earlier entry suffix equal moved
+        have sender := legal (head :: earlier) entry suffix (by simp [equal]) moved
+        simpa only [ownerAfterBindings, if_neg untouched] using sender
+      have tailSink : ∀ entry ∈ tail, entry.2.message.payload = .endpoint key →
+          entry.2.sender.eval assignment ≠ actor := by
+        intro entry member
+        exact sink entry (List.mem_cons_of_mem head member)
+      obtain ⟨rest, final⟩ := ih tailLegal tailSink
+      refine ⟨?_, ?_⟩
+      · intro entry member
+        rcases List.mem_cons.mp member with same | member
+        · simpa only [same] using untouched
+        · exact rest entry member
+      · simpa only [ownerAfterBindings, if_neg untouched] using final
+
 /-- The normalizer's owner expression is exactly the source's per-resource
 transfer fold. Independent parallel changes commute because the branches
 cannot transfer/use the same resource. This adds no ordering between them. -/

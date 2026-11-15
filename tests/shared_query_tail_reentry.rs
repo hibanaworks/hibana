@@ -267,6 +267,7 @@ async fn every_four_visit_query_and_reply_history_preserves_parallel_release_and
 async fn a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query() {
     let p0 = program::<0>();
     let p1 = program::<1>();
+    let p2 = program::<2>();
     for source in 0..2 {
         for reply in 0..2 {
             let mut bytes = [0; 32 * 1024];
@@ -277,6 +278,7 @@ async fn a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query() {
                 .unwrap();
             let mut app = kit.enter(SessionId::new(1), &p0).unwrap();
             let mut owner = kit.enter(SessionId::new(1), &p1).unwrap();
+            let mut control = kit.enter(SessionId::new(1), &p2).unwrap();
             {
                 if source == 0 {
                     app.send::<Msg<112, ()>>(&()).await.unwrap();
@@ -304,14 +306,22 @@ async fn a_completed_reply_cannot_be_reused_without_receiving_a_fresh_query() {
                     .recv::<Msg<113, u32>>()
                     .await
                     .unwrap();
+                let before = kit.tap().checkpoint();
                 let error = if reply == 0 {
                     owner.send::<Msg<113, u32>>(&2).await.unwrap_err()
                 } else {
                     owner.send::<Msg<114, ()>>(&()).await.unwrap_err()
                 };
-                assert!(format!("{error:?}").contains("OutOfOrder"));
-                let poisoned = owner.send::<Msg<120, ()>>(&()).await.unwrap_err();
-                assert!(format!("{poisoned:?}").contains("SessionFault"));
+                assert!(error.is_unavailable(), "{error:?}");
+                assert_eq!(kit.tap().checkpoint(), before);
+                owner.send::<Msg<120, ()>>(&()).await.unwrap();
+                control.recv::<Msg<120, ()>>().await.unwrap();
+                control.send::<Msg<121, ()>>(&()).await.unwrap();
+                owner.recv::<Msg<121, ()>>().await.unwrap();
+                app.send::<Msg<112, ()>>(&()).await.unwrap();
+                owner.recv::<Msg<112, ()>>().await.unwrap();
+                owner.send::<Msg<113, u32>>(&3).await.unwrap();
+                assert_eq!(app.recv::<Msg<113, u32>>().await.unwrap(), 3);
             }
         }
     }

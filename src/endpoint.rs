@@ -61,9 +61,12 @@ mod generated_protocol_shapes {
     };
     include!(env!("HIBANA_GENERATED_PROTOCOL_SHAPES"));
 }
+mod peers;
 mod transfer;
 
 pub use self::error::EndpointError;
 pub(crate) use self::error::{EndpointOp, RecvError, RecvResult, SendError, SendResult};
-pub use self::parallel::ParallelEndpoint;
+pub use self::parallel::EndpointBorrow;
+pub use self::peers::EndpointPeers;
 pub use self::public_types::{Endpoint, RouteBranch};
+pub use self::send::SendRequest;

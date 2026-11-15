@@ -21,7 +21,7 @@ def RustDescriptorImage.expectedOwnedReceipts?
 def RustDescriptorImage.decodeOwnedReceipts?
     (image : RustDescriptorImage) : Option (List Nat) :=
   (List.range image.ownedReceiptCount).mapM fun row =>
-    readU16LE? image.roleBytes (image.roleOwnedReceiptOffset + row * productionRoleU16Stride)
+    readU16LE? image.roleBytes (image.roleOwnedReceiptOffset + row * productionRoleOwnedReceiptStride)
 
 def RustDescriptorImage.decodeEntryReceipts?
     (image : RustDescriptorImage) (entry : Nat) : Option (Nat × Nat × Nat) := do

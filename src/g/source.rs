@@ -360,12 +360,30 @@ pub(super) fn profile<Steps: ProgramShape, const CAPACITY: usize>()
         actor_decisions: actors.map_or(0, SourceActorImage::decision_count),
         lanes,
         receive_causal,
+        receive_index_builds: counters.receive_index_builds,
+        refinement_event_visits: counters.refinement_event_visits,
+        refinement_neighbor_visits: counters.refinement_neighbor_visits,
         full_inspections: counters.full_inspections,
         resumed_inspections: counters.resumed_inspections,
         alignment_attempts: counters.alignment_attempts,
         recolorings: counters.recolorings,
         alignment_pair_queries: counters.alignment_pair_queries,
         alignment_candidate_inspections: counters.alignment_candidate_inspections,
+    }
+}
+
+#[cfg(hibana_profile)]
+pub(super) fn profile_reentry_conflict<Steps: ProgramShape, const CAPACITY: usize>()
+-> Option<(usize, u16, u8)> {
+    match &SourceActors::<Steps, CAPACITY>::OWNERSHIP {
+        Ok(Some(ownership)) => ownership
+            .actors
+            .reentry_conflict(&Steps::SOURCE_NODE, &ownership.facts)
+            .map(|(start, key)| (start, key.component, key.role)),
+        Ok(None) => None,
+        Err(error) => super::diagnostic_message::panic_diagnostic(
+            super::ProjectionDiagnostic::from_ownership_error(*error),
+        ),
     }
 }
 

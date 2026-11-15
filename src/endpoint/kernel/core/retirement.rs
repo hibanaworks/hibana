@@ -141,6 +141,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                         operations: &view.operations,
                         views: self.views,
                         region: retired.region,
+                        held: self.held,
                     };
                     sibling.finish_retired_operation(retired.kind, &mut waiters);
                 }
@@ -170,6 +171,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                         operations: &view.operations,
                         views: self.views,
                         region: OperationRegion::WHOLE,
+                        held: None,
                     };
                     sibling.clear_endpoint_waiter(&mut waiters);
                     sibling.retire_view();

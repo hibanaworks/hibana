@@ -276,11 +276,16 @@ impl RoleImageRef {
         if self.columns.roll_entry_view_count == 0 && count != 0 {
             invalid_resident_descriptor();
         }
+        if count == 0 {
+            return [PackedLaneRange::new(0, 0); 256];
+        }
         let mut previous = None;
         let mut counts = [0u16; 256];
+        let terminals = super::source_terminal_transfers(self.program);
         let mut index = 0;
         while index < count {
-            let step = self.owned_receipt(index) as usize;
+            let (step, retirement) = self.owned_receipt(index);
+            let step = step as usize;
             if step >= self.local_step_count()
                 || !matches!(
                     self.local_step_direction(step),
@@ -295,6 +300,9 @@ impl RoleImageRef {
             else {
                 invalid_resident_descriptor();
             };
+            if let Some(witness) = retirement {
+                self.validate_receipt_retirement(role, witness, terminals[role as usize]);
+            }
             if let Some((prior_role, prior_step)) = previous
                 && (role < prior_role || (role == prior_role && step <= prior_step))
             {

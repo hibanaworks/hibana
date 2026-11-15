@@ -47,7 +47,11 @@ async fn delegated_resolver_audit_does_not_require_an_inactive_arms_port()
             .filter(|row| row.id() == tap::PROJECTED_SEND && row.arg0() as u8 == label)
             .map(|row| (row.arg0() >> 8) as u8)
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(lanes, std::collections::BTreeSet::from([0, 1]));
+        assert_eq!(
+            lanes.len(),
+            2,
+            "both source occurrences need distinct ports: {lanes:?}"
+        );
     }
     for selected in [DecisionArm::Left, DecisionArm::Right] {
         let mut slab = [0; 32 * 1024];

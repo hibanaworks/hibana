@@ -9,4 +9,4 @@ error[E0505]: cannot move out of `db` because it is borrowed
   |                                               ^^ move out of `db` occurs here
 6 |     first.send::<g::Msg<2, u32>>(&1).await.unwrap();
 7 | }
-  | - borrow might be used here, when `first` is dropped and runs the `Drop` code for type `ParallelEndpoint`
+  | - borrow might be used here, when `first` is dropped and runs the `Drop` code for type `EndpointBorrow`

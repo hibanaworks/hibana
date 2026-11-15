@@ -1,6 +1,8 @@
 //! Construction-only index of actual owned receive rows, grouped by resource.
 //! Entry rows share these immutable ranges; no holder or completion state is kept.
-use super::{PackedLaneRange, ROLE_IMAGE_U16_STRIDE, RoleImageBytes, RoleImageColumns, projection};
+use super::{
+    PackedLaneRange, ROLE_IMAGE_OWNED_RECEIPT_STRIDE, RoleImageBytes, RoleImageColumns, projection,
+};
 use crate::{
     eff::EventPayload,
     global::{const_dsl::EffList, role_program::image_impl::event_rows::RoleLocalDirection},
@@ -17,6 +19,7 @@ impl<const N: usize> RoleImageBytes<N> {
         if columns.owned_receipt_count == 0 {
             return ranges;
         }
+        let retirements = rows.receipt_retirements(effects);
         let mut counts = [0u16; 256];
         let mut event = 0;
         while event < effects.len() {
@@ -57,9 +60,13 @@ impl<const N: usize> RoleImageBytes<N> {
                 ) && let EventPayload::Endpoint(role) = effects.atom_at(event).payload
                 {
                     let index = ranges[role as usize].start() + counts[role as usize] as usize;
-                    let byte =
-                        Self::column_offset(columns.owned_receipts(), index, ROLE_IMAGE_U16_STRIDE);
+                    let byte = Self::column_offset(
+                        columns.owned_receipts(),
+                        index,
+                        ROLE_IMAGE_OWNED_RECEIPT_STRIDE,
+                    );
                     self.write_u16(byte, local as u16);
+                    self.write_u16(byte + 2, retirements[role as usize]);
                     counts[role as usize] += 1;
                 }
                 local += 1;

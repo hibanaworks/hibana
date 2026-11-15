@@ -26,6 +26,25 @@ pub(super) struct OwnedSendFuture<'e, 'r, const ROLE: u8, const RESOURCE: u8> {
 }
 
 impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> OwnedSendFuture<'e, 'r, ROLE, RESOURCE> {
+    fn arm(&mut self) -> crate::endpoint::SendResult<Option<SendInput>> {
+        match self.phase {
+            OwnedSendPhase::Direct(label) | OwnedSendPhase::Branch(label) => {
+                if let Err(error) = self
+                    .endpoint
+                    .begin_public_send_state(label, EventPayload::Endpoint(RESOURCE))
+                {
+                    self.phase = OwnedSendPhase::Done;
+                    return Err(error);
+                }
+                Ok(Some(SendInput::Endpoint(
+                    super::EndpointTransfer::borrowed(&self.payload.owner),
+                )))
+            }
+            OwnedSendPhase::Pending => Ok(None),
+            OwnedSendPhase::Done => crate::invariant(),
+        }
+    }
+
     pub(super) fn direct(
         endpoint: super::super::target::OperationTarget<'e, 'r, ROLE>,
         label: u8,
@@ -72,31 +91,19 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> Future
     type Output = Result<(), EndpointError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        // SAFETY: this future holds the unique carrier Endpoint borrow until
-        // completion/drop, and owns the distinct resource Endpoint value.
-        let endpoint = &mut this.endpoint;
-        let input = match this.phase {
-            OwnedSendPhase::Direct(label) | OwnedSendPhase::Branch(label) => {
-                if let Err(error) =
-                    endpoint.begin_public_send_state(label, EventPayload::Endpoint(RESOURCE))
-                {
-                    this.phase = OwnedSendPhase::Done;
-                    let result = Poll::Ready(Err(EndpointError::new(EndpointOp::Send, error)));
-                    #[cfg(all(test, hibana_repo_tests))]
-                    crate::endpoint::proof_snapshot::owned_future::record_poll(
-                        &this.payload.owner,
-                        result,
-                    );
-                    return result;
-                }
-                Some(SendInput::Endpoint(super::EndpointTransfer::borrowed(
+        let input = match this.arm() {
+            Ok(input) => input,
+            Err(error) => {
+                let result = Poll::Ready(Err(EndpointError::new(EndpointOp::Send, error)));
+                #[cfg(all(test, hibana_repo_tests))]
+                crate::endpoint::proof_snapshot::owned_future::record_poll(
                     &this.payload.owner,
-                )))
+                    result,
+                );
+                return result;
             }
-            OwnedSendPhase::Pending => None,
-            OwnedSendPhase::Done => crate::invariant(),
         };
-        let result = match endpoint.poll_send(cx, input) {
+        let result = match this.endpoint.poll_send(cx, input) {
             Poll::Pending => {
                 this.phase = OwnedSendPhase::Pending;
                 Poll::Pending
@@ -113,6 +120,28 @@ impl<'e, 'r, const ROLE: u8, const RESOURCE: u8> Future
         #[cfg(all(test, hibana_repo_tests))]
         crate::endpoint::proof_snapshot::owned_future::record_poll(&this.payload.owner, result);
         result
+    }
+}
+
+impl<const ROLE: u8, const RESOURCE: u8> crate::endpoint::send::seal::Sealed
+    for OwnedSendFuture<'_, '_, ROLE, RESOURCE>
+{
+}
+
+impl<const ROLE: u8, const RESOURCE: u8> crate::SendRequest
+    for OwnedSendFuture<'_, '_, ROLE, RESOURCE>
+{
+    fn poll_admission(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let input = this
+            .arm()
+            .map_err(|error| EndpointError::new(EndpointOp::Send, error))?;
+        let poll = this.endpoint.poll_send_admission(cx, input);
+        this.phase = match poll {
+            Poll::Ready(Err(_)) => OwnedSendPhase::Done,
+            Poll::Pending | Poll::Ready(Ok(())) => OwnedSendPhase::Pending,
+        };
+        poll.map_err(|error| EndpointError::new(EndpointOp::Send, error))
     }
 }
 

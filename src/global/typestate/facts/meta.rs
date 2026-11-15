@@ -7,18 +7,20 @@ use super::{RouteChoiceMark, StateIndex};
 
 /// The logical view and message family requested by one endpoint operation.
 #[derive(Clone, Copy)]
-pub(crate) struct MessageSelector {
+pub(crate) struct MessageSelector<'borrow> {
     pub(crate) role: u8,
     pub(crate) label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,
+    pub(crate) borrowed: Option<&'borrow dyn Fn(u8) -> bool>,
 }
 
-impl MessageSelector {
+impl MessageSelector<'_> {
     pub(crate) const fn new(role: u8, label: u8, payload_kind: crate::eff::EventPayload) -> Self {
         Self {
             role,
             label,
             payload_kind,
+            borrowed: None,
         }
     }
 }

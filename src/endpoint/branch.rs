@@ -57,7 +57,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     pub fn send<'a, M>(
         self,
         payload: <M::Payload as crate::global::PayloadSpec>::SendArgument<'a, 'r>,
-    ) -> impl core::future::Future<Output = Result<(), EndpointError>> + 'a + use<'a, 'e, 'r, M, ROLE>
+    ) -> impl super::SendRequest + 'a + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
         M::Payload: 'a,

@@ -52,6 +52,44 @@ impl<const ROLE_BYTES: usize> LaneCompatibility<'_, ROLE_BYTES> {
         }
     }
 
+    /// The least allowed color at or after `start`. Constraint rows already
+    /// encode adjacency as bits; skip empty bytes instead of probing each lane.
+    const fn next_allowed(
+        &self,
+        right: u16,
+        start: u16,
+        span: u16,
+        seen: &[u8; BYTE_DOMAIN_MASK_BYTES],
+    ) -> Option<u16> {
+        match self {
+            Self::Constraints { rows, row_bytes } => {
+                let mut byte = start as usize / 8;
+                let mut mask = u8::MAX << (start % 8);
+                while byte < *row_bytes {
+                    let bits = rows[right as usize * *row_bytes + byte] & mask & !seen[byte];
+                    if bits != 0 {
+                        let lane = byte as u16 * 8 + bits.trailing_zeros() as u16;
+                        return if lane < span { Some(lane) } else { None };
+                    }
+                    byte += 1;
+                    mask = u8::MAX;
+                }
+                None
+            }
+            Self::Parallel { .. } => {
+                let mut left = start;
+                while left < span {
+                    if seen[left as usize / 8] & (1 << (left % 8)) == 0 && self.allows(right, left)
+                    {
+                        return Some(left);
+                    }
+                    left += 1;
+                }
+                None
+            }
+        }
+    }
+
     const fn validate(&self, left: u16, right: u16) {
         if let Self::Constraints { rows, row_bytes } = self
             && (*row_bytes != (left as usize).div_ceil(8)
@@ -84,7 +122,7 @@ const fn augment_lane_matching<const ROLE_BYTES: usize>(
     compatibility: &LaneCompatibility<'_, ROLE_BYTES>,
     left_lane_span: u16,
     right_lane: u16,
-    seen_left: &mut [bool; BYTE_DOMAIN],
+    seen_left: &mut [u8; BYTE_DOMAIN_MASK_BYTES],
     right_to_left: &mut [u16; BYTE_DOMAIN],
     left_to_right: &mut [u16; BYTE_DOMAIN],
 ) -> bool {
@@ -96,16 +134,11 @@ const fn augment_lane_matching<const ROLE_BYTES: usize>(
 
     loop {
         let active_right = right_stack[depth];
-        let mut selected = None;
-        while next_left[depth] < left_lane_span {
-            let left_lane = next_left[depth];
-            next_left[depth] += 1;
-            let left_slot = left_lane as usize;
-            if !seen_left[left_slot] && compatibility.allows(active_right, left_lane) {
-                seen_left[left_slot] = true;
-                selected = Some(left_lane);
-                break;
-            }
+        let selected =
+            compatibility.next_allowed(active_right, next_left[depth], left_lane_span, seen_left);
+        if let Some(left_lane) = selected {
+            next_left[depth] = left_lane + 1;
+            seen_left[left_lane as usize / 8] |= 1 << (left_lane % 8);
         }
 
         match selected {
@@ -166,11 +199,42 @@ pub(super) const fn maximum_lane_matching<const ROLE_BYTES: usize>(
     }
     compatibility.validate(left_lane_span, right_lane_span);
 
+    // A lane's participant set is immutable during matching. Materialize its
+    // adjacency once instead of repeating role-set intersections along every
+    // alternating path. Both inputs use the same bit-row search below.
+    let mut parallel_rows = [0u8; BYTE_DOMAIN * BYTE_DOMAIN_MASK_BYTES];
+    let compatibility: LaneCompatibility<'_, 0> = match compatibility {
+        LaneCompatibility::Parallel { left, right } => {
+            let row_bytes = (left_lane_span as usize).div_ceil(8);
+            let mut r = 0;
+            while r < right_lane_span {
+                let participants = right.endpoint_set(r as u8);
+                let mut l = 0;
+                while l < left_lane_span {
+                    if participants.is_disjoint(left.endpoint_set(l as u8)) {
+                        parallel_rows[r as usize * row_bytes + l as usize / 8] |= 1 << (l % 8);
+                    }
+                    l += 1;
+                }
+                r += 1;
+            }
+            LaneCompatibility::Constraints {
+                rows: parallel_rows
+                    .split_at(row_bytes * right_lane_span as usize)
+                    .0,
+                row_bytes,
+            }
+        }
+        LaneCompatibility::Constraints { rows, row_bytes } => {
+            LaneCompatibility::Constraints { rows, row_bytes }
+        }
+    };
+
     let mut right_to_left = [NO_MATCH; BYTE_DOMAIN];
     let mut left_to_right = [NO_MATCH; BYTE_DOMAIN];
     let mut right_lane = 0u16;
     while right_lane < right_lane_span {
-        let mut seen_left = [false; BYTE_DOMAIN];
+        let mut seen_left = [0; BYTE_DOMAIN_MASK_BYTES];
         let _ = augment_lane_matching(
             &compatibility,
             left_lane_span,

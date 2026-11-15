@@ -2,6 +2,36 @@ use super::*;
 use crate::Endpoint;
 use crate::global::role_program::RoleLocalDirection;
 
+#[test]
+fn resident_actor_image_checks_both_sides_before_publication() {
+    type Loan = Msg<1, Endpoint<'static, 2>>;
+    let global = g::seq(g::send::<0, 1, Loan>(), g::send::<2, 1, Msg<2, u32>>());
+    let image = project::<1>(&global).role_image_ref();
+    assert_eq!(image.local_step_count(), 3);
+    assert!(image.local_step_node(1).unwrap().action().is_send());
+    assert!(image.local_step_node(2).unwrap().action().is_recv());
+    for (row, direction) in [
+        (2, RoleLocalDirection::Send),
+        (1, RoleLocalDirection::Local),
+    ] {
+        reject(image, |bytes, columns, _| {
+            let flags = columns.events.offset as usize
+                + row * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE
+                + 8;
+            bytes[flags] = (bytes[flags] & 1) | ((direction as u8) << 1);
+        });
+    }
+    let bytes = Box::new(copy(image));
+    assert!(
+        catch_unwind(|| {
+            // SAFETY: the image is discarded here, while its backing Box is alive.
+            let temporary = unsafe { &*core::ptr::from_ref(bytes.as_ref()) };
+            RoleImageRef::new(image.program, 0, image.facts, image.columns, temporary);
+        })
+        .is_err()
+    );
+}
+
 // Check the event validator alone, so an unrelated index or layout rejection
 // cannot conceal an accepted missing, duplicated, reordered or wrong-side row.
 fn accepts(original: &RoleImageRef, selected: &[(usize, RoleLocalDirection)]) -> bool {

@@ -436,12 +436,16 @@ async fn direct_recv_rejects_when_all_lane_heads_have_other_contracts() {
             let mut receiver = rv.enter(session, &receiver_program).unwrap();
             (a.send::<RightA>(&21)).await.unwrap();
             (b.send::<RightB>(&42)).await.unwrap();
-            let mut receive = core::pin::pin!(receiver.recv::<Shared>());
-            let mut context = Context::from_waker(Waker::noop());
-            let Poll::Ready(Err(error)) = receive.as_mut().poll(&mut context) else {
-                panic!("a wrong contract must be rejected when every lane head excludes it");
-            };
-            assert!(format!("{error:?}").contains("PhaseInvariant"));
+            {
+                let mut receive = core::pin::pin!(receiver.recv::<Shared>());
+                let mut context = Context::from_waker(Waker::noop());
+                let Poll::Ready(Err(error)) = receive.as_mut().poll(&mut context) else {
+                    panic!("a wrong contract must be rejected when every lane head excludes it");
+                };
+                assert!(error.is_unavailable(), "{error:?}");
+            }
+            assert_eq!(receiver.recv::<RightA>().await.unwrap(), 21);
+            assert_eq!(receiver.recv::<RightB>().await.unwrap(), 42);
         };
     };
 }

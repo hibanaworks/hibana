@@ -196,6 +196,7 @@ struct Obligation<'a, const E: usize, const D: usize> {
     earlier: usize,
     end: usize,
     repeated: Option<RollBodyRange>,
+    passive_entry: Option<usize>,
 }
 
 impl<const E: usize, const D: usize> Obligation<'_, E, D> {
@@ -255,6 +256,98 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
     ) -> Result<Option<usize>, NeedChoice> {
         let earlier = self.events.atom_at(self.earlier);
         let body = self.range();
+        let mut choice_entry = None;
+        if let Some(entry) = self.passive_entry {
+            let later = match target {
+                Some(later) => later,
+                None => crate::invariant(),
+            };
+            let actor = match actors.receiver(self.earlier, earlier, 0) {
+                Ok(actor) => actor,
+                Err(choice) => return Err(choice),
+            };
+            let next_actor = match actors.receiver(later, self.events.atom_at(later), body.len()) {
+                Ok(actor) => actor,
+                Err(choice) => return Err(choice),
+            };
+            if actor != next_actor {
+                return Ok(None);
+            }
+            let mut local = CausalRoles::empty();
+            local.insert(actor);
+            let current_send = match actors.sender_known(self.earlier, earlier, 0, &local) {
+                Ok(value) => value,
+                Err(choice) => return Err(choice),
+            };
+            let next_send =
+                match actors.sender_known(later, self.events.atom_at(later), body.len(), &local) {
+                    Ok(value) => value,
+                    Err(choice) => return Err(choice),
+                };
+            // Co-resident logical views have a local send before their
+            // receive row. The actor chooses that action itself; it is not
+            // an unseen first incoming branch from another actor.
+            if current_send || next_send {
+                return Ok(None);
+            }
+            let scope = self.scope_offsets.scopes[entry];
+            let current_arm = if self.earlier < scope.split as usize {
+                FlowRange {
+                    start: scope.start as usize,
+                    end: scope.split as usize,
+                    marker_floor: entry + 1,
+                }
+            } else {
+                FlowRange {
+                    start: scope.split as usize,
+                    end: scope.end as usize,
+                    marker_floor: entry + 1,
+                }
+            };
+            let next_arm = if later < scope.split as usize {
+                FlowRange {
+                    start: scope.start as usize,
+                    end: scope.split as usize,
+                    marker_floor: entry + 1,
+                }
+            } else {
+                FlowRange {
+                    start: scope.split as usize,
+                    end: scope.end as usize,
+                    marker_floor: entry + 1,
+                }
+            };
+            // A passive actor chooses its first arm from the incoming frame.
+            // A prior local action in that arm instead fixes its continuation.
+            let current = match self.actor_precedes(actors, current_arm, self.earlier, actor, 0) {
+                Ok(value) => value,
+                Err(choice) => return Err(choice),
+            };
+            let next = match self.actor_precedes(actors, next_arm, later, actor, body.len()) {
+                Ok(value) => value,
+                Err(choice) => return Err(choice),
+            };
+            if current || next {
+                return Ok(None);
+            }
+            choice_entry = Some((current_arm.start - body.start, entry + 1, actor));
+            let fenced = match self.fifo_fence(
+                actors,
+                FlowRange {
+                    start: body.start,
+                    end: body.end,
+                    marker_floor: 0,
+                },
+                self.events.atom_at(later),
+                false,
+            ) {
+                Ok((_, fenced)) => fenced,
+                Err(choice) => return Err(choice),
+            };
+            if fenced {
+                return Ok(None);
+            }
+        }
         let range = FlowRange {
             start: body.start,
             end: body.end,
@@ -273,6 +366,7 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             },
             body_start: body.start,
             iteration_start: 0,
+            choice_entry,
         };
         let facts =
             match flow.advance_as(FlowRange { start, ..range }, CausalRoles::empty(), actors) {
@@ -299,6 +393,7 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
                 None => FlowGoal::ReceiveLane(earlier, body.len() + self.end - body.start),
             },
             iteration_start: body.len(),
+            choice_entry: None,
             ..flow
         };
         match next.advance_as(range, facts, actors) {
@@ -306,6 +401,188 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
             Ok(Err(event)) => Ok(Some(body.start + event - body.len())),
             Err(choice) => Err(choice),
         }
+    }
+
+    /// A mandatory receive in the current arm or after it, on the next
+    /// entry's exact wire direction, fences that later frame. Consuming a
+    /// sibling's guarded input also identifies the old arm before reentry.
+    /// Parallel arms share their input; an unfixed route requires both arms.
+    const fn fifo_fence(
+        &self,
+        actors: &ActorMap<'_, E, D>,
+        mut range: FlowRange,
+        entry: EffAtom,
+        mut seen: bool,
+    ) -> Result<(bool, bool), NeedChoice> {
+        if let Some(index) = self.passive_entry {
+            let scope = self.scope_offsets.scopes[index];
+            let start = if self.earlier < scope.split as usize {
+                scope.start as usize
+            } else {
+                scope.split as usize
+            };
+            if range.start == start && range.marker_floor == index + 1 {
+                seen = true;
+            }
+        }
+        while range.start < range.end {
+            if let Some((index, kind, split, end)) = self.scope_offsets.scope_at(&mut range) {
+                let left = FlowRange {
+                    start: range.start,
+                    end: split,
+                    marker_floor: index + 1,
+                };
+                let right = FlowRange {
+                    start: split,
+                    end,
+                    marker_floor: index + 1,
+                };
+                let known = if matches!(kind, ScopeKind::Route) {
+                    actors.selected_route(range.start, split, end, 0)
+                } else {
+                    None
+                };
+                let selected = if matches!(kind, ScopeKind::Roll)
+                    || matches!(kind, ScopeKind::Route)
+                        && range.start <= self.earlier
+                        && self.earlier < split
+                {
+                    Some(left)
+                } else if matches!(kind, ScopeKind::Route)
+                    && split <= self.earlier
+                    && self.earlier < end
+                {
+                    Some(right)
+                } else {
+                    match known {
+                        Some(SourceArm::Left) => Some(left),
+                        Some(SourceArm::Right) => Some(right),
+                        None => None,
+                    }
+                };
+                let (after, fenced) = if let Some(selected) = selected {
+                    match self.fifo_fence(actors, selected, entry, seen) {
+                        Ok(value) => value,
+                        Err(choice) => return Err(choice),
+                    }
+                } else {
+                    let (a, af) = match self.fifo_fence(actors, left, entry, seen) {
+                        Ok(value) => value,
+                        Err(choice) => return Err(choice),
+                    };
+                    let (b, bf) = match self.fifo_fence(actors, right, entry, seen) {
+                        Ok(value) => value,
+                        Err(choice) => return Err(choice),
+                    };
+                    if matches!(kind, ScopeKind::Route) {
+                        (a && b, af && bf)
+                    } else {
+                        (a || b, af || bf)
+                    }
+                };
+                if fenced {
+                    return Ok((after, true));
+                }
+                seen = after;
+                range.start = end;
+            } else {
+                let atom = self.events.atom_at(range.start);
+                if range.start == self.earlier {
+                    seen = true;
+                } else if seen
+                    && atom.from == entry.from
+                    && atom.to == entry.to
+                    && atom.lane == entry.lane
+                {
+                    return Ok((true, true));
+                }
+                range.start += 1;
+            }
+        }
+        Ok((seen, false))
+    }
+
+    const fn actor_precedes(
+        &self,
+        actors: &ActorMap<'_, E, D>,
+        mut range: FlowRange,
+        target: usize,
+        actor: u8,
+        iteration: usize,
+    ) -> Result<bool, NeedChoice> {
+        let mut membership = CausalRoles::empty();
+        membership.insert(actor);
+        while range.start < range.end && range.start < target {
+            if let Some((index, kind, split, end)) = self.scope_offsets.scope_at(&mut range) {
+                let left = FlowRange {
+                    start: range.start,
+                    end: split,
+                    marker_floor: index + 1,
+                };
+                let right = FlowRange {
+                    start: split,
+                    end,
+                    marker_floor: index + 1,
+                };
+                let known = if matches!(kind, ScopeKind::Route) {
+                    actors.selected_route(range.start, split, end, iteration)
+                } else {
+                    None
+                };
+                let selected =
+                    if matches!(kind, ScopeKind::Roll) || range.start <= target && target < split {
+                        Some(left)
+                    } else if split <= target && target < end {
+                        Some(right)
+                    } else {
+                        match known {
+                            Some(SourceArm::Left) => Some(left),
+                            Some(SourceArm::Right) => Some(right),
+                            None => None,
+                        }
+                    };
+                let present = if let Some(selected) = selected {
+                    match self.actor_precedes(actors, selected, target, actor, iteration) {
+                        Ok(value) => value,
+                        Err(choice) => return Err(choice),
+                    }
+                } else {
+                    let a = match self.actor_precedes(actors, left, target, actor, iteration) {
+                        Ok(value) => value,
+                        Err(choice) => return Err(choice),
+                    };
+                    let b = match self.actor_precedes(actors, right, target, actor, iteration) {
+                        Ok(value) => value,
+                        Err(choice) => return Err(choice),
+                    };
+                    if matches!(kind, ScopeKind::Route) {
+                        a && b
+                    } else {
+                        a || b
+                    }
+                };
+                if present {
+                    return Ok(true);
+                }
+                range.start = end;
+            } else {
+                let atom = self.events.atom_at(range.start);
+                let receiver = match actors.receiver(range.start, atom, iteration) {
+                    Ok(value) => value,
+                    Err(choice) => return Err(choice),
+                };
+                if receiver == actor {
+                    return Ok(true);
+                }
+                match actors.sender_known(range.start, atom, iteration, &membership) {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => {}
+                    Err(choice) => return Err(choice),
+                }
+                range.start += 1;
+            }
+        }
+        Ok(false)
     }
 
     const fn check(&self, paths: Paths<'_>, target: Option<usize>) -> bool {
@@ -450,6 +727,7 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
                     earlier,
                     end: later + 1,
                     repeated: None,
+                    passive_entry: None,
                 })
                 .check(paths, Some(later)),
             },
@@ -471,6 +749,7 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
                 earlier,
                 end: later + 1,
                 repeated: Some(RollBodyRange::new(start, end)),
+                passive_entry: None,
             };
             if obligation
                 .conflict_with_order(Some(later), closures)
@@ -485,6 +764,107 @@ pub(crate) const fn receive_pair_is_causal<const E: usize, const D: usize>(
 }
 
 /// Check source receive order and return its first rejected receive pair.
+/// A new lane cannot distinguish visits of a passive, repeated choice. Its
+/// alternative incoming heads still need a causal handoff between senders.
+pub(crate) const fn passive_choice_conflict<const E: usize, const D: usize>(
+    events: &EffList<E>,
+    actors: Option<&SourceActorImage<E, D>>,
+    indexed: Option<&FlowIndex<E>>,
+) -> Option<(usize, usize, Option<u16>)> {
+    let markers = events.scope_markers();
+    let mut has_repeat = false;
+    let mut has_choice = false;
+    let mut marker = 0;
+    while marker < markers.len() {
+        let scope = markers.at(marker);
+        if scope.event.is_primary_enter() {
+            has_repeat |= matches!(scope.scope_id.kind(), Some(ScopeKind::Roll));
+            has_choice |= matches!(scope.scope_id.kind(), Some(ScopeKind::Route));
+        }
+        marker += 1;
+    }
+    if !has_repeat || !has_choice {
+        return None;
+    }
+    let mut first_sender = [u16::MAX; 256];
+    let mut mixed = CausalRoles::empty();
+    let mut event = 0;
+    while event < events.len() {
+        let atom = events.atom_at(event);
+        if atom.from != atom.to {
+            let first = first_sender[atom.to as usize];
+            if first == u16::MAX {
+                first_sender[atom.to as usize] = atom.from as u16;
+            } else if first != atom.from as u16 {
+                mixed.insert(atom.to);
+            }
+        }
+        event += 1;
+    }
+    if mixed.is_empty() {
+        return None;
+    }
+    let built;
+    let scopes = match indexed {
+        Some(indexed) => indexed,
+        None => {
+            built = FlowIndex::new(events, actors);
+            &built
+        }
+    };
+    let context = SourceContext::new(&[]);
+    let paths = Paths {
+        shared: &context,
+        current: &context,
+        next: &context,
+    };
+    let mut route = 0;
+    while route < scopes.marker_len {
+        let scope = scopes.scopes[route];
+        if matches!(scope.kind, ScopeKind::Route) && scope.roll != u16::MAX {
+            let mut earlier = scope.start as usize;
+            while earlier < scope.end as usize {
+                let before = events.atom_at(earlier);
+                if before.from != before.to && mixed.contains(before.to) {
+                    let mut later = scopes.first_receive_to(before.to);
+                    while later != u16::MAX && later < scope.end {
+                        let after = events.atom_at(later as usize);
+                        if later >= scope.start
+                            && (earlier < scope.split as usize) != (later < scope.split)
+                            && before.from != after.from
+                        {
+                            let roll = scopes.scopes[scope.roll as usize];
+                            let obligation = Obligation {
+                                events,
+                                scope_offsets: scopes,
+                                actors,
+                                earlier,
+                                end: later as usize + 1,
+                                repeated: Some(RollBodyRange::new(
+                                    roll.start as usize,
+                                    roll.end as usize,
+                                )),
+                                passive_entry: Some(route),
+                            };
+                            if obligation.conflict(paths, Some(later as usize)).is_some() {
+                                return Some((
+                                    earlier,
+                                    later as usize,
+                                    Some(markers.at(route).scope_id.local_ordinal()),
+                                ));
+                            }
+                        }
+                        later = scopes.next_receive_to(later);
+                    }
+                }
+                earlier += 1;
+            }
+        }
+        route += 1;
+    }
+    None
+}
+
 pub(crate) const fn owned_receive_lane_conflict<const E: usize, const D: usize>(
     events: &EffList<E>,
     actors: &SourceActorImage<E, D>,
@@ -514,14 +894,31 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
     scan: ReceiveScan,
     closures: Option<ReceiveOrder<'_>>,
 ) -> Option<(usize, usize, Option<u16>)> {
+    let mut direction_storage = [Direction::EMPTY; E];
+    let mut direction_storage_homogeneous = [false; E];
+    let directions = ReceiveDirectionIndex::new(
+        events,
+        &mut direction_storage,
+        &mut direction_storage_homogeneous,
+    );
+    receive_lane_conflict_indexed(events, scope_offsets, actors, scan, closures, &directions)
+}
+
+pub(crate) const fn receive_lane_conflict_indexed<const E: usize, const D: usize>(
+    events: &EffList<E>,
+    scope_offsets: &FlowIndex<E>,
+    actors: Option<&SourceActorImage<E, D>>,
+    scan: ReceiveScan,
+    closures: Option<ReceiveOrder<'_>>,
+    directions: &ReceiveDirectionIndex<'_>,
+) -> Option<(usize, usize, Option<u16>)> {
     let mut resume = match scan {
         ReceiveScan::From(resume) => resume,
         ReceiveScan::Before(_) => None,
     };
     let mut region = 0;
     let markers = events.scope_markers();
-    let mut direction_storage = [Direction::EMPTY; E];
-    let directions = ReceiveDirectionIndex::new(events, &mut direction_storage);
+    let homogeneous = directions.homogeneous_rows();
     while region <= markers.len() {
         let (start, stop, repeated, scope) = if region == 0 {
             (0, events.len(), None, None)
@@ -581,6 +978,10 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
             {
                 return None;
             }
+            if homogeneous[earlier] {
+                earlier += 1;
+                continue;
+            }
             let atom = events.atom_at(earlier);
             let range = FlowRange {
                 start: if repeated.is_some() {
@@ -626,6 +1027,7 @@ pub(crate) const fn receive_lane_conflict_in<const E: usize, const D: usize>(
                         earlier,
                         end,
                         repeated,
+                        passive_entry: None,
                     })
                     .conflict_with_order(None, closures)
                 };

@@ -109,7 +109,7 @@ pub(crate) trait SendKernelEndpoint<'r> {
         preview_cursor_index: Option<StateIndex>,
         route_authority: SendRouteAuthority,
         payload: Option<lane_port::SendInput>,
-    ) -> SendInitOutcome<'r>;
+    ) -> SendResult<PendingSendIo<'r>>;
 
     fn poll_send_pending_kernel(
         &mut self,
@@ -196,12 +196,11 @@ pub(crate) fn kernel_branch_recv<'r>(
 }
 
 #[inline(never)]
-pub(crate) fn kernel_send<'r>(
+pub(crate) fn kernel_prepare_send<'r>(
     endpoint: &mut dyn SendKernelEndpoint<'r>,
     state: &mut SendState<'r>,
     payload: &mut Option<lane_port::SendInput>,
-    cx: &mut core::task::Context<'_>,
-) -> Poll<SendResult<SendCommitOutcome<'r>>> {
+) -> Poll<SendResult<()>> {
     match state {
         SendState::Preparing {
             logical_label,
@@ -233,11 +232,11 @@ pub(crate) fn kernel_send<'r>(
                 route_authority,
                 input.take(),
             ) {
-                SendInitOutcome::Ready(result) => {
+                Err(error) => {
                     *state = SendState::Done;
-                    return Poll::Ready(result);
+                    return Poll::Ready(Err(error));
                 }
-                SendInitOutcome::Pending { pending } => {
+                Ok(pending) => {
                     *state = SendState::Sending { pending };
                 }
             }
@@ -251,6 +250,21 @@ pub(crate) fn kernel_send<'r>(
             Poll::Ready(Ok(())) => (),
         },
         SendState::Done => crate::invariant(),
+    }
+    Poll::Ready(Ok(()))
+}
+
+#[inline(never)]
+pub(crate) fn kernel_send<'r>(
+    endpoint: &mut dyn SendKernelEndpoint<'r>,
+    state: &mut SendState<'r>,
+    payload: &mut Option<lane_port::SendInput>,
+    cx: &mut core::task::Context<'_>,
+) -> Poll<SendResult<SendCommitOutcome<'r>>> {
+    match kernel_prepare_send(endpoint, state, payload) {
+        Poll::Pending => return Poll::Pending,
+        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+        Poll::Ready(Ok(())) => (),
     }
     // Preparing built this plan under the same exclusive kernel borrow.
     // Only a send resumed after returning Pending needs fresh admission.
@@ -292,7 +306,7 @@ where
         preview_cursor_index: Option<StateIndex>,
         route_authority: SendRouteAuthority,
         payload: Option<lane_port::SendInput>,
-    ) -> SendInitOutcome<'r> {
+    ) -> SendResult<PendingSendIo<'r>> {
         self.poll_send_init(
             descriptor,
             meta,
@@ -499,6 +513,7 @@ where
                 operations: self.operations,
                 views: self.views,
                 region: crate::endpoint::carrier::OperationRegion::WHOLE,
+                held: self.held,
             };
             sibling.finish_operation_io();
         }

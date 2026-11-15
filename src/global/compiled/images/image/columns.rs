@@ -381,10 +381,11 @@ impl ProgramImagePlan {
             if actors.event_count() != plan.columns.atom_count() {
                 crate::invariant();
             }
+            let first_transfers = first_endpoint_transfers(source.eff_list());
             let mut initial_actors = 0;
             let mut role = 0u16;
             while role <= u8::MAX as u16 {
-                if first_endpoint_transfer(source.eff_list(), role as u8).is_some() {
+                if first_transfers[role as usize].is_some() {
                     initial_actors += 1;
                 }
                 role += 1;
@@ -448,20 +449,75 @@ pub(super) const fn index_byte_len<const E: usize>(eff_list: &EffList<E>) -> usi
     }
 }
 
-pub(super) const fn first_endpoint_transfer<const E: usize>(
+pub(super) const fn first_endpoint_transfers<const E: usize>(
     eff: &EffList<E>,
-    role: u8,
-) -> Option<usize> {
+) -> [Option<usize>; 256] {
+    let mut first = [None; 256];
     let mut event = 0;
     while event < eff.len() {
-        if let crate::eff::EventPayload::Endpoint(payload) = eff.atom_at(event).payload
-            && payload == role
+        if let crate::eff::EventPayload::Endpoint(role) = eff.atom_at(event).payload
+            && first[role as usize].is_none()
         {
-            return Some(event);
+            first[role as usize] = Some(event);
         }
         event += 1;
     }
-    None
+    first
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+mod source_summary_tests {
+    use super::*;
+    use crate::eff::{EffAtom, EventOrigin, EventPayload};
+
+    #[test]
+    fn transfer_and_participant_summaries_match_source_scans() {
+        let mut events = EffList::<512>::new();
+        for at in 0..512 {
+            events.push_event_mut(EffAtom {
+                from: at as u8,
+                to: (at as u8).wrapping_mul(17),
+                lane: 0,
+                label: at as u8,
+                origin: EventOrigin::User,
+                payload: if at % 3 == 0 {
+                    EventPayload::Wire(0)
+                } else {
+                    EventPayload::Endpoint((at as u8).wrapping_mul(31))
+                },
+            });
+        }
+        let first = first_endpoint_transfers(&events);
+        for role in 0..=255 {
+            assert_eq!(
+                first[role as usize],
+                (0..events.len())
+                    .find(|&at| events.atom_at(at).payload == EventPayload::Endpoint(role))
+            );
+        }
+        for start in [0, 1, 63, 127, 128, 255, 256, 511, 512] {
+            for stop in start..=events.len() {
+                let controller = 247;
+                let actual = route_arm_participants(&events, (start, stop), controller);
+                let mut expected = [false; 256];
+                expected[controller as usize] = true;
+                for at in start..stop {
+                    let row = events.atom_at(at);
+                    expected[row.from as usize] = true;
+                    expected[row.to as usize] = true;
+                }
+                for role in 0..=255 {
+                    assert_eq!(actual[role / 8] & (1 << (role % 8)) != 0, expected[role]);
+                }
+                if start != stop {
+                    assert_eq!(
+                        route_arm_participant_count(&events, (start, stop), controller),
+                        expected.iter().filter(|&&present| present).count()
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[inline]
@@ -480,8 +536,11 @@ const fn program_image_columns<const E: usize>(eff_list: &EffList<E>) -> Program
             route_resolver_len += 1;
             let [(left_start, left_end), (right_start, right_end)] =
                 route_arm_ranges_from_first_enter(markers, idx);
-            route_participant_len += route_arm_participant_count(eff_list, left_start, left_end);
-            route_participant_len += route_arm_participant_count(eff_list, right_start, right_end);
+            let controller = eff_list.atom_at(left_start).from;
+            route_participant_len +=
+                route_arm_participant_count(eff_list, (left_start, left_end), controller);
+            route_participant_len +=
+                route_arm_participant_count(eff_list, (right_start, right_end), controller);
         }
         idx += 1;
     }
@@ -494,39 +553,36 @@ const fn program_image_columns<const E: usize>(eff_list: &EffList<E>) -> Program
     )
 }
 
-const fn role_occurs_before<const E: usize>(
+pub(super) const fn route_arm_participants<const E: usize>(
     eff_list: &EffList<E>,
-    start: usize,
-    end: usize,
-    role: u8,
-) -> bool {
-    let mut idx = start;
-    while idx < end && idx < eff_list.len() {
-        let atom = eff_list.atom_at(idx);
-        if atom.from == role || atom.to == role {
-            return true;
-        }
-        idx += 1;
+    (start, end): (usize, usize),
+    controller: u8,
+) -> [u8; 32] {
+    let mut participants = [0; 32];
+    // The canonical controlling view retains the choice even when another
+    // co-resident view sends the selected arm's first message.
+    participants[controller as usize / 8] |= 1 << (controller % 8);
+    let mut event = start;
+    while event < end && event < eff_list.len() {
+        let atom = eff_list.atom_at(event);
+        participants[atom.from as usize / 8] |= 1 << (atom.from % 8);
+        participants[atom.to as usize / 8] |= 1 << (atom.to % 8);
+        event += 1;
     }
-    false
+    participants
 }
 
 const fn route_arm_participant_count<const E: usize>(
     eff_list: &EffList<E>,
-    start: usize,
-    end: usize,
+    range: (usize, usize),
+    controller: u8,
 ) -> usize {
-    let mut count = 0usize;
-    let mut idx = start;
-    while idx < end && idx < eff_list.len() {
-        let atom = eff_list.atom_at(idx);
-        if !role_occurs_before(eff_list, start, idx, atom.from) {
-            count += 1;
-        }
-        if atom.to != atom.from && !role_occurs_before(eff_list, start, idx, atom.to) {
-            count += 1;
-        }
-        idx += 1;
+    let participants = route_arm_participants(eff_list, range, controller);
+    let mut count = 0;
+    let mut byte = 0;
+    while byte < participants.len() {
+        count += participants[byte].count_ones() as usize;
+        byte += 1;
     }
     if count == 0 {
         crate::invariant();

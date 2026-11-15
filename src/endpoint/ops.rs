@@ -50,7 +50,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: <M::Payload as crate::global::PayloadSpec>::SendArgument<'a, 'r>,
-    ) -> impl core::future::Future<Output = Result<(), EndpointError>> + 'a + use<'a, 'e, 'r, M, ROLE>
+    ) -> impl super::SendRequest + 'a + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
         M::Payload: 'a,
@@ -259,6 +259,27 @@ impl<'e, 'r, const ROLE: u8, D> super::target::OperationTarget<'e, 'r, ROLE, D> 
                 cx,
                 out: out.as_mut_ptr(),
             });
+            out.assume_init()
+        }
+    }
+
+    #[inline]
+    pub(crate) fn poll_send_admission(
+        &mut self,
+        cx: &mut Context<'_>,
+        payload: Option<kernel::lane_port::SendInput>,
+    ) -> Poll<SendResult<()>> {
+        let mut out = core::mem::MaybeUninit::<Poll<SendResult<()>>>::uninit();
+        // SAFETY: this target retains the issued operation's exclusive borrow.
+        // The callback writes the correctly typed local result before return.
+        unsafe {
+            (self.ops().poll_send_admission)(
+                self.erased_ptr(),
+                self.parts().1,
+                payload,
+                cx,
+                out.as_mut_ptr().cast(),
+            );
             out.assume_init()
         }
     }

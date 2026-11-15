@@ -16,18 +16,19 @@ fn the_immutable_lane_reference_keeps_parallel_handles_and_futures_compact() {
     use crate::endpoint::carrier::{OperationHandle, OperationRegion};
     use core::mem::size_of;
     assert_eq!(size_of::<OperationRegion>(), 24);
-    assert_eq!(size_of::<OperationHandle>(), 32);
+    assert_eq!(size_of::<OperationHandle>(), 48);
     assert_eq!(
-        size_of::<crate::ParallelEndpoint<'static, 'static, 0>>(),
-        size_of::<usize>() + 32
+        size_of::<crate::EndpointBorrow<'static, 'static, 0>>(),
+        size_of::<usize>() + 48
     );
+    assert!(size_of::<crate::EndpointBorrow<'static, 'static, 0>>() <= 64);
     assert!(size_of::<crate::Endpoint<'static, 0>>() <= 3 * size_of::<usize>());
     std::println!(
         "parallel region={} operation_handle={} endpoint={} parallel_endpoint={}",
         size_of::<OperationRegion>(),
         size_of::<OperationHandle>(),
         size_of::<crate::Endpoint<'static, 0>>(),
-        size_of::<crate::ParallelEndpoint<'static, 'static, 0>>()
+        size_of::<crate::EndpointBorrow<'static, 'static, 0>>()
     );
 }
 
@@ -610,5 +611,65 @@ async fn one_arm_repeats_while_the_other_arm_is_still_waiting()
         .await;
     };
 
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn actual_peer_borrows_reject_self_wait_without_blocking_independent_views()
+-> core::result::Result<(), hibana::EndpointError> {
+    use core::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    type Loan = g::Msg<240, hibana::Endpoint<'static, 36>>;
+    type Prefix = g::Msg<241, ()>;
+    type Reply = g::Msg<242, u32>;
+    let global = g::seq(
+        g::send::<1, 0, Loan>(),
+        g::seq(g::send::<0, 1, Prefix>(), g::send::<36, 1, Reply>()),
+    );
+    let root_program = project::<0>(&global);
+    let owner_program = project::<1>(&global);
+    let file_program = project::<36>(&global);
+    for unrelated in [false, true] {
+        let network = TestTransport::new();
+        let mut slab = [0; 64 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let sid = SessionId::new(1670);
+        let mut root = rv.enter(sid, &root_program).unwrap();
+        let mut owner = rv.enter(sid, &owner_program).unwrap();
+        let file = rv.enter(sid, &file_program).unwrap();
+        let mut other_run = rv.enter(SessionId::new(1671), &root_program).unwrap();
+        owner.send::<Loan>(file).await?;
+        let mut file = root.recv::<Loan>().await?;
+        assert!(network.queue_is_empty());
+        {
+            let peers = if unrelated { &mut other_run } else { &mut root };
+            let mut borrow = file.borrow(peers);
+            if unrelated {
+                // An actual same-role Endpoint from a different run cannot
+                // claim that the real prerequisite is exclusively borrowed.
+                let mut send = core::pin::pin!(borrow.send::<Reply>(&7));
+                assert!(matches!(
+                    send.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                    Poll::Pending
+                ));
+            } else {
+                let error = borrow.send::<Reply>(&7).await.unwrap_err();
+                assert!(error.is_unavailable());
+            }
+        }
+        assert!(network.queue_is_empty());
+        root.send::<Prefix>(&()).await?;
+        owner.recv::<Prefix>().await?;
+        file.send::<Reply>(&7).await?;
+        assert_eq!(owner.recv::<Reply>().await?, 7);
+        assert!(network.queue_is_empty());
+    }
     Ok(())
 }

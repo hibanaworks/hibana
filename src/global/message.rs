@@ -18,7 +18,7 @@ pub trait PayloadSpec: Sized {
     fn send<'a, 'e, 'r, M, const ROLE: u8>(
         endpoint: crate::endpoint::target::OperationTarget<'e, 'r, ROLE>,
         payload: Self::SendArgument<'a, 'r>,
-    ) -> impl core::future::Future<Output = Result<(), crate::EndpointError>> + 'a
+    ) -> impl crate::SendRequest + 'a
     where
         M: Message<Payload = Self> + 'a,
         Self: 'a,
@@ -33,7 +33,7 @@ pub trait PayloadSpec: Sized {
     fn branch_send<'a, 'e, 'r, M, const ROLE: u8>(
         branch: crate::RouteBranch<'e, 'r, ROLE>,
         payload: Self::SendArgument<'a, 'r>,
-    ) -> impl core::future::Future<Output = Result<(), crate::EndpointError>> + 'a
+    ) -> impl crate::SendRequest + 'a
     where
         M: Message<Payload = Self> + 'a,
         Self: 'a,

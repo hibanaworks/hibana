@@ -216,6 +216,7 @@ pub(crate) struct OperationKernel<'op, 'r, T: Transport + 'r> {
     pub(in crate::endpoint::kernel) operations: &'op LaneSlotArray<ResidentOperation<'r>>,
     pub(in crate::endpoint::kernel) views: &'op ActorViews<'r, T>,
     pub(crate) region: crate::endpoint::carrier::OperationRegion,
+    pub(crate) held: Option<crate::endpoint::peers::HeldViews>,
 }
 
 impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
@@ -333,6 +334,7 @@ impl<'r, T: Transport + 'r> ResidentActor<'r, T> {
             operations: &view.operations,
             views: &self.views,
             region,
+            held: None,
         };
         Some(f(&mut kernel))
     }

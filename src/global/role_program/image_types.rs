@@ -6,6 +6,7 @@ pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
 pub(crate) const ROLE_IMAGE_DEPENDENCY_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_CONFLICT_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
+pub(crate) const ROLE_IMAGE_OWNED_RECEIPT_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 /// Both packed arm rows of each local route fit inside the u16 byte span.
@@ -511,7 +512,8 @@ impl RoleImageColumns {
 
     pub(crate) const fn operation_index(&self) -> ColumnRange {
         ColumnRange::new(
-            self.owned_receipts().end_offset(ROLE_IMAGE_U16_STRIDE),
+            self.owned_receipts()
+                .end_offset(ROLE_IMAGE_OWNED_RECEIPT_STRIDE),
             self.events.len as usize,
             ROLE_IMAGE_U16_STRIDE,
         )
@@ -522,7 +524,7 @@ impl RoleImageColumns {
             self.roll_entry_views()
                 .end_offset(ROLE_IMAGE_ROLL_ENTRY_STRIDE),
             self.owned_receipt_count as usize,
-            ROLE_IMAGE_U16_STRIDE,
+            ROLE_IMAGE_OWNED_RECEIPT_STRIDE,
         )
     }
 
@@ -554,7 +556,7 @@ impl RoleImageColumns {
             (self.operation_index(), ROLE_IMAGE_U16_STRIDE),
             (self.roll_entry_ranges(), ROLE_IMAGE_LANE_RANGE_STRIDE),
             (self.roll_entry_views(), ROLE_IMAGE_ROLL_ENTRY_STRIDE),
-            (self.owned_receipts(), ROLE_IMAGE_U16_STRIDE),
+            (self.owned_receipts(), ROLE_IMAGE_OWNED_RECEIPT_STRIDE),
             (self.events, ROLE_IMAGE_EVENT_STRIDE),
             (self.lanes, ROLE_IMAGE_LANE_STRIDE),
             (self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE),

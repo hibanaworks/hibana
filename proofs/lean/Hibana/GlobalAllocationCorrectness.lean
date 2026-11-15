@@ -305,4 +305,23 @@ theorem confirmed_lane_classes_supply_all_cross_boundary_checks
   exact sound (lane a) (remap (lane a)) (selected a first)
     a b first rfl second equal.symm incompatible
 
+/-- Candidate exclusion needs exactly the parallel scopes enclosing its event.
+The scope index's complete ancestor relation supplies the same obligations as
+scanning all source scopes. Rust index construction is checked separately; this
+is not an unconditional refinement theorem for that implementation. -/
+theorem ancestor_parallel_exclusions_are_exact
+    {Event Scope : Type} (allScopes : List Scope) (ancestors : Event → List Scope)
+    (encloses : Scope → Event → Prop) (compatible : Event → Scope → Prop)
+    (complete : ∀ event scope,
+      scope ∈ ancestors event ↔ scope ∈ allScopes ∧ encloses scope event)
+    (event : Event) :
+    (∀ scope, scope ∈ allScopes → encloses scope event → compatible event scope) ↔
+      ∀ scope, scope ∈ ancestors event → compatible event scope := by
+  constructor
+  · intro allowed scope member
+    have facts := (complete event scope).mp member
+    exact allowed scope facts.1 facts.2
+  · intro allowed scope member contains
+    exact allowed scope ((complete event scope).mpr ⟨member, contains⟩)
+
 end Hibana

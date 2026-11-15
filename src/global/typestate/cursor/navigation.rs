@@ -339,6 +339,31 @@ impl EventCursor {
                 && atom.payload == crate::eff::EventPayload::Endpoint(role))
     }
 
+    pub(super) fn uses_borrowed_view_at(
+        &self,
+        idx: usize,
+        borrowed: Option<&dyn Fn(u8) -> bool>,
+    ) -> bool {
+        let Some(borrowed) = borrowed else {
+            return false;
+        };
+        let Some((effect, direction)) = self.machine().event_program().operation_at(idx) else {
+            return false;
+        };
+        let atom = self.program_ref().event_atom_at(effect.dense_ordinal());
+        let role = if direction == RoleLocalDirection::Recv {
+            atom.to
+        } else {
+            atom.from
+        };
+        borrowed(role)
+            || (direction == RoleLocalDirection::Send
+                && match atom.payload {
+                    crate::eff::EventPayload::Endpoint(role) => borrowed(role),
+                    crate::eff::EventPayload::Wire(_) => false,
+                })
+    }
+
     /// Select an immutable actor binding through the existing route decisions.
     /// An undecided binding is not an operation right or a completed event.
     pub(super) fn event_actor_is_local(

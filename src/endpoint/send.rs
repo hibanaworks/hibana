@@ -15,6 +15,29 @@ use crate::{
     transport::wire::WireEncode,
 };
 
+pub(crate) mod seal {
+    pub trait Sealed {}
+}
+
+/// A send's protocol preparation and transport completion share one future.
+/// Ordinary application code awaits it directly. I/O integrations may inspect
+/// readiness before polling transport, without inferring it from a cancelled
+/// transport operation or a different `offer()` candidate.
+pub trait SendRequest: Future<Output = Result<(), EndpointError>> + seal::Sealed {
+    /// Prepare this exact typed send, without polling `Transport::poll_send`
+    /// or committing communication. Before the first ordinary `Future::poll`,
+    /// `Pending` means this future has not sent through the transport.
+    /// `Ready(Ok(()))` retains the prepared operation;
+    /// await this same future to send it. It does not mean peer receipt.
+    ///
+    /// After any error, do not poll this future again. Dropping an owned send
+    /// still faults the run and never restores the moved Endpoint, including
+    /// when preparation was pending. An ordinary borrowed send can be dropped
+    /// before transport without issuing a frame or advancing source progress.
+    /// Calling this after transport polling never retracts prior I/O.
+    fn poll_admission(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
+}
+
 #[derive(Clone, Copy)]
 enum SendFutureState {
     DirectUnarmed {
@@ -178,6 +201,32 @@ impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Send, err))),
         }
+    }
+}
+
+impl<const ROLE: u8> seal::Sealed for SendFuture<'_, '_, '_, ROLE> {}
+
+impl<const ROLE: u8> SendRequest for SendFuture<'_, '_, '_, ROLE> {
+    fn poll_admission(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let raw = &mut this.raw;
+        if let SendFutureState::ReadyError(error) = raw.state {
+            raw.mark_done();
+            return Poll::Ready(Err(EndpointError::new(EndpointOp::Send, error)));
+        }
+        if let Err(error) = raw.arm_on_first_poll() {
+            return Poll::Ready(Err(EndpointError::new(EndpointOp::Send, error)));
+        }
+        let poll = crate::invariant_some(raw.endpoint.as_mut()).poll_send_admission(
+            cx,
+            raw.payload
+                .take()
+                .map(kernel::lane_port::SendInput::Payload),
+        );
+        if matches!(poll, Poll::Ready(Err(_))) {
+            raw.mark_done();
+        }
+        poll.map_err(|error| EndpointError::new(EndpointOp::Send, error))
     }
 }
 

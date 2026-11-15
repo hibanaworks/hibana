@@ -5806,6 +5806,36 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
             after)
           (@some.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))
             (@Prod.mk.{0, 0} Nat (Option.{0} Hibana.RouteArm) scope (@some.{0} Hibana.RouteArm arm)))
+@Hibana.a_source_held_group_cannot_make_a_ready_action_unavailable : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {snapshot : Hibana.ActorProgressObservation}
+  {target : Hibana.DecodedActorRow} {held : List.{0} Nat},
+  @Eq.{1} Bool (Hibana.sourceHeldViewsPending data path snapshot target held) true →
+    @Eq.{1} Bool (Hibana.sourceRowReady data path snapshot target) false
+@Hibana.a_source_held_group_has_an_actual_prerequisite : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {snapshot : Hibana.ActorProgressObservation}
+  {target : Hibana.DecodedActorRow} {held : List.{0} Nat},
+  @Eq.{1} Bool (Hibana.sourceHeldViewsPending data path snapshot target held) true →
+    @Exists.{1} Nat fun role =>
+      And (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) held role)
+        (@Exists.{1} Hibana.DecodedActorRow fun prior =>
+          @Exists.{1} Hibana.EndpointDelegation.Binding fun binding =>
+            And
+              (@Membership.mem.{0, 0} Hibana.DecodedActorRow (List.{0} Hibana.DecodedActorRow)
+                (@List.instMembership.{0} Hibana.DecodedActorRow) (data.activeRows path) prior)
+              (And (@Eq.{1} Bool (snapshot.doneState.done prior.eventId) false)
+                (And
+                  (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
+                    (data.sourcePredecessors path target.eventId) prior.eventId)
+                  (And
+                    (@Eq.{1} (Option.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding))
+                      (@List.find?.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                        (fun entry =>
+                          @BEq.beq.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat)
+                            (@Prod.fst.{0, 0} Nat Hibana.EndpointDelegation.Binding entry) prior.actionId.event)
+                        path.bindings)
+                      (@some.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.Binding)
+                        (@Prod.mk.{0, 0} Nat Hibana.EndpointDelegation.Binding prior.actionId.event binding)))
+                    (@Eq.{1} Bool (Hibana.sourceActionRequiresView role binding prior.actionId.side) true)))))
 @Hibana.a_source_held_view_wait_has_an_unfinished_required_predecessor : ∀ {data : Hibana.DecodedActorOrder}
   {path : Hibana.EndpointDelegation.NormalizedPath} {snapshot : Hibana.ActorProgressObservation}
   {target : Hibana.DecodedActorRow} {role : Nat},
@@ -6101,6 +6131,52 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
                         (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
                         (@List.instGetElem?NatLtLength.{0} Bool) sample.admitted row.eventId)
                       (@some.{0} Bool true))
+@Hibana.a_terminal_resource_owner_cannot_have_a_later_handoff : ∀ {key : Hibana.EndpointDelegation.EndpointKey}
+  {owner : Hibana.EndpointDelegation.OwnerExpr}
+  {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)}
+  (assignment : Hibana.EndpointDelegation.EndpointKey → Nat) (actor : Nat),
+  @Eq.{1} Nat (Hibana.EndpointDelegation.OwnerExpr.eval assignment owner) actor →
+    (∀ (earlier : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+        (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+        (suffix : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)),
+        @Eq.{1} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) bindings
+            (@HAppend.hAppend.{0, 0, 0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (@instHAppendOfAppend.{0} (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                (@List.instAppend.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)))
+              earlier (@List.cons.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding) entry suffix)) →
+          @Eq.{1} Hibana.EndpointDelegation.Payload
+              (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).message.payload
+              (Hibana.EndpointDelegation.Payload.endpoint key) →
+            @Eq.{1} Nat
+              (Hibana.EndpointDelegation.OwnerExpr.eval assignment
+                (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).sender)
+              (Hibana.EndpointDelegation.OwnerExpr.eval assignment
+                (Hibana.EndpointDelegation.ownerAfterBindings key owner earlier))) →
+      (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+          @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+              (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+              (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) bindings entry →
+            @Eq.{1} Hibana.EndpointDelegation.Payload
+                (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).message.payload
+                (Hibana.EndpointDelegation.Payload.endpoint key) →
+              @Ne.{1} Nat
+                (Hibana.EndpointDelegation.OwnerExpr.eval assignment
+                  (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).sender)
+                actor) →
+        And
+          (∀ (entry : Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding),
+            @Membership.mem.{0, 0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)
+                (List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding))
+                (@List.instMembership.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)) bindings entry →
+              @Ne.{1} Hibana.EndpointDelegation.Payload
+                (@Prod.snd.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding entry).message.payload
+                (Hibana.EndpointDelegation.Payload.endpoint key))
+          (@Eq.{1} Nat
+            (Hibana.EndpointDelegation.OwnerExpr.eval assignment
+              (Hibana.EndpointDelegation.ownerAfterBindings key owner bindings))
+            actor)
 @Hibana.a_two_phase_source_word_extends_when_its_actual_counts_stay_balanced : ∀ {first second event : Nat}
   {word : List.{0} Nat},
   @Ne.{1} Nat first second →
@@ -8628,6 +8704,20 @@ Hibana.an_unrecorded_mutation_interval_is_rejected : ∀ (image : Hibana.RustDes
           (@Prod.fst.{0, 0} Hibana.ActorProgressObservation Nat final).choices)
         (@some.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))
           (@Prod.mk.{0, 0} Nat (Option.{0} Hibana.RouteArm) scope (@some.{0} Hibana.RouteArm arm)))
+@Hibana.ancestor_parallel_exclusions_are_exact : ∀ {Event Scope : Type} (allScopes : List.{0} Scope)
+  (ancestors : Event → List.{0} Scope) (encloses : Scope → Event → Prop) (compatible : Event → Scope → Prop),
+  (∀ (event : Event) (scope : Scope),
+      Iff (@Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) (ancestors event) scope)
+        (And (@Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) allScopes scope)
+          (encloses scope event))) →
+    ∀ (event : Event),
+      Iff
+        (∀ (scope : Scope),
+          @Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) allScopes scope →
+            encloses scope event → compatible event scope)
+        (∀ (scope : Scope),
+          @Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) (ancestors event) scope →
+            compatible event scope)
 @Hibana.artifact_checker_sound : ∀ {graph : Hibana.EventGraph}, @Eq.{1} Bool graph.check true → graph.WellFormed
 @Hibana.assumption_indexed_deployment_duplicate_receipt_resolution_rejected : ∀ {profile : Hibana.CarrierProfile}
   {Fairness : Prop} {certificate : Hibana.VerifiedProtocolCertificate} {session roleCount : Nat}

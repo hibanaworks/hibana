@@ -1,13 +1,14 @@
 #[cfg(all(test, hibana_repo_tests))]
-use super::super::ROLE_IMAGE_LANE_STRIDE;
+use super::super::{ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_U16_STRIDE};
 use super::{
     super::{
         BlobPtr, ColumnRange, LaneSetView, PackedLaneRange, PackedLocalEventRow,
         PackedRollScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
         ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
-        ROLE_IMAGE_ROLL_ENTRY_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
-        ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
-        ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
+        ROLE_IMAGE_OWNED_RECEIPT_STRIDE, ROLE_IMAGE_ROLL_ENTRY_STRIDE,
+        ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+        ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, RoleLaneImage,
+        RouteArmLaneStepRow,
     },
     route_arm_row_index,
 };
@@ -363,13 +364,23 @@ impl<'a> RoleLaneImage<'a> {
         range
     }
 
-    pub(crate) const fn owned_receipt(&self, index: usize) -> u16 {
-        let Some(offset) =
-            self.column_offset(self.columns.owned_receipts(), index, ROLE_IMAGE_U16_STRIDE)
-        else {
+    pub(crate) const fn owned_receipt(&self, index: usize) -> (u16, Option<u16>) {
+        let Some(offset) = self.column_offset(
+            self.columns.owned_receipts(),
+            index,
+            ROLE_IMAGE_OWNED_RECEIPT_STRIDE,
+        ) else {
             invalid_resident_descriptor();
         };
-        self.read_u16_at(offset)
+        let witness = self.read_u16_at(offset + 2);
+        (
+            self.read_u16_at(offset),
+            if witness == u16::MAX {
+                None
+            } else {
+                Some(witness)
+            },
+        )
     }
 
     #[inline(always)]

@@ -123,6 +123,50 @@ theorem offer_priority_fits_its_runtime_byte
 #print axioms primary_offer_priority_is_preserved
 #print axioms offer_priority_fits_its_runtime_byte
 
+/-- Among already eligible candidates, prefer an unexecuted local continuation
+to a source-earlier completed row's repeat. A waiting receive is not locally
+advancing. This changes selection, never event admission or roll availability. -/
+def preferForward (previousDone currentDone canAdvance sourceBefore prefixSent : Bool) : Bool :=
+  !currentDone && previousDone && canAdvance && sourceBefore && prefixSent
+
+theorem forward_preference_requires_an_unexecuted_local_continuation
+    (previousDone currentDone canAdvance sourceBefore prefixSent : Bool)
+    (chosen : preferForward previousDone currentDone canAdvance sourceBefore prefixSent = true) :
+    previousDone = true ∧ currentDone = false ∧ canAdvance = true ∧
+      sourceBefore = true ∧ prefixSent = true := by
+  cases previousDone <;> cases currentDone <;> cases canAdvance <;> cases sourceBefore <;>
+    cases prefixSent <;>
+    simp_all [preferForward]
+
+theorem a_waiting_receive_does_not_override_a_ready_repeat
+    (previousDone currentDone sourceBefore prefixSent : Bool) :
+    preferForward previousDone currentDone false sourceBefore prefixSent = false := by
+  simp [preferForward]
+
+theorem independent_source_rows_keep_the_existing_priority
+    (previousDone currentDone canAdvance prefixSent : Bool) :
+    preferForward previousDone currentDone canAdvance false prefixSent = false := by
+  simp [preferForward]
+
+theorem forward_and_reverse_preferences_cannot_both_hold
+    (previousDone currentDone currentReady previousReady before reverseBefore prefixSent reversePrefixSent : Bool)
+    (chosen : preferForward previousDone currentDone currentReady before prefixSent = true) :
+    preferForward currentDone previousDone previousReady reverseBefore reversePrefixSent = false := by
+  obtain ⟨done, fresh, _, _, _⟩ :=
+    forward_preference_requires_an_unexecuted_local_continuation _ _ _ _ _ chosen
+  simp [preferForward, done, fresh]
+
+theorem a_received_retry_does_not_retire_its_resolver
+    (previousDone currentDone canAdvance sourceBefore : Bool) :
+    preferForward previousDone currentDone canAdvance sourceBefore false = false := by
+  simp [preferForward]
+
+#print axioms forward_preference_requires_an_unexecuted_local_continuation
+#print axioms a_waiting_receive_does_not_override_a_ready_repeat
+#print axioms independent_source_rows_keep_the_existing_priority
+#print axioms forward_and_reverse_preferences_cannot_both_hold
+#print axioms a_received_retry_does_not_retire_its_resolver
+
 /-- Reusing a selected branch supplies its known decision, not a new receive
 observation. Exact event admission and frame matching are separate checks. -/
 def reuseKnownDecision (coherent receiving framed : Bool) : Bool :=

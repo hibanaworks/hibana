@@ -132,7 +132,9 @@ fn direction_index_is_the_last_matching_receive_in_every_subrange() {
         }
     }
     let mut storage = [super::Direction::EMPTY; 4];
-    let directions = super::ReceiveDirectionIndex::new(&events, &mut storage);
+    let mut storage_homogeneous = [false; 4];
+    let mut directions =
+        super::ReceiveDirectionIndex::new(&events, &mut storage, &mut storage_homogeneous);
     assert_eq!(
         directions.last_change(earlier, (range.start, range.end)),
         expected
@@ -149,6 +151,36 @@ fn direction_index_is_the_last_matching_receive_in_every_subrange() {
     kani::cover!(expected == Some(1));
     kani::cover!(expected == Some(4));
     kani::cover!(range.start == range.end);
+
+    // Recolor one arbitrary event without changing receiver membership. The
+    // incremental index must retain the same independent query specification.
+    let changed_event = usize::from(kani::any::<u8>() % 4);
+    let mut row = events.atom_at(changed_event);
+    row.lane = kani::any();
+    events.replace_atom(changed_event, row);
+    let scopes = super::FlowIndex::new::<0>(&events, None);
+    let mut changed = super::CausalRoles::empty();
+    if row.from != row.to {
+        changed.insert(row.to);
+    }
+    directions.refresh(&events, &scopes, changed);
+    let mut expected = None;
+    for index in 0..4 {
+        let atom = events.atom_at(index);
+        if range.start <= index
+            && index < range.end
+            && atom.from != atom.to
+            && earlier.to == atom.to
+            && earlier.lane == atom.lane
+            && earlier.from != atom.from
+        {
+            expected = Some(index + 1);
+        }
+    }
+    assert_eq!(
+        directions.last_change(earlier, (range.start, range.end)),
+        expected
+    );
 }
 
 #[kani::proof]
