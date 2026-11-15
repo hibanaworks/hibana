@@ -4,6 +4,12 @@ The `core-contract` CI result covers the checks below on one source revision.
 It does not assert refinement of arbitrary Rust executions or exhaust every
 possible protocol, payload, visit count or transport failure.
 
+Development and CI both use the adjacent `hibana-runtime` source directory.
+CI obtains its exact public revision from `.github/runtime-revision`; packaging
+checks require that same clean executor before testing the shipped examples.
+An unversioned path dev-dependency is excluded from the published crate, whose
+production core remains independent of the executor.
+
 | Property | Required evidence |
 | --- | --- |
 | Public Rust API, borrowing and affine moves | All native targets, including existing compile-fail inputs and Endpoint regressions; doctests, strict Clippy and documentation checks |

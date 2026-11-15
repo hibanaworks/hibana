@@ -34,7 +34,8 @@ pub(crate) use self::receive_lane_causality::FlowIndex;
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::receive_lane_causality::validate_receive_lane_causality;
 pub(crate) use self::receive_lane_causality::{
-    owned_receive_lane_conflict, passive_choice_conflict, receive_lane_conflict, receive_pair_is_causal,
+    owned_receive_lane_conflict, passive_choice_conflict, receive_lane_conflict,
+    receive_pair_is_causal,
 };
 pub(crate) use self::route::{DynamicRouteResolver, ReentryMark, RouteResolverMarker};
 pub(crate) use self::scope::{ScopeEvent, ScopeId, ScopeKind};

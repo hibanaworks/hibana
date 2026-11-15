@@ -1,0 +1,16 @@
+name: Select the adjacent Hibana executor source
+description: Reproduce the canonical sibling layout with the recorded public executor revision.
+runs:
+  using: composite
+  steps:
+    - name: Check out the source-matched executor
+      shell: bash
+      run: |
+        set -euo pipefail
+        core="$(cd "$GITHUB_ACTION_PATH/../../.." && pwd)"
+        revision="$(cat "$core/.github/runtime-revision")"
+        [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+        git clone --filter=blob:none --no-checkout \
+          https://github.com/hibanaworks/hibana-runtime.git "$core/../hibana-runtime"
+        git -C "$core/../hibana-runtime" checkout --detach "$revision"
+        test "$(git -C "$core/../hibana-runtime" rev-parse HEAD)" = "$revision"

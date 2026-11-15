@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/checkout-runtime
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.14'
@@ -55,6 +56,7 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/checkout-runtime
       - name: Install Rust and embedded targets
         run: |
           brew list coreutils >/dev/null 2>&1 || brew install coreutils
@@ -74,6 +76,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/checkout-runtime
       - name: Install Rust
         run: |
           rustup toolchain install stable --profile minimal
@@ -89,6 +92,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/checkout-runtime
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
       - uses: ./.github/actions/setup-lean
@@ -112,6 +116,7 @@ jobs:
       matrix: ${{ fromJSON(inputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/checkout-runtime
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
       - uses: actions/download-artifact@v8

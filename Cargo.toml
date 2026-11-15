@@ -54,13 +54,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 # No external dependencies - hibana core remains self-contained
 
 [dev-dependencies]
-hibana-runtime = { path = "../hibana-runtime", version = "=0.1.0" }
+hibana-runtime = { path = "../hibana-runtime" }
 libc = "0.2"
 static_assertions = "1.1"
 trybuild = "1.0"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-hibana-runtime = { path = "../hibana-runtime", version = "=0.1.0", features = ["host"] }
+hibana-runtime = { path = "../hibana-runtime", features = ["host"] }
 
 [[test]]
 name = "affine_progression"

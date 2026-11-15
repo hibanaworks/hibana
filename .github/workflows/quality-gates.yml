@@ -28,6 +28,7 @@ jobs:
       seed: ${{ steps.plan.outputs.seed }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/checkout-runtime
       - uses: ./.github/actions/core-preflight
         id: plan
 
