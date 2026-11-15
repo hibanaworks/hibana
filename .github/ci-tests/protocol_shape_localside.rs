@@ -1421,7 +1421,7 @@ mod tests {
         let Protocol::Seq(_, tail) = right.as_mut() else {
             unreachable!()
         };
-        *tail = Box::new(message(0, 2, false));
+        **tail = message(0, 2, false);
         let mut leaves = Vec::new();
         parallel_parts_for_actor(&source, 0, &mut leaves);
         assert_eq!(leaves.len(), 2, "a real local suffix retains its join");
