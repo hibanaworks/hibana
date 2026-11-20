@@ -12,6 +12,15 @@ if [[ "${1:-}" == --admission-controls ]]; then
   admission_controls=true
   shift
 fi
+epf=
+if [[ "${1:-}" == --epf ]]; then
+  if [[ ! -f "${2:-}" || ! -x "${2:-}" ]]; then
+    echo '--epf requires an executable EPF checker' >&2
+    exit 2
+  fi
+  epf="$2"
+  shift 2
+fi
 if [[ "${1:-}" == --contracts ]]; then
   if [[ $# != 3 ]]; then
     echo "usage: $0 --contracts FIRST COUNT" >&2
@@ -70,6 +79,10 @@ if [[ "$check" == true ]]; then
   cmp "$temporary" "${OUTPUT}/platform.txt"
   hibana_protocol_compiler_environment > "$temporary"
   cmp "$temporary" "${OUTPUT}/compiler-environment.sha256"
+  if [[ -n "$epf" ]]; then
+    shasum -a 256 < "$epf" > "$temporary"
+    cmp "$temporary" "${OUTPUT}/epf-binary.sha256"
+  fi
   (
     cd "${OUTPUT}"
     shasum -a 256 --check passed.sha256
@@ -81,6 +94,7 @@ if [[ "$check" == true ]]; then
 fi
 mkdir -p "$(dirname "${OUTPUT}")"
 mkdir "${OUTPUT}"
+if [[ -n "$epf" ]]; then shasum -a 256 < "$epf" > "${OUTPUT}/epf-binary.sha256"; fi
 rustc +"${TOOLCHAIN:-stable}" --version > "${OUTPUT}/compiler.txt"
 uname -sm > "${OUTPUT}/platform.txt"
 hibana_protocol_compiler_environment > "${OUTPUT}/compiler-environment.sha256"
@@ -116,6 +130,10 @@ cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/
 cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
   --bin protocol-shape-rejections -- "${OUTPUT}" "${TOOLCHAIN:-stable}"
 if [[ "$(cat "${OUTPUT}/inputs.json")" == '[]' ]]; then
+  if [[ -n "$epf" ]]; then
+    echo 'EPF qualification requires a population with real Endpoint executions' >&2
+    exit 1
+  fi
   source_hashes > "${OUTPUT}/source-after.sha256"
   cmp "${OUTPUT}/source.sha256" "${OUTPUT}/source-after.sha256"
   (cd "${OUTPUT}" && shasum -a 256 --check inputs.sha256 > inputs-check.log)
@@ -139,10 +157,11 @@ CHECKER="$(bash "${ROOT_DIR}/.github/scripts/build_protocol_checker.sh")"
   "${OUTPUT}/inputs.json" "${OUTPUT}/observations" | tee "${OUTPUT}/oracle.log"
 for capture in "${OUTPUT}"/captures/*.jsonl; do
   name="$(basename "$capture" .jsonl)"
+  capture_args=("${CHECKER}" "$capture" "${OUTPUT}/source-witnesses/${name}.witness.jsonl"
+    "${OUTPUT}/admission-observations/${name}.jsonl" "${OUTPUT}/source-cuts-${name}")
+  if [[ -n "$epf" ]]; then capture_args+=(--epf "$epf"); fi
   cargo +"${TOOLCHAIN:-stable}" run --locked --manifest-path "${ROOT_DIR}/.github/ci-tests/Cargo.toml" \
-    --bin protocol-shape-capture -- "${CHECKER}" "$capture" \
-    "${OUTPUT}/source-witnesses/${name}.witness.jsonl" \
-    "${OUTPUT}/admission-observations/${name}.jsonl" "${OUTPUT}/source-cuts-${name}" \
+    --bin protocol-shape-capture -- "${capture_args[@]}" \
     | tee "${OUTPUT}/source-cuts-${name}.log"
 done
 cat "${OUTPUT}/diagnose.time" "${OUTPUT}/compile.time" "${OUTPUT}/execute.time" "${OUTPUT}/oracle.time"
@@ -179,8 +198,14 @@ cp "${OUTPUT}/source-coverage-counts.tsv" "${OUTPUT}/executed-coverage-counts.ts
       >> admission-observations.sha256
     shasum -a 256 "${directory}source-answers.json" "${directory}protocol.bin" \
       >> capture-artifacts.sha256
+    if [[ -n "$epf" ]]; then
+      shasum -a 256 "${directory}query-certificates.jsonl" >> capture-artifacts.sha256
+      find "$directory" -type f \( -name audit.json -o -name witness.bin -o -name 'capture-*.bin' \) -print0 |
+        xargs -0 shasum -a 256 -- >> capture-artifacts.sha256
+    fi
   done
 )
+if [[ -n "$epf" ]]; then shasum -a 256 < "$epf" | cmp - "${OUTPUT}/epf-binary.sha256"; fi
 rm -r -- "${OUTPUT}/observations" "${OUTPUT}/scope-parts" \
   "${OUTPUT}/admission-observations" "${OUTPUT}/operation-states" "${OUTPUT}/whole-operation-states"
 for directory in "${OUTPUT}"/source-cuts-*/; do
@@ -205,6 +230,7 @@ if [[ -d "${OUTPUT}/rejected/target" ]]; then rm -r -- "${OUTPUT}/rejected/targe
     inputs.sha256 dependencies.sha256 oracle.log controls.log admission-observations.sha256
     capture-artifacts.sha256 native-builds.jsonl roll-schedule-coverage.tsv)
   if [[ -f admission-controls.log ]]; then files+=(admission-controls.log); fi
+  if [[ -n "$epf" ]]; then files+=(epf-binary.sha256); fi
   shasum -a 256 "${files[@]}" native-compile-*.jsonl scope-observations/*.jsonl controls/*/rejection.log \
     admission-controls/*/rejection.log source-cuts-*.log source-cuts-*/summary.json > passed.sha256
 )

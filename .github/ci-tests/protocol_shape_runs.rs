@@ -66,7 +66,7 @@ fn invoke(
         .env_remove(OUTPUT);
     if let Some((range, output)) = part {
         println!(
-            "{name}: rejection probes for scripts {}..{}; full positive baselines",
+            "{name}: baselines and probes for scripts {}..{}",
             range.start, range.end
         );
         command
@@ -230,7 +230,6 @@ fn run_case(binary: &Path, name: &str, output: &Path, case: &Case, size: usize) 
     let initial = output
         .join("observations")
         .join(format!("{}.jsonl", case.name));
-    let first_initial = parts.join("initial.jsonl");
     let assembled = parts.join("assembled.jsonl");
     for file in [&observation, &initial] {
         fs::create_dir_all(file.parent().ok_or("observation has no parent directory")?)?;
@@ -256,18 +255,7 @@ fn run_case(binary: &Path, name: &str, output: &Path, case: &Case, size: usize) 
     );
     for batch in parts.chunks(workers) {
         for (_, directory) in batch {
-            for file in [
-                directory
-                    .join("observations")
-                    .join(format!("{}.jsonl", case.name)),
-                directory
-                    .join("scope-observations")
-                    .join(format!("{}.jsonl", case.name)),
-            ] {
-                if file.exists() {
-                    fs::remove_file(file)?;
-                }
-            }
+            fs::create_dir(directory)?;
         }
         std::thread::scope(|scope| -> Result<()> {
             let mut children = Vec::new();
@@ -285,16 +273,6 @@ fn run_case(binary: &Path, name: &str, output: &Path, case: &Case, size: usize) 
             Ok(())
         })?;
         for (range, directory) in batch {
-            let initial_part = directory
-                .join("observations")
-                .join(format!("{}.jsonl", case.name));
-            if range.start == 0 {
-                fs::rename(&initial_part, &first_initial)?;
-            } else if !same_bytes(&initial_part, &first_initial)? {
-                return Err(
-                    "initial or continuation observations changed between partitions".into(),
-                );
-            }
             let part = directory
                 .join("scope-observations")
                 .join(format!("{}.jsonl", case.name));
@@ -328,28 +306,19 @@ fn run_case(binary: &Path, name: &str, output: &Path, case: &Case, size: usize) 
     }
     writer.flush()?;
     drop(writer);
-    fs::rename(&first_initial, initial)?;
     fs::rename(assembled, observation)?;
     measurements::assemble(output, case, &parts)?;
-    let whole_states = output.join("whole-operation-states");
-    fs::create_dir_all(&whole_states)?;
+    // Only the first nonempty interval runs the whole-Endpoint prefix matrix.
     let filename = format!("{}.jsonl", case.name);
-    let destination = whole_states.join(&filename);
-    for (_, part) in &parts {
-        let source = part.join("whole-operation-states").join(&filename);
-        if destination.try_exists()? {
-            if !same_bytes(&source, &destination)? {
-                return Err("whole-call cuts changed between script partitions".into());
-            }
-        } else {
-            fs::copy(source, &destination)?;
-        }
-    }
-    fs::remove_dir_all(
-        first_initial
-            .parent()
-            .ok_or("missing partition directory")?,
+    let first = &parts[0].1;
+    fs::rename(first.join("observations").join(&filename), initial)?;
+    let states = output.join("whole-operation-states");
+    fs::create_dir_all(&states)?;
+    fs::rename(
+        first.join("whole-operation-states").join(&filename),
+        states.join(filename),
     )?;
+    fs::remove_dir_all(first.parent().ok_or("missing partition directory")?)?;
     println!(
         "{name}: all {} source scripts and all rejection probes completed",
         case.scripts

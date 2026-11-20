@@ -2,6 +2,295 @@ mod common;
 #[path = "../examples/support/in_process.rs"]
 pub mod in_process;
 
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_early_frame_from_another_arm_survives_its_undelivered_prefix()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::{Future, poll_fn},
+        pin::pin,
+        task::Poll,
+    };
+    type Loan<'r> = Msg<0, hibana::Endpoint<'r, 3>>;
+    type Read = Msg<1, ()>;
+    type Value = Msg<2, ()>;
+    type Returned<'r> = Msg<3, hibana::Endpoint<'r, 3>>;
+    type Left = Msg<4, ()>;
+    type Prefix = Msg<5, ()>;
+    type Early = Msg<6, ()>;
+    type Right = Msg<7, ()>;
+    type Other = Msg<8, ()>;
+    type Ack = Msg<9, ()>;
+    type Done = Msg<10, ()>;
+    let source = g::par(
+        g::seq(
+            g::send::<0, 1, Loan>(),
+            g::seq(
+                g::send::<3, 2, Read>(),
+                g::seq(g::send::<2, 3, Value>(), g::send::<1, 0, Returned>()),
+            ),
+        ),
+        g::route(
+            g::seq(
+                g::send::<0, 1, Left>(),
+                g::seq(g::send::<0, 2, Prefix>(), g::send::<1, 2, Early>()),
+            ),
+            g::seq(
+                g::send::<0, 1, Right>(),
+                g::seq(
+                    g::send::<1, 2, Other>(),
+                    g::seq(g::send::<2, 1, Ack>(), g::send::<1, 0, Done>()),
+                ),
+            ),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p3 = project::<3>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 128 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let session = SessionId::new(1957);
+    let mut owner = rv.enter(session, &p0).unwrap();
+    let db = rv.enter(session, &p3).unwrap();
+    let mut worker = rv.enter(session, &p1).unwrap();
+    let mut service = rv.enter(session, &p2).unwrap();
+    owner.send::<Loan>(db).await?;
+    owner.send::<Left>(&()).await?;
+    worker.recv::<Left>().await?;
+    worker.send::<Early>(&()).await?;
+    let queued = transport.queued_frame(2);
+    {
+        let mut receive = pin!(service.recv::<Other>());
+        let result = poll_fn(|cx| Poll::Ready(receive.as_mut().poll(cx))).await;
+        assert!(
+            matches!(result, Poll::Ready(Err(error)) if error.is_unavailable()),
+            "a legal early left-arm frame cannot fault an excluded receive: {result:?}"
+        );
+    }
+    assert_eq!(transport.queued_frame(2), queued);
+    assert!(service.recv::<Early>().await.unwrap_err().is_unavailable());
+    assert_eq!(transport.queued_frame(2), queued);
+    owner.send::<Prefix>(&()).await?;
+    service.recv::<Prefix>().await?;
+    service.recv::<Early>().await?;
+    let mut db = worker.recv::<Loan>().await?;
+    db.send::<Read>(&()).await?;
+    service.recv::<Read>().await?;
+    service.send::<Value>(&()).await?;
+    db.recv::<Value>().await?;
+    worker.send::<Returned>(db).await?;
+    drop(owner.recv::<Returned>().await?);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_early_file_reply_cannot_wait_past_its_own_repair_notice()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::{Future, poll_fn},
+        pin::pin,
+        task::Poll,
+    };
+    use hibana::Endpoint;
+    type Loan<'r> = Msg<200, Endpoint<'r, 3>>;
+    type Request = Msg<201, u32>;
+    type Reply = Msg<202, u32>;
+    type Retry = Msg<203, u32>;
+    type Notice = Msg<204, u32>;
+    type Stop = Msg<205, u32>;
+    type Returned<'r> = Msg<206, Endpoint<'r, 3>>;
+    let exchange = g::seq(g::send::<3, 0, Request>(), g::send::<0, 3, Reply>());
+    let repair = g::seq(
+        g::send::<1, 0, Retry>(),
+        g::seq(g::send::<0, 3, Notice>(), exchange),
+    );
+    let source = g::seq(
+        g::send::<2, 0, Loan>(),
+        g::seq(
+            exchange,
+            g::seq(
+                g::route(repair, g::send::<1, 0, Stop>()),
+                g::send::<0, 2, Returned>(),
+            ),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p3 = project::<3>(&source);
+    for cut in 0..=3 {
+        let transport = TestTransport::new();
+        let mut slab = [0; 128 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, transport.clone())
+            .unwrap();
+        let session = SessionId::new(1952);
+        let mut issuer = rv.enter(session, &p2).unwrap();
+        let mut holder = rv.enter(session, &p0).unwrap();
+        let mut controller = rv.enter(session, &p1).unwrap();
+        let file = rv.enter(session, &p3).unwrap();
+        issuer.send::<Loan>(file).await?;
+        let mut file = holder.recv::<Loan>().await?;
+        file.send::<Request>(&11).await?;
+        assert_eq!(holder.recv::<Request>().await?, 11);
+        holder.send::<Reply>(&13).await?;
+        assert_eq!(file.recv::<Reply>().await?, 13);
+        if cut >= 1 {
+            controller.send::<Retry>(&17).await?;
+        }
+        if cut >= 2 {
+            assert_eq!(holder.recv::<Retry>().await?, 17);
+        }
+        if cut >= 3 {
+            holder.send::<Notice>(&19).await?;
+        }
+        let queued = (cut == 3).then(|| transport.queued_frame(3));
+        let rejected = {
+            let mut call = pin!(file.recv::<Reply>());
+            poll_fn(|cx| Poll::Ready(call.as_mut().poll(cx))).await
+        };
+        assert!(
+            matches!(rejected, Poll::Ready(Err(ref error)) if error.is_unavailable()),
+            "cut {cut}: an incomplete file notice/request cannot be awaited through the same file view: {rejected:?}",
+        );
+        if let Some(queued) = queued {
+            assert_eq!(transport.queued_frame(3), queued);
+        }
+        if cut < 1 {
+            controller.send::<Retry>(&17).await?;
+        }
+        if cut < 2 {
+            assert_eq!(holder.recv::<Retry>().await?, 17);
+        }
+        if cut < 3 {
+            holder.send::<Notice>(&19).await?;
+        }
+        assert_eq!(file.recv::<Notice>().await?, 19);
+        file.send::<Request>(&23).await?;
+        assert_eq!(holder.recv::<Request>().await?, 23);
+        holder.send::<Reply>(&29).await?;
+        assert_eq!(file.recv::<Reply>().await?, 29);
+        holder.send::<Returned>(file).await?;
+        drop(issuer.recv::<Returned>().await?);
+        assert!(transport.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_pending_file_reply_rechecks_a_choice_learned_by_its_holder()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::{Future, poll_fn},
+        pin::pin,
+        task::Poll,
+    };
+    use hibana::Endpoint;
+    type Loan<'r> = Msg<210, Endpoint<'r, 3>>;
+    type Request = Msg<211, u32>;
+    type Reply = Msg<212, u32>;
+    type Retry = Msg<213, u32>;
+    type Notice = Msg<214, u32>;
+    type Stop = Msg<215, u32>;
+    type Returned<'r> = Msg<216, Endpoint<'r, 3>>;
+    type Begin = Msg<217, u32>;
+    let exchange = g::seq(g::send::<3, 0, Request>(), g::send::<0, 3, Reply>());
+    let source = g::seq(
+        g::send::<2, 0, Loan>(),
+        g::seq(
+            exchange,
+            g::seq(
+                g::seq(
+                    g::send::<0, 1, Begin>(),
+                    g::route(
+                        g::seq(
+                            g::send::<1, 0, Retry>(),
+                            g::seq(g::send::<0, 3, Notice>(), exchange),
+                        ),
+                        g::seq(g::send::<1, 0, Stop>(), g::send::<0, 3, Reply>()),
+                    ),
+                )
+                .roll(),
+                g::send::<0, 2, Returned>(),
+            ),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p3 = project::<3>(&source);
+    for cancelled in [false, true] {
+        let transport = TestTransport::new();
+        let mut slab = [0; 128 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, transport.clone())
+            .unwrap();
+        let session = SessionId::new(1953);
+        let mut issuer = rv.enter(session, &p2).unwrap();
+        let mut holder = rv.enter(session, &p0).unwrap();
+        let mut controller = rv.enter(session, &p1).unwrap();
+        let file = rv.enter(session, &p3).unwrap();
+        issuer.send::<Loan>(file).await?;
+        let mut file = holder.recv::<Loan>().await?;
+        file.send::<Request>(&11).await?;
+        assert_eq!(holder.recv::<Request>().await?, 11);
+        holder.send::<Reply>(&13).await?;
+        assert_eq!(file.recv::<Reply>().await?, 13);
+        holder.send::<Begin>(&15).await?;
+        assert_eq!(controller.recv::<Begin>().await?, 15);
+        {
+            let mut receive = pin!(file.recv::<Reply>());
+            let first = poll_fn(|cx| Poll::Ready(receive.as_mut().poll(cx))).await;
+            assert!(
+                matches!(first, Poll::Pending),
+                "cancelled {cancelled}: {first:?}"
+            );
+            if !cancelled {
+                controller.send::<Retry>(&17).await?;
+                assert_eq!(holder.recv::<Retry>().await?, 17);
+                holder.send::<Notice>(&19).await?;
+                let next = poll_fn(|cx| Poll::Ready(receive.as_mut().poll(cx))).await;
+                assert!(
+                    matches!(next, Poll::Ready(Err(ref error)) if error.is_unavailable()),
+                    "pending receive must reject without consuming the selected notice: {next:?}"
+                );
+            }
+        }
+        if cancelled {
+            controller.send::<Retry>(&17).await?;
+            assert_eq!(holder.recv::<Retry>().await?, 17);
+            holder.send::<Notice>(&19).await?;
+            let error = file.recv::<Reply>().await.unwrap_err();
+            assert!(
+                error.is_unavailable(),
+                "cancelled receive must preserve the selected notice: {error:?}"
+            );
+        }
+        assert_eq!(file.recv::<Notice>().await?, 19);
+        file.send::<Request>(&23).await?;
+        assert_eq!(holder.recv::<Request>().await?, 23);
+        holder.send::<Reply>(&29).await?;
+        assert_eq!(file.recv::<Reply>().await?, 29);
+        holder.send::<Returned>(file).await?;
+        drop(issuer.recv::<Returned>().await?);
+        assert!(transport.queue_is_empty());
+    }
+    Ok(())
+}
+
 use common::TestTransport;
 use hibana::{
     g::{self, Msg},
@@ -12,6 +301,281 @@ use hibana::{
         resolver::{DecisionArm, ResolverError, ResolverRef},
     },
 };
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_rolled_receive_is_unavailable_after_its_resource_permanently_leaves()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::{Future, poll_fn},
+        pin::pin,
+        task::Poll,
+    };
+    use hibana::Endpoint;
+    type Resource<'r> = Msg<230, Endpoint<'r, 2>>;
+    type File<'r> = Msg<231, Endpoint<'r, 3>>;
+    type Rejected = Msg<232, ()>;
+    type Feedback = Msg<233, ()>;
+    type Ready = Msg<234, ()>;
+    type Request = Msg<235, ()>;
+    type ResultMessage = Msg<236, ()>;
+    type Approved = Msg<237, ()>;
+    type Published = Msg<238, ()>;
+    type Next = Msg<239, ()>;
+    let retry = g::seq(
+        g::send::<2, 0, Rejected>(),
+        g::seq(
+            g::send::<0, 3, Feedback>(),
+            g::seq(
+                g::send::<0, 2, Ready>(),
+                g::seq(g::send::<3, 2, Request>(), g::send::<2, 0, ResultMessage>()),
+            ),
+        ),
+    );
+    let approved = || {
+        g::seq(
+            g::send::<2, 4, Approved>(),
+            g::seq(
+                g::send::<1, 4, Resource>(),
+                g::seq(
+                    g::send::<2, 0, ResultMessage>(),
+                    g::seq(g::send::<0, 3, Published>(), g::send::<4, 5, Next>()),
+                ),
+            ),
+        )
+    };
+    let source = g::seq(
+        g::send::<6, 1, Resource>(),
+        g::seq(
+            g::send::<6, 5, File>(),
+            g::route(approved(), g::seq(retry.roll(), approved())).resolve::<1955>(),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p3 = project::<3>(&source);
+    let p4 = project::<4>(&source);
+    let p5 = project::<5>(&source);
+    let p6 = project::<6>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 128 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    rv.set_resolver(
+        &p2,
+        ResolverRef::<1955>::decision_state(&(), |_| Ok(DecisionArm::Right)),
+    )
+    .unwrap();
+    let session = SessionId::new(1955);
+    let mut repository = rv.enter(session, &p0).unwrap();
+    let mut initial = rv.enter(session, &p1).unwrap();
+    let mut issuer = rv.enter(session, &p6).unwrap();
+    let resource = rv.enter(session, &p2).unwrap();
+    let file = rv.enter(session, &p3).unwrap();
+    let mut finalizer = rv.enter(session, &p4).unwrap();
+    let mut agent = rv.enter(session, &p5).unwrap();
+    issuer.send::<Resource>(resource).await?;
+    let mut resource = initial.recv::<Resource>().await?;
+    issuer.send::<File>(file).await?;
+    let mut file = agent.recv::<File>().await?;
+    resource.send::<Rejected>(&()).await?;
+    repository.recv::<Rejected>().await?;
+    repository.send::<Feedback>(&()).await?;
+    file.recv::<Feedback>().await?;
+    repository.send::<Ready>(&()).await?;
+    resource.recv::<Ready>().await?;
+    file.send::<Request>(&()).await?;
+    resource.recv::<Request>().await?;
+    resource.send::<ResultMessage>(&()).await?;
+    repository.recv::<ResultMessage>().await?;
+    {
+        let mut receiving = pin!(file.recv::<Feedback>());
+        let outcome = poll_fn(|cx| Poll::Ready(receiving.as_mut().poll(cx))).await;
+        assert!(matches!(outcome, Poll::Pending), "{outcome:?}");
+    }
+    resource.send::<Approved>(&()).await?;
+    initial.send::<Resource>(resource).await?;
+    finalizer.recv::<Approved>().await?;
+    let mut resource = finalizer.recv::<Resource>().await?;
+    resource.send::<ResultMessage>(&()).await?;
+    repository.recv::<ResultMessage>().await?;
+    repository.send::<Published>(&()).await?;
+    let queued = transport.queued_frame(3);
+    {
+        let mut receiving = pin!(file.recv::<Feedback>());
+        let outcome = poll_fn(|cx| Poll::Ready(receiving.as_mut().poll(cx))).await;
+        assert!(
+            matches!(outcome, Poll::Ready(Err(error)) if error.is_unavailable()),
+            "an arrived causal witness must exclude the obsolete receive: {outcome:?}"
+        );
+    }
+    assert_eq!(transport.queued_frame(3), queued);
+    {
+        let branch = file.offer().await?;
+        assert_eq!(branch.label(), 238);
+    }
+    file.recv::<Published>().await?;
+    {
+        let mut receiving = pin!(file.recv::<Feedback>());
+        let outcome = poll_fn(|cx| Poll::Ready(receiving.as_mut().poll(cx))).await;
+        assert!(
+            matches!(outcome, Poll::Ready(Err(error)) if error.is_unavailable()),
+            "the old review cannot await a sender whose resource permanently left: {outcome:?}"
+        );
+    }
+    {
+        let mut peers = ();
+        let mut borrowed = file.borrow(&mut peers);
+        let mut receiving = pin!(borrowed.recv::<Feedback>());
+        let outcome = poll_fn(|cx| Poll::Ready(receiving.as_mut().poll(cx))).await;
+        assert!(
+            matches!(outcome, Poll::Ready(Err(error)) if error.is_unavailable()),
+            "the borrowed file must reject that same obsolete receive: {outcome:?}"
+        );
+    }
+    assert!(transport.queue_is_empty());
+    finalizer.send::<Next>(&()).await?;
+    agent.recv::<Next>().await?;
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn retiring_a_sender_does_not_erase_an_already_accepted_roll_message()
+-> Result<(), hibana::EndpointError> {
+    type Loan<'r> = Msg<240, hibana::Endpoint<'r, 2>>;
+    type File<'r> = Msg<241, hibana::Endpoint<'r, 3>>;
+    type Ask = Msg<242, ()>;
+    type Feedback = Msg<243, u32>;
+    type Confirmed = Msg<244, ()>;
+    type Published = Msg<245, ()>;
+    let source = g::seq(
+        g::send::<6, 1, Loan>(),
+        g::seq(
+            g::send::<6, 7, File>(),
+            g::seq(
+                g::seq(g::send::<2, 0, Ask>(), g::send::<0, 3, Feedback>()).roll(),
+                g::seq(
+                    g::send::<1, 4, Loan>(),
+                    g::seq(g::send::<2, 5, Confirmed>(), g::send::<5, 3, Published>()),
+                ),
+            ),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p3 = project::<3>(&source);
+    let p4 = project::<4>(&source);
+    let p5 = project::<5>(&source);
+    let p6 = project::<6>(&source);
+    let p7 = project::<7>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 128 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let session = SessionId::new(1956);
+    let mut repository = rv.enter(session, &p0).unwrap();
+    let mut initial = rv.enter(session, &p1).unwrap();
+    let mut issuer = rv.enter(session, &p6).unwrap();
+    let resource = rv.enter(session, &p2).unwrap();
+    let file = rv.enter(session, &p3).unwrap();
+    let mut finalizer = rv.enter(session, &p4).unwrap();
+    let mut observer = rv.enter(session, &p5).unwrap();
+    let mut agent = rv.enter(session, &p7).unwrap();
+    issuer.send::<Loan>(resource).await?;
+    let mut resource = initial.recv::<Loan>().await?;
+    issuer.send::<File>(file).await?;
+    let mut file = agent.recv::<File>().await?;
+    resource.send::<Ask>(&()).await?;
+    repository.recv::<Ask>().await?;
+    repository.send::<Feedback>(&17).await?;
+    assert_eq!(file.recv::<Feedback>().await?, 17);
+    resource.send::<Ask>(&()).await?;
+    repository.recv::<Ask>().await?;
+    repository.send::<Feedback>(&19).await?;
+    initial.send::<Loan>(resource).await?;
+    let mut resource = finalizer.recv::<Loan>().await?;
+    resource.send::<Confirmed>(&()).await?;
+    observer.recv::<Confirmed>().await?;
+    observer.send::<Published>(&()).await?;
+    file.recv::<Published>().await?;
+    assert_eq!(file.recv::<Feedback>().await?, 19);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn an_empty_receive_can_be_refused_after_another_view_learns_the_choice()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::{Future, poll_fn},
+        pin::pin,
+        task::Poll,
+    };
+    type Loan<'r> = Msg<220, hibana::Endpoint<'r, 3>>;
+    type Retry = Msg<221, u32>;
+    type Notice = Msg<222, u32>;
+    type Stop = Msg<223, u32>;
+    type Reply = Msg<224, u32>;
+    type Returned<'r> = Msg<225, hibana::Endpoint<'r, 3>>;
+    let source = g::seq(
+        g::send::<2, 0, Loan>(),
+        g::seq(
+            g::route(
+                g::seq(g::send::<1, 0, Retry>(), g::send::<1, 3, Notice>()),
+                g::par(g::send::<1, 0, Stop>(), g::send::<1, 3, Reply>()),
+            ),
+            g::send::<0, 2, Returned>(),
+        ),
+    );
+    let p0 = project::<0>(&source);
+    let p1 = project::<1>(&source);
+    let p2 = project::<2>(&source);
+    let p3 = project::<3>(&source);
+    let transport = TestTransport::new();
+    let mut slab = [0; 128 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(1954);
+    let mut issuer = rv.enter(sid, &p2).unwrap();
+    let mut holder = rv.enter(sid, &p0).unwrap();
+    let mut controller = rv.enter(sid, &p1).unwrap();
+    let file = rv.enter(sid, &p3).unwrap();
+    issuer.send::<Loan>(file).await?;
+    let mut file = holder.recv::<Loan>().await?;
+    {
+        let mut receive = pin!(file.recv::<Reply>());
+        let pending = poll_fn(|cx| Poll::Ready(receive.as_mut().poll(cx))).await;
+        assert!(matches!(pending, Poll::Pending), "{pending:?}");
+        controller.send::<Retry>(&17).await?;
+        assert_eq!(holder.recv::<Retry>().await?, 17);
+        let refused = poll_fn(|cx| Poll::Ready(receive.as_mut().poll(cx))).await;
+        assert!(
+            matches!(refused, Poll::Ready(Err(error)) if error.is_unavailable()),
+            "an empty pending receive must not fault the run when another view learns its exclusion: {refused:?}"
+        );
+    }
+    controller.send::<Notice>(&19).await?;
+    assert_eq!(file.recv::<Notice>().await?, 19);
+    holder.send::<Returned>(file).await?;
+    drop(issuer.recv::<Returned>().await?);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
 fn assert_endpoint_debug_boundary(error: hibana::EndpointError, operation: &str) {
     let rendered = format!("{error:?}");
     assert!(
@@ -844,6 +1408,35 @@ async fn payload_schema_mismatch_cannot_publish_send_or_consume_recv() {
             assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
         };
     };
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn declared_receive_is_recoverable_while_another_schema_with_its_label_is_enabled() {
+    type First = Msg<13, u32>;
+    type Later = Msg<13, u16>;
+    let program = g::seq(g::send::<0, 1, First>(), g::send::<0, 1, Later>());
+    let origin_program: RoleProgram<0> = project(&program);
+    let target_program: RoleProgram<1> = project(&program);
+    let mut slab = [0; 64 * 1024];
+    let transport = TestTransport::new();
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let sid = SessionId::new(415);
+    let mut origin = rv.enter(sid, &origin_program).unwrap();
+    let mut target = rv.enter(sid, &target_program).unwrap();
+
+    origin.send::<First>(&100).await.unwrap();
+    let error = target.recv::<Later>().await.unwrap_err();
+    assert!(error.is_unavailable(), "{error:?}");
+    assert!(!transport.queue_is_empty());
+    assert_eq!(target.recv::<First>().await.unwrap(), 100);
+    origin.send::<Later>(&200).await.unwrap();
+    assert_eq!(target.recv::<Later>().await.unwrap(), 200);
+    assert!(transport.queue_is_empty());
 }
 
 #[hibana_runtime::main(crate::in_process::InProcess::default())]
@@ -1735,6 +2328,112 @@ async fn an_unadmitted_wire_send_keeps_its_required_receive_and_later_send_avail
     assert_eq!(owner.recv::<Input>().await?, 5);
     owner.send::<Output>(&7).await?;
     assert_eq!(peer.recv::<Output>().await?, 7);
+    assert!(transport.queue_is_empty());
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_borrowed_retry_after_handoff_leaves_the_next_review_usable()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::{Future, poll_fn},
+        pin::pin,
+        task::Poll,
+    };
+    use hibana::Endpoint;
+    type Loan<'run> = Msg<207, Endpoint<'run, 3>>;
+    type Material = Msg<208, u32>;
+    type Review = Msg<209, u32>;
+    type Outcome = Msg<210, u32>;
+    type Edit = Msg<211, u32>;
+    type Edited = Msg<212, u32>;
+    type Settled = Msg<213, u32>;
+    type Rework = Msg<214, u32>;
+    let assessment = g::seq(g::send::<1, 2, Material>(), g::send::<2, 1, Review>());
+    let rejected = g::seq(
+        g::seq(g::send::<1, 5, Rework>(), g::send::<1, 2, Outcome>()),
+        g::seq(
+            g::send::<5, 3, Edit>(),
+            g::seq(g::send::<3, 5, Edited>(), assessment),
+        ),
+    );
+    let approved = g::seq(
+        g::send::<1, 2, Settled>(),
+        g::seq(g::send::<3, 5, Settled>(), g::send::<1, 0, Loan>()),
+    );
+    let source = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            assessment,
+            g::seq(
+                g::route(approved, g::seq(rejected.roll(), approved)),
+                g::seq(
+                    g::send::<0, 4, Loan>(),
+                    g::seq(
+                        g::send::<4, 2, Material>(),
+                        g::seq(g::send::<2, 4, Review>(), g::send::<4, 2, Outcome>()),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let transport = TestTransport::new();
+    let mut slab = [0; 128 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, transport.clone())
+        .unwrap();
+    let session = SessionId::new(1958);
+    let mut owner = rv.enter(session, &project::<0>(&source)).unwrap();
+    let mut earlier = rv.enter(session, &project::<1>(&source)).unwrap();
+    let mut reviewer = rv.enter(session, &project::<2>(&source)).unwrap();
+    let document = rv.enter(session, &project::<3>(&source)).unwrap();
+    let mut later = rv.enter(session, &project::<4>(&source)).unwrap();
+    let mut author = rv.enter(session, &project::<5>(&source)).unwrap();
+    owner.send::<Loan>(document).await?;
+    let mut document = earlier.recv::<Loan>().await?;
+    earlier.send::<Material>(&1).await?;
+    assert_eq!(reviewer.recv::<Material>().await?, 1);
+    reviewer.send::<Review>(&2).await?;
+    assert_eq!(earlier.recv::<Review>().await?, 2);
+    earlier.send::<Rework>(&3).await?;
+    assert_eq!(author.recv::<Rework>().await?, 3);
+    earlier.send::<Outcome>(&3).await?;
+    assert_eq!(reviewer.recv::<Outcome>().await?, 3);
+    author.send::<Edit>(&4).await?;
+    assert_eq!(document.recv::<Edit>().await?, 4);
+    document.send::<Edited>(&5).await?;
+    assert_eq!(author.recv::<Edited>().await?, 5);
+    earlier.send::<Material>(&6).await?;
+    assert_eq!(reviewer.recv::<Material>().await?, 6);
+    reviewer.send::<Review>(&7).await?;
+    assert_eq!(earlier.recv::<Review>().await?, 7);
+    earlier.send::<Settled>(&8).await?;
+    assert_eq!(reviewer.recv::<Settled>().await?, 8);
+    document.send::<Settled>(&8).await?;
+    assert_eq!(author.recv::<Settled>().await?, 8);
+    earlier.send::<Loan>(document).await?;
+    let document = owner.recv::<Loan>().await?;
+    owner.send::<Loan>(document).await?;
+    let _document = later.recv::<Loan>().await?;
+    later.send::<Material>(&9).await?;
+    assert_eq!(reviewer.recv::<Material>().await?, 9);
+    assert!(transport.queue_is_empty());
+    let old_start = {
+        let mut call = pin!(earlier.send::<Rework>(&10));
+        poll_fn(|cx| Poll::Ready(call.as_mut().poll(cx))).await
+    };
+    assert!(
+        matches!(old_start, Poll::Ready(Err(error)) if error.is_unavailable()),
+        "{old_start:?}"
+    );
+    assert!(transport.queue_is_empty());
+    reviewer.send::<Review>(&11).await?;
+    assert_eq!(later.recv::<Review>().await?, 11);
+    later.send::<Outcome>(&12).await?;
+    assert_eq!(reviewer.recv::<Outcome>().await?, 12);
     assert!(transport.queue_is_empty());
     Ok(())
 }

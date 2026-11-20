@@ -1468,7 +1468,7 @@ fn template_cases(budget: usize, shard: usize, shards: usize) -> CaseSet {
     CaseSet {
         namespace: format!("operators-{budget}-{shard}-of-{shards}"),
         description: format!(
-            "operator_budget={budget} parallel_roll_continuations={frontier_cases} shard={shard}/{shards}"
+            "operator_budget={budget} roll_frontiers={frontier_cases} shard={shard}/{shards}"
         ),
         total: total_cases.to_string(),
         cases,
@@ -2252,7 +2252,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         }
         writeln!(
             source,
-            "fn programs()->Programs{{let global={};\nPrograms{{p0:{},p1:{},p2:{},p3:{},issuance:{},resolver_roles:&{:?}}}}}\nlet programs=programs();",
+            "fn programs()->Programs{{let global={};\nPrograms{{p0:{},p1:{},p2:{},p3:{},issuance:{},retired_roll_send:{:?},resolver_roles:&{:?}}}}}\nlet programs=programs();",
             global.rust(),
             if localside::present(global, 0, None) {
                 "Some(project::<0>(&global))"
@@ -2284,6 +2284,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
             } else {
                 "&[]".to_owned()
             },
+            contracts::retired_roll_send(global),
             {
                 let mut roles = Vec::new();
                 global.resolver_roles(&mut roles);
@@ -2365,7 +2366,7 @@ unexpected_cfgs = {{ level = "warn", check-cfg = ["cfg(hibana_repo_tests)", "cfg
         trace_paths.insert(trace_path.clone());
         writeln!(
             source,
-            "],traces:include_str!({:?}),expected_traces:{},prefix_visits:{},completed_plan_words:&completed_plan_words}}).await;\nOk(())\n}}",
+            "],traces:include_str!({:?}),expected_traces:{},prefix_visits:{},planned_words:&planned_words}}).await;\nOk(())\n}}",
             trace_path.canonicalize()?,
             traces.len(),
             global.prefix_visits(),

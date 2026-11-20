@@ -174,6 +174,17 @@ impl EventCursor {
         role: u8,
         entry: usize,
     ) -> bool {
+        if self
+            .machine()
+            .event_program()
+            .footprint()
+            .borrow_epoch_count
+            == 0
+        {
+            // No child can retain an independent visit, so no role can be
+            // preserved. Its row identities cannot change this answer.
+            return false;
+        }
         let Some(row) = self.machine().roll_scope_row(parent) else {
             return false;
         };
@@ -244,7 +255,27 @@ impl EventCursor {
             {
                 continue;
             }
-            let mut entry = |scope| selected(scope, EventArmView::Preview);
+            // A group in another arm would start a new visit too. Classify
+            // coverage under the arm containing that whole proposed group,
+            // rather than treating the preceding visit's arm as its input.
+            // This reads source bounds only; borrowing still admits the live
+            // frontier and does not select an arm or advance a roll epoch.
+            let mut entry = |route| match (
+                program.source_route_arm_for_event(route, start),
+                program.source_route_arm_for_event(route, end - 1),
+            ) {
+                (Some(first), Some(last))
+                    if first == last
+                        && program.source_scope_bounds(route).is_some_and(
+                            |(route_start, _, route_end)| {
+                                body_start <= route_start && route_end <= body_end
+                            },
+                        ) =>
+                {
+                    Some(first)
+                }
+                _ => selected(route, EventArmView::Preview),
+            };
             let covered = (row.start()..row.end()).all(|index| {
                 if self.event_actor_is_local(index, &mut entry) == Some(false)
                     || !self.event_conflict_row_allows(
@@ -439,10 +470,11 @@ impl EventCursor {
     ) -> Option<usize> {
         // A new outgoing acceptance belongs to the current local visit. Only
         // a peer's already accepted incoming continuation can arrive late.
-        if self.machine().event_program().footprint().roll_scope_count == 0
-            || !self.is_recv_at(target)
-        {
+        if self.machine().event_program().footprint().roll_scope_count == 0 {
             return None;
+        }
+        if target > self.local_steps_len() {
+            crate::invariant();
         }
         let mut retained_end = None;
         for scope in self.machine().event_program().roll_ancestors(predecessor) {
@@ -456,7 +488,9 @@ impl EventCursor {
                 }
             }
         }
-        retained_end
+        // Without an enclosing retained visit outside the target, its
+        // direction cannot affect the answer. Decode it only for a match.
+        retained_end.filter(|_| self.is_recv_at(target))
     }
 
     /// An earlier completed visit can keep a later receive enabled while an
@@ -467,15 +501,17 @@ impl EventCursor {
         index: usize,
         source: core::ops::Range<usize>,
     ) -> bool {
-        if source.start >= source.end
-            || !self.is_recv_at(index)
+        if source.start >= source.end {
+            return false;
+        }
+        let Some((event, direction)) = self.machine().event_program().operation_at(index) else {
+            return false;
+        };
+        if direction != crate::global::role_program::RoleLocalDirection::Recv
             || !self.has_retained_roll_completion()
         {
             return false;
         }
-        let Some((event, _)) = self.machine().event_program().operation_at(index) else {
-            return false;
-        };
         let program = self.program_ref();
         for marker in 0..program.source_scope_marker_count() {
             let Some((scope, start, end)) = program.source_roll_at(marker) else {

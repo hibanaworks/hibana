@@ -74,7 +74,9 @@ where
                 }
                 requeue.map_err(RecvError::Transport)?;
                 return match error {
-                    EventAdmissionError::Invariant => Poll::Ready(Ok(None)),
+                    EventAdmissionError::Invariant | EventAdmissionError::EntryViewUnavailable => {
+                        Poll::Ready(Ok(None))
+                    }
                     EventAdmissionError::OtherViewPending
                     | EventAdmissionError::PredecessorPending
                     | EventAdmissionError::HeldPredecessorPending => Poll::Pending,
@@ -163,7 +165,8 @@ where
                         }
                     }
                     return match error {
-                        EventAdmissionError::Invariant => Poll::Ready(Ok(None)),
+                        EventAdmissionError::Invariant
+                        | EventAdmissionError::EntryViewUnavailable => Poll::Ready(Ok(None)),
                         EventAdmissionError::OtherViewPending
                         | EventAdmissionError::PredecessorPending
                         | EventAdmissionError::HeldPredecessorPending => Poll::Pending,

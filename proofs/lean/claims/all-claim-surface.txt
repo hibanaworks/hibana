@@ -420,6 +420,24 @@ Hibana.PendingAcceptance.a_committed_entry_still_waits_for_its_remaining_body : 
       (@Hibana.occurrenceCut Hibana.twoStepSource✝ Hibana.twoStepPlan✝ Hibana.publishedEntry✝)
       (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
     false)
+Hibana.PendingAcceptance.both_current_receipts_enable_the_next_file_visit : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.ready Hibana.fileSource✝
+    (@Hibana.occurrenceCut Hibana.fileSource✝ Hibana.filePlan✝
+      (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint)
+        (List.{0} Hibana.SourcePoint)
+        (@instHAppendOfAppend.{0} (List.{0} Hibana.SourcePoint) (@List.instAppend.{0} Hibana.SourcePoint))
+        Hibana.beforeParallelReceipts✝
+        (@List.cons.{0} Hibana.SourcePoint
+          (Hibana.SourcePoint.committed
+            { event := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+              side := Hibana.EndpointDelegation.Side.receive })
+          (@List.cons.{0} Hibana.SourcePoint
+            (Hibana.SourcePoint.committed
+              { event := @OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)),
+                side := Hibana.EndpointDelegation.Side.receive })
+            (@List.nil.{0} Hibana.SourcePoint)))))
+    (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+  true
 Hibana.PendingAcceptance.completing_that_body_enables_the_continuation : have observed :=
   @HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint)
     (@instHAppendOfAppend.{0} (List.{0} Hibana.SourcePoint) (@List.instAppend.{0} Hibana.SourcePoint))
@@ -440,6 +458,34 @@ And
       (@Hibana.occurrenceCut Hibana.twoStepSource✝ Hibana.twoStepPlan✝ observed)
       (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
     true)
+Hibana.PendingAcceptance.next_file_visit_waits_for_its_own_current_receipt : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.ready Hibana.fileSource✝
+    (@Hibana.occurrenceCut Hibana.fileSource✝ Hibana.filePlan✝
+      (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint)
+        (List.{0} Hibana.SourcePoint)
+        (@instHAppendOfAppend.{0} (List.{0} Hibana.SourcePoint) (@List.instAppend.{0} Hibana.SourcePoint))
+        Hibana.beforeParallelReceipts✝
+        (@List.cons.{0} Hibana.SourcePoint
+          (Hibana.SourcePoint.committed
+            { event := @OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)),
+              side := Hibana.EndpointDelegation.Side.receive })
+          (@List.nil.{0} Hibana.SourcePoint))))
+    (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+  false
+Hibana.PendingAcceptance.next_file_visit_waits_for_the_holders_current_receipt : @Eq.{1} Bool
+  (@Hibana.SourceOccurrenceCut.ready Hibana.fileSource✝
+    (@Hibana.occurrenceCut Hibana.fileSource✝ Hibana.filePlan✝
+      (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.SourcePoint) (List.{0} Hibana.SourcePoint)
+        (List.{0} Hibana.SourcePoint)
+        (@instHAppendOfAppend.{0} (List.{0} Hibana.SourcePoint) (@List.instAppend.{0} Hibana.SourcePoint))
+        Hibana.beforeParallelReceipts✝
+        (@List.cons.{0} Hibana.SourcePoint
+          (Hibana.SourcePoint.committed
+            { event := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+              side := Hibana.EndpointDelegation.Side.receive })
+          (@List.nil.{0} Hibana.SourcePoint))))
+    (Hibana.SourcePoint.accepted (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))))
+  false
 Hibana.PendingAcceptance.the_pending_continuation_has_its_source_prerequisites : @Eq.{1} Bool
   (@Hibana.SourceOccurrenceCut.ready Hibana.source✝
     (@Hibana.occurrenceCut Hibana.source✝ Hibana.plan✝ Hibana.beforeTail✝)
@@ -1383,6 +1429,34 @@ Hibana.a_covered_flow_preserves_its_input : ∀ (flow : Hibana.CausalFlowExpr) (
                                       (@Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat)
                                         untouched event))
                                     (@Eq.{1} Nat record.step.event event))))))
+Hibana.a_delayed_mixed_peer_visit_does_not_enable_the_later_receive : And
+  (@Eq.{1} Bool
+    (@List.all.{0} (Prod.{0, 0} Hibana.SourcePoint Nat)
+      (@List.zipIdx.{0} Hibana.SourcePoint Hibana.mixedPeerPrefix✝
+        (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+      fun x =>
+      Hibana.source_occurrences_preserve_a_queued_continuation_during_reentry.match_1.{1} (fun x => Bool) x
+        fun point index =>
+        @Hibana.SourceOccurrenceCut.ready Hibana.mixedPeerChoice✝.roll
+          (@Hibana.occurrenceCut Hibana.mixedPeerChoice✝.roll Hibana.mixedPeerPlan✝
+            (@List.take.{0} Hibana.SourcePoint index Hibana.mixedPeerPrefix✝))
+          point)
+    true)
+  (And
+    (@Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.ready Hibana.mixedPeerChoice✝.roll
+        (@Hibana.occurrenceCut Hibana.mixedPeerChoice✝.roll Hibana.mixedPeerPlan✝ Hibana.mixedPeerPrefix✝)
+        (Hibana.SourcePoint.committed
+          { event := @OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)),
+            side := Hibana.EndpointDelegation.Side.receive }))
+      false)
+    (@Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.observed Hibana.mixedPeerChoice✝.roll
+        (@Hibana.occurrenceCut Hibana.mixedPeerChoice✝.roll Hibana.mixedPeerPlan✝ Hibana.mixedPeerPrefix✝)
+        (Hibana.SourcePoint.committed
+          { event := @OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)),
+            side := Hibana.EndpointDelegation.Side.receive }))
+      false))
 @Hibana.a_distributed_acceptance_retains_its_source_and_opened_port : ∀ {images : Nat → Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session : Nat} {initial : Nat → Prod.{0, 0} Hibana.ActorProgressObservation Nat}
   {last : Prod.{0, 0} Hibana.DistributedSourceCut (List.{0} Hibana.SourceAcceptance)}
@@ -6131,6 +6205,21 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
                         (fun as i => @LT.lt.{0} Nat instLTNat i (@List.length.{0} Bool as))
                         (@List.instGetElem?NatLtLength.{0} Bool) sample.admitted row.eventId)
                       (@some.{0} Bool true))
+@Hibana.a_target_outside_resumption_tails_has_no_extra_dependency : ∀ {source : Hibana.EndpointDelegation.Source}
+  (plan : Hibana.SourceOccurrenceCut source) (observed : Hibana.SourcePoint → Bool) (prior : Hibana.SourcePoint)
+  (after : Nat),
+  (∀ (scope : Hibana.SourceResumption),
+      @Membership.mem.{0, 0} Hibana.SourceResumption (List.{0} Hibana.SourceResumption)
+          (@List.instMembership.{0} Hibana.SourceResumption)
+          (@Hibana.SourceUnfolding.resumptions source (@Hibana.SourceOccurrenceCut.expanded source plan)
+            (@Hibana.SourceOccurrenceCut.unfolding source plan)
+            (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+          scope →
+        @Eq.{1} Bool (@List.contains.{0} Nat (@instBEqOfDecidableEq.{0} Nat instDecidableEqNat) scope.tail after)
+          false) →
+    @Eq.{1} Bool
+      (@Hibana.SourceOccurrenceCut.resumptionDepends source plan observed prior (Hibana.SourcePoint.accepted after))
+      false
 @Hibana.a_terminal_resource_owner_cannot_have_a_later_handoff : ∀ {key : Hibana.EndpointDelegation.EndpointKey}
   {owner : Hibana.EndpointDelegation.OwnerExpr}
   {bindings : List.{0} (Prod.{0, 0} Nat Hibana.EndpointDelegation.SymbolicBinding)}
@@ -11758,6 +11847,10 @@ Hibana.first_causal_failure_is_earliest : ∀ (left right : Option.{0} Nat) (eve
 Hibana.first_causal_failure_preserves_acceptance : ∀ (left right : Option.{0} Nat),
   Iff (@Eq.{1} (Option.{0} Nat) (Hibana.firstCausalFailure left right) (@none.{0} Nat))
     (And (@Eq.{1} (Option.{0} Nat) left (@none.{0} Nat)) (@Eq.{1} (Option.{0} Nat) right (@none.{0} Nat)))
+Hibana.first_free_receive_color_is_available : ∀ (forbidden : Nat → Bool) (start fuel : Nat),
+  @LT.lt.{0} Nat instLTNat (Hibana.firstFreeReceiveColor forbidden start fuel)
+      (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) start fuel) →
+    @Eq.{1} Bool (forbidden (Hibana.firstFreeReceiveColor forbidden start fuel)) false
 @Hibana.first_owning_lane_is_exact_owner : ∀ {target : Hibana.ActiveOfferKey} {lanes : List.{0} Hibana.ActiveOfferLane}
   {owner : Hibana.ActiveOfferLane},
   @Eq.{1} (Option.{0} Hibana.ActiveOfferLane) (Hibana.firstOwningLane target lanes)
@@ -11985,6 +12078,9 @@ Hibana.global_rolls_length : ∀ (choreo : Hibana.Choreo),
   @Hibana.EndpointTransfer.Step View Frame Hibana.EndpointTransfer.Action.accept before after →
     @Hibana.TransferValueLocated View Frame value before →
       @Exists.{1} Frame fun frame => @Hibana.TransferFrameLocated Frame View frame after
+@Hibana.identical_passive_observations_cannot_separate_admission : ∀ {Observation : Type} (admit : Observation → Bool)
+  {first later : Observation},
+  @Eq.{1} Observation first later → @Eq.{1} Bool (admit first) true → @Eq.{1} Bool (admit later) false → False
 @Hibana.immutable_scope_memo_exact : ∀ {α β : Type} [inst : DecidableEq.{1} α] (fact : α → β) (keys : List.{0} α)
   (query : α),
   @Eq.{1} (Option.{0} β) (@Hibana.immutableScopeMemo✝ α β inst fact keys query)
@@ -14093,6 +14189,11 @@ Hibana.receipt_resolution_is_exact : ∀ (before after : Hibana.TransportState) 
       (Hibana.TransportBoundaryState.idle
         (Hibana.TransportBoundaryState.resolve.match_1.{1} (fun resolution => Hibana.TransportState) resolution
           (fun _ => before) (fun _ => after) fun _ => after)))
+Hibana.receive_coloring_separates_an_already_colored_neighbor : ∀ (forbidden : Nat → Bool) (previous start fuel : Nat),
+  @Eq.{1} Bool (forbidden previous) true →
+    @LT.lt.{0} Nat instLTNat (Hibana.firstFreeReceiveColor forbidden start fuel)
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) start fuel) →
+      @Ne.{1} Nat (Hibana.firstFreeReceiveColor forbidden start fuel) previous
 Hibana.receive_direction_summary_preserves_latest_sender_change : ∀ (events : List.{0} (Prod.{0, 0} Nat Nat))
   (sender : Nat),
   @Eq.{1} (Option.{0} Nat) (Hibana.lookupReceiveDirection (Hibana.summarizeReceiveDirection events) sender)
@@ -14145,6 +14246,13 @@ Hibana.receive_index_preserves_exact_source_order : ∀ (receiver : Nat)
               Or (Hibana.ConflictListsMutuallyExclusive left.conflicts right.conflicts)
                 (@Eq.{1} Bool
                   (Hibana.receivePrecedesLaterSend (program left.globalId right.globalId) roleCount left right) true)
+Hibana.receive_palette_blocks_preserve_parallel_separation : ∀
+  (leftBase leftWidth rightBase leftColor rightColor : Nat),
+  @LE.le.{0} Nat instLENat (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) leftBase leftWidth)
+      rightBase →
+    @LT.lt.{0} Nat instLTNat leftColor leftWidth →
+      @Ne.{1} Nat (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) leftBase leftColor)
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) rightBase rightColor)
 @Hibana.receive_precedes_later_send_has_must_handoff : ∀ {flow : Hibana.CausalFlowExpr} {roleCount : Nat}
   {earlier later : Hibana.StaticGlobalOccurrence},
   @Eq.{1} Bool (Hibana.receivePrecedesLaterSend flow roleCount earlier later) true →
@@ -14621,6 +14729,28 @@ Hibana.resolver_select_never_rejects : ∀ (graph : Hibana.EventGraph) (state : 
                 And (edge x y)
                   (And (@LE.le.{0} Nat instLENat lower (position x)) (@LE.le.{0} Nat instLENat (position y) upper)))
               a b)
+@Hibana.resuming_another_roll_preserves_its_anchor_positions : ∀
+  {body continuation first second : Hibana.EndpointDelegation.Source} (context : Hibana.RollContext)
+  (earlier : Hibana.SourceUnfolding ((context.plug body.roll).seq continuation) first)
+  (next : Hibana.SourceUnfolding body second) (key : List.{0} Nat),
+  @Ne.{1} (List.{0} Nat) key
+      (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+        (Hibana.RollContext.path✝ context)) →
+    @Ne.{1} (List.{0} Nat)
+        (@List.take.{0} Nat
+          (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+            (@List.length.{0} Nat (Hibana.RollContext.path✝ context))
+            (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+          key)
+        (@HAppend.hAppend.{0, 0, 0} (List.{0} Nat) (List.{0} Nat) (List.{0} Nat)
+          (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (Hibana.RollContext.path✝ context))
+          (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) (@List.nil.{0} Nat))) →
+      @Eq.{1} (Option.{0} (List.{0} Nat))
+        (@Hibana.SourceUnfolding.lastBodyEntries✝ ((context.plug body.roll).seq continuation) (first.seq second)
+          (@Hibana.SourceUnfolding.resumeAfterContinuation body continuation first second context earlier next) key)
+        (@Hibana.SourceUnfolding.lastBodyEntries✝ ((context.plug body.roll).seq continuation) first earlier key)
 @Hibana.retained_sender_witness_has_its_acceptance_origin : ∀ {View Frame : Type} {initialValue value : View}
   {state : Hibana.EndpointTransfer.Observation View Frame},
   @Hibana.EndpointTransfer.Execution View Frame (@Hibana.EndpointTransfer.initial View Frame initialValue) state →

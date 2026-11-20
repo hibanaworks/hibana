@@ -171,7 +171,6 @@ fn lean_auditors_fail_closed_on_mutants_and_process_failures() {
 #[test]
 fn static_inventory_rejects_hidden_claims_and_changed_closures() {
     use std::os::unix::fs::PermissionsExt;
-    const NATIVE_REGRESSIONS: usize = 31;
     let root = std::env::temp_dir().join(format!(
         "hibana-static-audit-failures-{}",
         std::process::id()
@@ -180,14 +179,9 @@ fn static_inventory_rejects_hidden_claims_and_changed_closures() {
     fs::create_dir_all(root.join("Hibana")).unwrap();
     let source = root.join("Hibana/Claims.lean");
     fs::write(&source, "theorem fixture : True := by trivial\n").unwrap();
-    fs::write(
-        root.join("Hibana/StaticProjectabilityExamples.lean"),
-        "example : True := by native_decide\n".repeat(NATIVE_REGRESSIONS),
-    )
-    .unwrap();
     let snapshot = root.join("claims.txt");
     fs::write(&snapshot, "Hibana.fixture : True\n").unwrap();
-    let good = "HIBANA_STATIC_CLAIM_SURFACE_BEGIN\nHibana.fixture : True\nHIBANA_STATIC_CLAIM_SURFACE_END\nHIBANA_ENV_THEOREM=Hibana.fixture\n'Hibana.fixture' does not depend on any axioms\n";
+    let good = "HIBANA_STATIC_CLAIM_SURFACE_BEGIN\nHibana.fixture : True\nHIBANA_STATIC_CLAIM_SURFACE_END\nHIBANA_ENV_THEOREM=Hibana.fixture\nHIBANA_COMPILED_AXIOMS=0\n'Hibana.fixture' does not depend on any axioms\n";
     fs::write(
         root.join("bin/lake"),
         format!(
@@ -210,6 +204,9 @@ fn static_inventory_rejects_hidden_claims_and_changed_closures() {
     fs::write(root.join("output"), good).unwrap();
     assert!(run().status.success());
     for mutant in [
+        good.replace("HIBANA_COMPILED_AXIOMS=0\n", ""),
+        good.replace("HIBANA_COMPILED_AXIOMS=0", "HIBANA_COMPILED_AXIOMS=1"),
+        format!("{good}HIBANA_COMPILED_AXIOMS=0\n"),
         good.replace("Hibana.fixture : True", "Hibana.fixture : False"),
         good.replace("HIBANA_ENV_THEOREM=Hibana.fixture\n", ""),
         good.replace(
@@ -234,29 +231,14 @@ fn static_inventory_rejects_hidden_claims_and_changed_closures() {
         assert!(!run().status.success());
     }
     fs::write(root.join("output"), good).unwrap();
-    for extra in [
-        "private axiom hidden : False",
-        "macro generated : command",
-        "run_tac trivial",
-        "theorem other : True := by trivial",
-        "example : True := by native_decide",
-    ] {
-        fs::write(
-            &source,
-            format!("theorem fixture : True := by trivial\n{extra}\n"),
-        )
-        .unwrap();
-        assert!(!run().status.success(), "accepted {extra}");
-    }
-    fs::write(&source, "theorem fixture : True := by trivial\n").unwrap();
     fs::write(
-        root.join("Hibana/StaticProjectabilityExamples.lean"),
-        "example : True := by native_decide\n".repeat(NATIVE_REGRESSIONS - 1),
+        &source,
+        "theorem fixture : True := by trivial\ntheorem other : True := by trivial\n",
     )
     .unwrap();
     assert!(
         !run().status.success(),
-        "accepted changed native regression inventory"
+        "accepted a changed public claim inventory"
     );
     let _ = fs::remove_dir_all(root);
 }

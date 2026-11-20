@@ -6,6 +6,7 @@ use std::{
     env, fs,
     io::{self, Read},
     path::Path,
+    process::Command,
 };
 fn lean(output: &str, count: usize) -> AuditResult<()> {
     let reports = parse_axioms(output)?;
@@ -77,8 +78,14 @@ fn module_self_test(lean: &str) -> Result<(), String> {
         std::env::temp_dir().join(format!("hibana-compiled-axioms-{}", std::process::id()));
     fs::create_dir(&directory).map_err(|e| e.to_string())?;
     let result = (|| {
+        let mut checked = 0;
         for (name, source, accepted) in [
             ("valid", "theorem checked : True := by trivial", true),
+            (
+                "valid-binder",
+                "theorem checked (admit : Bool) (allowed : admit = true) : admit = true := allowed",
+                true,
+            ),
             (
                 "private-axiom",
                 "private axiom hidden : False\ntheorem checked : True := by trivial",
@@ -87,6 +94,11 @@ fn module_self_test(lean: &str) -> Result<(), String> {
             (
                 "unused-hole",
                 "theorem hidden : False := by sorry\ntheorem checked : True := by trivial",
+                false,
+            ),
+            (
+                "unused-private-hole",
+                "private theorem hidden : False := by sorry\ntheorem checked : True := by trivial",
                 false,
             ),
             (
@@ -107,8 +119,74 @@ fn module_self_test(lean: &str) -> Result<(), String> {
             if lean_module::check(lean, &file, None).is_ok() != accepted {
                 return Err(format!("compiled axiom audit misclassified {name}"));
             }
+            checked += 1;
         }
-        println!("Compiled-axiom controls passed: 6");
+        fs::create_dir(directory.join("Hibana")).map_err(|e| e.to_string())?;
+        for (name, source, accepted) in [
+            (
+                "imported-binder",
+                "theorem checked (admit : Bool) (h : admit = true) : admit = true := h",
+                true,
+            ),
+            (
+                "imported-private-axiom",
+                "private axiom hidden : False\ntheorem checked : True := by trivial",
+                false,
+            ),
+            (
+                "imported-private-hole",
+                "private theorem hidden : False := by sorry\ntheorem checked : True := by trivial",
+                false,
+            ),
+            (
+                "imported-native",
+                "theorem checked : True := by native_decide",
+                false,
+            ),
+        ] {
+            fs::write(
+                directory.join("Hibana/Fixture.lean"),
+                format!("import Std\n{source}"),
+            )
+            .map_err(|e| e.to_string())?;
+            let compiled = Command::new(lean)
+                .current_dir(&directory)
+                .args(["-o", "Hibana/Fixture.olean", "Hibana/Fixture.lean"])
+                .output()
+                .map_err(|e| e.to_string())?;
+            require(
+                compiled.status.success(),
+                format!(
+                    "compile {name}: {}",
+                    String::from_utf8_lossy(&compiled.stderr)
+                ),
+            )?;
+            let query = format!(
+                "import Hibana.Fixture\nimport Lean.Elab.Command\n{}",
+                declaration_guard(
+                    "definingModule.any (fun moduleName => (`Hibana).isPrefixOf moduleName)",
+                    &[]
+                )
+            );
+            fs::write(directory.join("ImportAudit.lean"), query).map_err(|e| e.to_string())?;
+            let audited = Command::new(lean)
+                .current_dir(&directory)
+                .env("LEAN_PATH", &directory)
+                .arg("ImportAudit.lean")
+                .output()
+                .map_err(|e| e.to_string())?;
+            println!("Compiled-axiom control {name}: expected accepted={accepted}");
+            require(
+                audited.status.success() == accepted,
+                format!(
+                    "compiled import audit misclassified {name}: {}{}",
+                    String::from_utf8_lossy(&audited.stdout),
+                    String::from_utf8_lossy(&audited.stderr)
+                ),
+            )?;
+            checked += 1;
+        }
+        println!("Compiled-axiom controls passed: {checked}");
         Ok(())
     })();
     let removed = fs::remove_dir_all(&directory).map_err(|e| e.to_string());

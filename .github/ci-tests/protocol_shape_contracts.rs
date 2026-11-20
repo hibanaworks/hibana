@@ -174,6 +174,67 @@ pub(super) fn reentry_diagnostic(role: u8) -> &'static str {
     }
 }
 
+/// Identify a straight-line roll whose ordinary entry depends on a resource
+/// that the holder loans back exactly once. A public send is conclusive only
+/// if no other send by this view shares its selector.
+pub(super) fn retired_roll_send(source: &Protocol) -> Option<(u8, u8, u8)> {
+    use Protocol::{Message, Roll, Seq};
+    if let Seq(grant, rest) = source
+        && let Message {
+            from: owner,
+            to: holder,
+            owned: true,
+            ..
+        } = grant.as_ref()
+        && let Seq(retry, continuation) = rest.as_ref()
+        && let Roll(body) = retry.as_ref()
+        && let Seq(head, work) = body.as_ref()
+        && let Message {
+            from,
+            to,
+            contract,
+            owned: false,
+            ..
+        } = head.as_ref()
+        && from == holder
+        && from != to
+        && let Message {
+            from: worker,
+            to: peer,
+            owned: false,
+            ..
+        } = work.as_ref()
+        && (*worker == 3 || *peer == 3)
+        && let Seq(handoff, _) = continuation.as_ref()
+        && let Message {
+            from: old,
+            to: new,
+            event,
+            owned: true,
+            ..
+        } = handoff.as_ref()
+        && old == holder
+        && new == owner
+        && old != new
+    {
+        let mut rows = Vec::new();
+        source.messages(&mut rows);
+        let loans = rows
+            .iter()
+            .filter(|m| matches!(m, Message { owned: true, .. }))
+            .count();
+        let matching = rows
+            .iter()
+            .filter(|m| {
+                matches!(m, Message { from: sender, contract: label, owned: false, .. }
+                if sender == holder && label == contract)
+            })
+            .count();
+        return (loans == 2 && matching == 1).then_some((*holder, *contract, *event));
+    }
+    None
+}
+
 /// Contract collisions across sequential sends, opposite directions and
 /// independent parallel fragments, with and without an actual Endpoint loan.
 pub(super) fn protocol(rank: usize) -> Protocol {
@@ -186,6 +247,78 @@ pub(super) fn protocol(rank: usize) -> Protocol {
         owned,
     };
     let seq = |left, right| Protocol::Seq(Box::new(left), Box::new(right));
+    if rank == 42 {
+        // The retry is sent on the holder's ordinary view. Restarting its
+        // body also requires the loan, which has moved back to the publisher.
+        let retry = seq(message(1, 2, false), message(3, 2, false));
+        let review = seq(
+            message(0, 2, false),
+            seq(message(2, 0, false), message(0, 2, false)),
+        );
+        return seq(
+            message(0, 1, true),
+            seq(
+                Protocol::Roll(Box::new(retry)),
+                seq(message(1, 0, true), review),
+            ),
+        );
+    }
+    if rank == 41 {
+        // 7H: the document holder chooses a rewrite or two amendments.
+        // An earlier completed rewrite visit can overlap the continuation.
+        let edit = || seq(message(2, 3, false), message(3, 2, false));
+        let rewrite = seq(message(1, 0, false), seq(message(1, 2, false), edit()));
+        let amend = seq(
+            message(1, 0, false),
+            seq(message(3, 2, false), seq(edit(), edit())),
+        );
+        return seq(
+            message(0, 1, true),
+            seq(
+                Protocol::Roll(Box::new(Protocol::Route(
+                    Box::new(rewrite),
+                    Box::new(amend),
+                ))),
+                message(3, 2, false),
+            ),
+        );
+    }
+    if rank == 40 {
+        // A rolled choice replies to its co-resident file view, then a later
+        // fork returns that real Endpoint and notifies a peer. Native/Miri
+        // also pauses before the file's receive commit.
+        return seq(
+            message(0, 1, true),
+            seq(
+                Protocol::Roll(Box::new(Protocol::Route(
+                    Box::new(seq(message(1, 2, false), message(2, 1, false))),
+                    Box::new(Protocol::Par(
+                        Box::new(message(1, 3, false)),
+                        Box::new(message(1, 2, false)),
+                    )),
+                ))),
+                Protocol::Par(
+                    Box::new(message(1, 0, true)),
+                    Box::new(message(1, 2, false)),
+                ),
+            ),
+        );
+    }
+    if rank == 39 {
+        // 13H: the delegated file and its holder receive parallel replies.
+        // The file may request the next visit while its holder's receipt is
+        // still queued. Both reply orders and two visits remain in the source.
+        return seq(
+            message(0, 1, true),
+            Protocol::Roll(Box::new(seq(
+                message(3, 2, false),
+                Protocol::Par(
+                    Box::new(message(2, 1, false)),
+                    Box::new(message(2, 3, false)),
+                ),
+            ))),
+        );
+    }
     if rank == 38 {
         // A completed review closes an inner request loop even when receive
         // coloring put that review on another lane. An idle parallel source
@@ -1041,6 +1174,67 @@ pub(super) fn variants(source: &Protocol) -> Vec<(&'static str, Protocol)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_returned_loan_has_a_retry_probe_for_every_contract_assignment() {
+        let mut source = protocol(42);
+        super::super::syntax::number(&mut source);
+        for (_, variant) in variants(&source) {
+            let retry = variant.contract_for(1);
+            assert_eq!(retired_roll_send(&variant), Some((1, retry, 3)));
+            assert!(variant.executions().any(|execution| {
+                execution
+                    .trace()
+                    .messages
+                    .iter()
+                    .map(|(event, _)| *event)
+                    .eq([0, 1, 2, 1, 2, 3, 4, 5, 6])
+            }));
+            let mut competing = variant;
+            if let Protocol::Seq(_, rest) = &mut competing
+                && let Protocol::Seq(_, continuation) = rest.as_mut()
+                && let Protocol::Seq(_, later) = continuation.as_mut()
+            {
+                **later = message(1, 2, retry, false);
+            }
+            assert_eq!(retired_roll_send(&competing), None);
+        }
+    }
+
+    #[test]
+    fn a_rewrite_visit_can_precede_both_amendments_and_the_result() {
+        let mut source = protocol(41);
+        super::super::syntax::number(&mut source);
+        assert!(source.executions().any(|execution| {
+            execution
+                .trace()
+                .messages
+                .iter()
+                .map(|(event, _)| *event)
+                .eq(0..12)
+        }));
+    }
+
+    #[test]
+    fn delegated_file_retries_keep_both_parallel_reply_orders() {
+        let mut source = protocol(39);
+        super::super::syntax::number(&mut source);
+        for file_first in [false, true] {
+            assert!(
+                source.executions().any(|execution| {
+                    let trace = execution.trace();
+                    let events: Vec<_> = trace.messages.iter().map(|(event, _)| *event).collect();
+                    events.iter().filter(|&&event| event == 1).count() == 2
+                        && events
+                            .iter()
+                            .position(|&event| event == 2)
+                            .zip(events.iter().position(|&event| event == 3))
+                            .is_some_and(|(holder, file)| (file < holder) == file_first)
+                }),
+                "file_first={file_first}"
+            );
+        }
+    }
 
     #[test]
     fn cross_lane_reviews_repeat_while_the_other_source_stays_idle() {

@@ -287,6 +287,38 @@ impl CompiledProgramRef {
         true
     }
 
+    /// A route can omit this occurrence, but no roll can execute it twice.
+    pub(crate) const fn source_nonrepeating(&self, event: usize) -> bool {
+        event < self.columns.atom_count() && self.source_roll_containing(event, event + 1).is_none()
+    }
+
+    /// Nonrepeating occurrences whose route conditions are already required by
+    /// the complete queried scope. An unrelated choice is never assumed.
+    pub(crate) const fn source_mandatory_with_scope(&self, scope: ScopeId, event: usize) -> bool {
+        if !self.source_nonrepeating(event) {
+            return false;
+        }
+        let Some((first, _, finish)) = self.source_scope_bounds(scope) else {
+            return false;
+        };
+        let mut parent = self.source_order_u16(self.source_scopes as usize * 9 + event * 2);
+        while parent != u16::MAX {
+            let row = parent as usize * 9;
+            if self.source_order.byte_at(row + 8) == ScopeKind::Route as u8 {
+                let start = self.source_order_u16(row) as usize;
+                let split = self.source_order_u16(row + 2) as usize;
+                let end = self.source_order_u16(row + 4) as usize;
+                if !((start <= first && finish <= split && event < split)
+                    || (split <= first && finish <= end && split <= event))
+                {
+                    return false;
+                }
+            }
+            parent = self.source_order_u16(row + 6);
+        }
+        true
+    }
+
     /// Enclosing repetitions, from the innermost source scope to the root.
     /// Dedicated repetition links skip binary scopes. The image constructor
     /// checks the links and event heads once.

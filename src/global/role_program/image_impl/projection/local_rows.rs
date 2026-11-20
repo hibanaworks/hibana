@@ -160,6 +160,39 @@ pub(crate) enum LocalRows<'a, const E: usize> {
 }
 
 impl<const E: usize> LocalRows<'_, E> {
+    /// Source proof received by this actor after an entry resource cannot return.
+    /// The image stores only the proof's handoff and actual receive row.
+    pub(in crate::global::role_program::image_impl) const fn roll_retirement(
+        self,
+        effects: &EffList<E>,
+        scope: ScopeId,
+        end: usize,
+    ) -> Option<(u16, u16)> {
+        let Self::Actor(rows) = self else {
+            return None;
+        };
+        let mut transfer = end;
+        while transfer < rows.events {
+            if rows.program.event_endpoint(transfer).is_some()
+                && let Some(known) =
+                    super::super::retirement::knowledge(&rows.program, scope, transfer)
+            {
+                let event = known[rows.actor as usize];
+                if event != u16::MAX
+                    && rows.directions[event as usize] & (1 << RoleLocalDirection::Recv as u8) != 0
+                {
+                    let step = self
+                        .range(effects, event as usize, event as usize + 1)
+                        .end()
+                        - 1;
+                    return Some((transfer as u16, step as u16));
+                }
+            }
+            transfer += 1;
+        }
+        None
+    }
+
     /// Actual local receipts from an irreversible receiver, after its mandatory
     /// handoff. A completed notice proves that an old loan cannot arrive again.
     pub(in crate::global::role_program::image_impl) const fn receipt_retirements(

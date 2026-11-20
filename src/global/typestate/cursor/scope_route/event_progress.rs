@@ -22,6 +22,9 @@ pub(crate) enum EventArmView {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EventAdmissionError {
     Invariant,
+    /// This actor lacks a roll entry's required Endpoint and has no pending
+    /// receipt for it. The descriptor and the live view are both consistent.
+    EntryViewUnavailable,
     PredecessorPending,
     /// A preceding action needs an Endpoint held by this operation, either
     /// its owned payload or exclusively borrowed peer storage.
@@ -90,18 +93,22 @@ impl EventCursor {
                 .event_program
                 .work
                 .hit(super::super::work::Metric::Predecessor);
-            let uses_caller = self.uses_view_at(prior, blocked.0);
-            if !(uses_caller
-                || blocked.1.is_some_and(|role| self.uses_view_at(prior, role))
-                || self.uses_borrowed_view_at(prior, borrowed))
-            {
-                continue;
-            }
             let (before, before_direction) = self
                 .machine()
                 .event_program()
                 .operation_at(prior)
                 .unwrap_or_else(|| crate::invariant());
+            let (carrier, payload) = before_direction
+                .required_views(self.program_ref().event_atom_at(before.dense_ordinal()));
+            let uses_view = |role| carrier == role || payload == Some(role);
+            let uses_caller = uses_view(blocked.0);
+            if !(uses_caller
+                || blocked.1.is_some_and(uses_view)
+                || borrowed
+                    .is_some_and(|borrowed| borrowed(carrier) || payload.is_some_and(borrowed)))
+            {
+                continue;
+            }
             let precedes = if before == after {
                 before_direction == RoleLocalDirection::Send
                     && after_direction == RoleLocalDirection::Recv

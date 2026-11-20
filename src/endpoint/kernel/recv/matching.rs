@@ -36,20 +36,20 @@ where
         if !key.matches_recv(meta) {
             return Ok(None);
         }
-        let enabled = self.recv_event_enabled(idx, meta.into());
-        if enabled.is_err() {
+        let Ok(_) = self.recv_event_enabled(idx, meta.into()) else {
             return Ok(None);
-        }
+        };
 
         Ok(Some(RecvCandidate {
             desc: RecvDescriptor {
                 meta,
                 cursor_index: StateIndex::from_usize(idx),
             },
+            admission: Ok(()),
         }))
     }
 
-    pub(in crate::endpoint::kernel::recv) fn unique_recv_candidate(
+    pub(in crate::endpoint::kernel::recv) fn framed_recv_candidate(
         &self,
         observed: InboundFrameKey,
     ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
@@ -79,7 +79,14 @@ where
             if lane_wire != meta.lane {
                 return Err(RecvError::PhaseInvariant);
             }
-            if !observed.matches_recv(meta) || self.recv_event_enabled(idx, meta.into()).is_err() {
+            if !observed.matches_recv(meta) {
+                continue;
+            }
+            let admission = self.recv_event_enabled(idx, meta.into()).map(|_| ());
+            if matches!(
+                admission,
+                Err(crate::global::typestate::EventAdmissionError::Invariant)
+            ) {
                 continue;
             }
             accumulator = accumulator.add(RecvCandidate {
@@ -87,6 +94,7 @@ where
                     meta,
                     cursor_index: StateIndex::from_usize(idx),
                 },
+                admission,
             });
             if accumulator.is_ambiguous() {
                 break;

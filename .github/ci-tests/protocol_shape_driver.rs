@@ -105,6 +105,7 @@ struct Programs {
     p2: Option<RoleProgram<2>>,
     p3: Option<RoleProgram<3>>,
     issuance: &'static [(u8, u8)],
+    retired_roll_send: Option<(u8, u8, u8)>,
     resolver_roles: &'static [u8],
 }
 #[derive(Clone, Copy, Debug)]
@@ -325,6 +326,20 @@ macro_rules! receive {
             } else {
                 endpoint.recv::<$message>().await
             }
+        }
+    };
+}
+
+macro_rules! send {
+    ($endpoint:expr, $message:ty, $payload:expr, $command:expr) => {
+        async {
+            let endpoint = $endpoint;
+            if $command.preview {
+                // The controller enters a resolved visit through offer. Its
+                // first scheduled send can be a different parallel operation.
+                drop(endpoint.offer().await?);
+            }
+            endpoint.send::<$message>($payload).await
         }
     };
 }
@@ -674,7 +689,7 @@ async fn replay(
                     prefix,
                     prefix_inputs,
                     input,
-                    committed_source: None,
+                    commit: None,
                 }
             });
         }
@@ -687,7 +702,7 @@ async fn replay(
                         rejected_before_io = error.is_unavailable();
                         if command.receive && observation.is_some() {
                             assert!(error.is_unavailable(),
-                                "a declared whole receive probe faulted a valid source execution: {command:?}: {error:?}");
+                                "a declared whole receive probe faulted a valid source execution: {command:?}: {error:?}; prefix={:?}; parked={parked_label:?}", &commands[..index]);
                         }
                         if index + 1 != commands.len() {
                             std::eprintln!(
@@ -710,7 +725,7 @@ async fn replay(
                         if command.receive {
                             observe!(receive!(endpoint, Unit, command))
                         } else {
-                            observe!(endpoint.send::<Unit>(&()))
+                            observe!(send!(endpoint, Unit, &(), command))
                         }
                     }
                 }
@@ -751,10 +766,10 @@ async fn replay(
                         } else {
                             match $payload[actor].take() {
                                 Some(endpoint) => observe!(
-                                    $carrier[actor]
-                                        .as_mut()
-                                        .expect("an Endpoint cannot carry itself")
-                                        .send::<Loan>(endpoint)
+                                    send!(
+                                        $carrier[actor].as_mut().expect("an Endpoint cannot carry itself"),
+                                        Loan, endpoint, command
+                                    )
                                 ),
                                 None => Outcome::Unavailable,
                             }
@@ -773,6 +788,19 @@ async fn replay(
             (0, 0, None) => dispatch_operations!(),
             _ => panic!("generated message contract outside dispatch inventory"),
         };
+        if !command.receive && command.message.endpoint.is_none()
+            && let Some((holder, contract, handoff)) = programs.retired_roll_send
+            && holder == view && contract == command.message.contract
+            && let Some(before) = observation.as_ref()
+            && before.commits.iter().any(|&[kind, key, _, row]| {
+                kind == u64::from(hibana::runtime::tap::ENDPOINT_SEND)
+                    && key >> 8 == u64::from(holder) && row >> 24 == u64::from(holder)
+                    && row & 0xffff == u64::from(handoff)
+            })
+        {
+            assert!(rejected_before_io,
+                "send after the only resource return must leave the run usable: {command:?}, got {outcome:?}");
+        }
         if rejected_before_io && let Some(observation) = observation.as_ref() {
             // SAFETY: the rejected Future has ended. The actual target still
             // belongs to this replay's pinned InMemoryTransport actor.
@@ -808,31 +836,31 @@ async fn replay(
                 "a pre-I/O rejection emitted an observation: {command:?}"
             );
         }
-        if outcome == Outcome::Accepted
-            && !command.receive
-            && let Some(observation) = observation.as_mut()
-        {
-            let commits = captured.borrow()[call_records..]
-                .iter()
-                .filter_map(|(producer, event)| {
-                    (matches!(
-                        event.id(),
-                        hibana::runtime::tap::ENDPOINT_SEND
-                            | hibana::runtime::tap::ENDPOINT_RECV
-                            | hibana::runtime::tap::ENDPOINT_SESSION
-                    ) && *producer == observation.cut.actor.actor
-                        && event.causal_key() >> 8 == u16::from(observation.cut.actor.actor)
-                        && event.causal_key() & 255 == u16::from(command.receive) + 1
-                        && event.arg1() >> 24 == u32::from(view))
-                    .then_some((event.arg1() & u32::from(u16::MAX)) as u16)
-                })
-                .collect::<Vec<_>>();
-            let [source] = commits.as_slice() else {
-                panic!(
-                    "a successful public call must identify exactly one actual source commit: {command:?} {commits:?}"
-                );
-            };
-            observation.committed_source = Some(*source);
+        if let Some(observation) = observation.as_mut() {
+            let events = captured.borrow();
+            let mut commits = events[call_records..].iter().filter(|(_, event)| {
+                matches!(event.id(),
+                    hibana::runtime::tap::ENDPOINT_SEND | hibana::runtime::tap::ENDPOINT_RECV |
+                    hibana::runtime::tap::ENDPOINT_SESSION)
+            });
+            if outcome == Outcome::Accepted {
+                let (producer, event) = commits.next().expect("accepted call has no commit");
+                let direction = if command.receive {
+                    hibana::runtime::tap::ENDPOINT_RECV
+                } else {
+                    hibana::runtime::tap::ENDPOINT_SEND
+                };
+                assert!(event.id() == direction || event.id() == hibana::runtime::tap::ENDPOINT_SESSION);
+                assert_eq!(*producer, observation.cut.actor.actor);
+                assert_eq!(event.causal_key() >> 8, u16::from(*producer));
+                assert_eq!(event.causal_key() & 255, u16::from(command.receive) + 1);
+                assert_eq!(event.arg0(), sid.raw());
+                assert_eq!(event.arg1() >> 24, u32::from(view));
+                let source = event.arg1() as u16;
+                let lane = (event.arg1() >> 16) as u8;
+                observation.commit = Some((source, lane));
+            }
+            assert!(commits.next().is_none(), "unexpected operation commit: {command:?}");
         }
         assert_eq!(
             resolver_audits.get(),
@@ -939,7 +967,7 @@ struct Scenario<'a> {
     traces: &'a str,
     expected_traces: usize,
     prefix_visits: usize,
-    completed_plan_words: &'a std::collections::BTreeSet<String>,
+    planned_words: &'a std::collections::BTreeSet<String>,
 }
 
 #[hibana_runtime::main(in_process::InProcess::default())]
@@ -959,6 +987,7 @@ async fn alias_replay_keeps_the_recorded_resolver_input()
         p2: None,
         p3: None,
         issuance: &[],
+        retired_roll_send: None,
         resolver_roles: &[0],
     };
     let alias = Message {
@@ -1020,6 +1049,7 @@ async fn offer_availability_uses_the_committed_source_not_a_future_contract_alia
         p2: None,
         p3: None,
         issuance: &[],
+        retired_roll_send: None,
         resolver_roles: &[0],
     };
     let alias = Message {
@@ -1038,7 +1068,7 @@ async fn offer_availability_uses_the_committed_source_not_a_future_contract_alia
     let (outcome, _, observed) =
         replay(&programs, 1, &Decisions::Constant(&[]), &[command], false).await;
     assert_eq!(outcome, Outcome::Accepted);
-    assert_eq!(observed.unwrap().committed_source, Some(0));
+    assert_eq!(observed.unwrap().commit.map(|(source, _)| source), Some(0));
     let (_, parked, _) = replay(&programs, 1, &Decisions::Constant(&[]), &[command], true).await;
     assert_eq!(
         parked, None,
@@ -1055,7 +1085,7 @@ async fn offer_availability_uses_the_committed_source_not_a_future_contract_alia
     let (outcome, _, observed) =
         replay(&programs, 1, &Decisions::Constant(&[]), &prefix, false).await;
     assert_eq!(outcome, Outcome::Accepted);
-    assert_eq!(observed.unwrap().committed_source, Some(1));
+    assert_eq!(observed.unwrap().commit.map(|(source, _)| source), Some(1));
     let (outcome, parked, _) = replay(&programs, 1, &Decisions::Constant(&[]), &prefix, true).await;
     assert_eq!(outcome, Outcome::Accepted);
     assert_eq!(
@@ -1088,6 +1118,7 @@ async fn replay_preserves_selected_holders_across_two_resource_transfers()
             p2: Some(project::<2>(&global)),
             p3: Some(project::<3>(&global)),
             issuance: &[(2, 0), (3, 0)],
+            retired_roll_send: None,
             resolver_roles: &[],
         }
     }
@@ -1187,6 +1218,7 @@ async fn replay_allows_retained_work_when_an_unused_resource_moves()
             p2: Some(project::<2>(&global)),
             p3: Some(project::<3>(&global)),
             issuance: &[(2, 0), (3, 0)],
+            retired_roll_send: None,
             resolver_roles: &[],
         }
     }
@@ -1268,7 +1300,7 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         traces,
         expected_traces,
         prefix_visits,
-        completed_plan_words,
+        planned_words,
     } = scenario;
     for (id, role) in programs.resolver_roles.iter().enumerate() {
         let first = messages.iter().find(|message| {
@@ -1289,18 +1321,6 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         std::fs::File::create(directory.join(format!("{case}.jsonl"))).unwrap(),
     );
     let mut cut_writer = WholeCutWriter::new(case);
-    if let Some(program) = programs.p0.as_ref() {
-        write_operation_image(program, case);
-    }
-    if let Some(program) = programs.p1.as_ref() {
-        write_operation_image(program, case);
-    }
-    if let Some(program) = programs.p2.as_ref() {
-        write_operation_image(program, case);
-    }
-    if let Some(program) = programs.p3.as_ref() {
-        write_operation_image(program, case);
-    }
     let events = messages
         .iter()
         .map(|message| message.event)
@@ -1310,92 +1330,108 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
         r#"{{"name":{case},"choices":{choices:?},"events":{events:?}}}"#
     )
     .unwrap();
-    write!(
-        observations,
-        r#"{{"prefix":[],"prefixChoices":[],"answers":["#
-    )
-    .unwrap();
-    let mut separator = "";
-    let mut cuts = Vec::new();
-    let mut prefixes = std::collections::BTreeMap::new();
-    for choice in choices {
-        for message in messages {
-            for receive in [false, true] {
-                let command = Command {
-                    message: *message,
-                    receive,
-                    preview: false,
-                };
-                let (actual, _, actual_cut) = replay(
-                    &programs,
-                    resolver_count,
-                    &Decisions::Constant(*choice),
-                    &[command],
-                    false,
-                )
-                .await;
-                let (parked, label, parked_cut) = replay(
-                    &programs,
-                    resolver_count,
-                    &Decisions::Constant(*choice),
-                    &[command],
-                    true,
-                )
-                .await;
-                let committed = actual_cut
-                    .as_ref()
-                    .and_then(|cut| cut.committed_source)
-                    .map(|source| {
-                        messages
-                            .iter()
-                            .find(|message| u16::from(message.event) == source)
-                            .expect("committed source is outside the input choreography")
-                    });
-                if actual == Outcome::Accepted
-                    && !receive
-                    && committed.is_some_and(|enabled| {
-                        !message_selected_events.contains(&enabled.event)
-                            && enabled.decisions.iter().any(|&(id, _)| {
-                                programs.resolver_roles[usize::from(id)] == enabled.from
-                            })
-                    })
-                {
-                    assert!(
-                        label.is_some(),
-                        "offer hid an enabled resolver-controlled send: initial choice={choice:?} message={message:?}"
-                    );
+    let mut measured = 0usize;
+    let mut questions = 0usize;
+    let mut probe_prefix = async |prefix: &[Command], key: &[u16], history: &[Vec<u16>]| {
+        use std::collections::{BTreeMap, btree_map::Entry};
+        write!(
+            observations,
+            r#"{{"prefix":{key:?},"prefixChoices":{history:?},"answers":["#
+        )
+        .unwrap();
+        let mut cuts = Vec::new();
+        let mut next_calls = Vec::new();
+        let mut separator = "";
+        let mut commands = prefix.to_vec();
+        for choice in choices {
+            let decisions = if prefix.is_empty() {
+                Decisions::Constant(choice)
+            } else {
+                Decisions::AfterPrefix {
+                    choice,
+                    prefix: history,
+                    values: (0..resolver_count)
+                        .map(|_| std::cell::Cell::new(false))
+                        .collect(),
                 }
-                cuts.push(format!(
-                    "[{},{}]",
-                    cut_writer.record(actual_cut),
-                    cut_writer.record(parked_cut)
-                ));
-                let parked = label.map_or_else(
-                    || "[]".into(),
-                    |label| format!("[[{label},{}]]", parked == Outcome::Accepted),
-                );
-                write!(
-                    observations,
-                    r#"{separator}[{},{parked}]"#,
-                    actual == Outcome::Accepted
-                )
-                .unwrap();
-                separator = ",";
-                if prefix_visits == 1 && actual == Outcome::Accepted {
-                    prefixes
-                        .entry((
-                            vec![2 * u16::from(message.event) + u16::from(receive)],
-                            vec![retained_input(programs.resolver_roles, command, choice)],
-                        ))
-                        .or_insert_with(|| vec![command]);
+            };
+            // Only the final public call is shared. Each prefix retains its
+            // actual commands and resolver history, and each choice starts a
+            // fresh table. Direct and parked calls always run separately.
+            let mut calls = BTreeMap::new();
+            for message in messages {
+                for receive in [false, true] {
+                    let command = Command {
+                        message: *message,
+                        receive,
+                        preview: false,
+                    };
+                    let view = if receive { message.to } else { message.from };
+                    let selector = (receive, view, message.contract, message.endpoint);
+                    let (accepted, parked_answer, cut) = match calls.entry(selector) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            commands.push(command);
+                            let (actual, _, actual_cut) =
+                                replay(&programs, resolver_count, &decisions, &commands, false)
+                                    .await;
+                            let (parked, label, parked_cut) =
+                                replay(&programs, resolver_count, &decisions, &commands, true)
+                                    .await;
+                            commands.pop();
+                            let accepted = actual == Outcome::Accepted;
+                            if accepted && !receive {
+                                let committed = actual_cut.as_ref().and_then(|cut| cut.commit.map(|(source, _)| source))
+                                    .map(|source| messages.iter().find(|m| u16::from(m.event) == source)
+                                        .expect("committed source is outside the input choreography"));
+                                if committed.is_some_and(|enabled| {
+                                    !message_selected_events.contains(&enabled.event)
+                                        && enabled.decisions.iter().any(|&(id, _)| {
+                                            programs.resolver_roles[usize::from(id)] == enabled.from
+                                        })
+                                }) {
+                                    assert!(
+                                        label.is_some(),
+                                        "offer hid an enabled resolver-controlled send: prefix={key:?} choice={choice:?} message={message:?}"
+                                    );
+                                }
+                            }
+                            let cut = format!(
+                                "[{},{}]",
+                                cut_writer.record(actual_cut),
+                                cut_writer.record(parked_cut)
+                            );
+                            let parked_answer = label.map_or_else(
+                                || "[]".into(),
+                                |label| format!("[[{label},{}]]", parked == Outcome::Accepted),
+                            );
+                            measured += 1;
+                            entry.insert((accepted, parked_answer, cut))
+                        }
+                    };
+                    questions += 1;
+                    write!(observations, "{separator}[{accepted},{parked_answer}]").unwrap();
+                    separator = ",";
+                    cuts.push(cut.clone());
+                    if *accepted && prefix_visits == 1 && key.len() < 4 {
+                        next_calls.push((
+                            command,
+                            retained_input(programs.resolver_roles, command, choice),
+                        ));
+                    }
                 }
-                // The independent occurrence-model checker decides whether
-                // this public call was permitted. Syntactic global order is
-                // insufficient: an uninvolved sender can queue a later frame.
             }
         }
+        writeln!(observations, "],\"cuts\":[{}]}}", cuts.join(",")).unwrap();
+        next_calls
+    };
+    let mut prefixes = std::collections::BTreeMap::new();
+    for (command, input) in probe_prefix(&[], &[], &[]).await {
+        let index = 2 * u16::from(command.message.event) + u16::from(command.receive);
+        prefixes
+            .entry((vec![index], vec![input]))
+            .or_insert_with(|| vec![command]);
     }
-    writeln!(observations, "],\"cuts\":[{}]}}", cuts.join(",")).unwrap();
     let mut seen = std::collections::BTreeSet::new();
     for line in traces.lines() {
         assert!(seen.insert(line), "duplicate generated trace");
@@ -1415,7 +1451,11 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
                     Command {
                         message,
                         receive: false,
-                        preview: false,
+                        preview: preview
+                            && !message_selected_events.contains(&message.event)
+                            && message.decisions.iter().any(|&(id, _)| {
+                                programs.resolver_roles[usize::from(id)] == message.from
+                            }),
                     },
                     Command {
                         message,
@@ -1429,8 +1469,8 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             })
             .collect::<Vec<_>>();
         assert!(
-            completed_plan_words.contains(line),
-            "shape={name} missing completed source plan={line}"
+            planned_words.contains(line),
+            "shape={name} missing source plan={line}"
         );
         if prefix_visits != 0 {
             let mut key = Vec::new();
@@ -1458,8 +1498,8 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
     );
     assert_eq!(
         seen,
-        completed_plan_words.iter().map(String::as_str).collect(),
-        "completed source plans and catalog words differ"
+        planned_words.iter().map(String::as_str).collect(),
+        "source plans and catalog words differ"
     );
     let mut checked_prefixes = std::collections::BTreeSet::new();
     while let Some(((key, history), prefix)) = prefixes.pop_first() {
@@ -1467,108 +1507,22 @@ async fn qualify(programs: Programs, scenario: Scenario<'_>) {
             checked_prefixes.insert((key.clone(), history.clone())),
             "duplicate prefix replay"
         );
-        write!(
-            observations,
-            r#"{{"prefix":{key:?},"prefixChoices":{history:?},"answers":["#
-        )
-        .unwrap();
-        separator = "";
-        cuts.clear();
-        for choice in choices {
-            for message in messages {
-                for receive in [false, true] {
+        for (command, input) in probe_prefix(&prefix, &key, &history).await {
+            let mut next = key.clone();
+            next.push(2 * u16::from(command.message.event) + u16::from(command.receive));
+            let mut next_history = history.clone();
+            next_history.push(input);
+            let next = (next, next_history);
+            if !checked_prefixes.contains(&next) {
+                prefixes.entry(next).or_insert_with(|| {
                     let mut commands = prefix.clone();
-                    commands.push(Command {
-                        message: *message,
-                        receive,
-                        preview: false,
-                    });
-                    let (actual, _, actual_cut) = replay(
-                        &programs,
-                        resolver_count,
-                        &Decisions::AfterPrefix {
-                            choice: *choice,
-                            prefix: &history,
-                            values: (0..resolver_count)
-                                .map(|_| std::cell::Cell::new(false))
-                                .collect(),
-                        },
-                        &commands,
-                        false,
-                    )
-                    .await;
-                    let (parked, label, parked_cut) = replay(
-                        &programs,
-                        resolver_count,
-                        &Decisions::AfterPrefix {
-                            choice: *choice,
-                            prefix: &history,
-                            values: (0..resolver_count)
-                                .map(|_| std::cell::Cell::new(false))
-                                .collect(),
-                        },
-                        &commands,
-                        true,
-                    )
-                    .await;
-                    let committed = actual_cut
-                        .as_ref()
-                        .and_then(|cut| cut.committed_source)
-                        .map(|source| {
-                            messages
-                                .iter()
-                                .find(|message| u16::from(message.event) == source)
-                                .expect("committed source is outside the input choreography")
-                        });
-                    if actual == Outcome::Accepted
-                        && !receive
-                        && committed.is_some_and(|enabled| {
-                            !message_selected_events.contains(&enabled.event)
-                                && enabled.decisions.iter().any(|&(id, _)| {
-                                    programs.resolver_roles[usize::from(id)] == enabled.from
-                                })
-                        })
-                    {
-                        assert!(
-                            label.is_some(),
-                            "offer hid an enabled resolver-controlled send: prefix={key:?} choice={choice:?} message={message:?}"
-                        );
-                    }
-                    cuts.push(format!(
-                        "[{},{}]",
-                        cut_writer.record(actual_cut),
-                        cut_writer.record(parked_cut)
-                    ));
-                    let parked = label.map_or_else(
-                        || "[]".into(),
-                        |label| format!("[[{label},{}]]", parked == Outcome::Accepted),
-                    );
-                    write!(
-                        observations,
-                        r#"{separator}[{},{parked}]"#,
-                        actual == Outcome::Accepted
-                    )
-                    .unwrap();
-                    separator = ",";
-                    if prefix_visits == 1 && key.len() < 4 && actual == Outcome::Accepted {
-                        let mut next = key.clone();
-                        next.push(2 * u16::from(message.event) + u16::from(receive));
-                        let mut next_history = history.clone();
-                        next_history.push(retained_input(
-                            programs.resolver_roles,
-                            *commands.last().unwrap(),
-                            choice,
-                        ));
-                        let next = (next, next_history);
-                        if !checked_prefixes.contains(&next) {
-                            prefixes.entry(next).or_insert(commands);
-                        }
-                    }
-                }
+                    commands.push(command);
+                    commands
+                });
             }
         }
-        writeln!(observations, "],\"cuts\":[{}]}}", cuts.join(",")).unwrap();
     }
+    std::println!("shape={case} public call pairs measured={measured} source questions={questions}");
     observations.flush().unwrap();
     cut_writer.finish();
 }

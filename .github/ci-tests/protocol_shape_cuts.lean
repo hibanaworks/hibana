@@ -108,25 +108,159 @@ def fixtureFrames (images : List RustDescriptorImage) (session : Nat)
         frames := before ++ rest
   pure frames
 
-def fixtureReady (image : RustDescriptorImage) (view : Nat) (frames : List (List Nat))
-    (receive : Bool) (candidates : List Nat) : Except String Bool := do
-  let mut ready := false
-  for candidate in candidates do
-    let some action := image.eventAction? candidate | throw "source candidate has no operation"
-    let some actualView := image.eventView? candidate | throw "source candidate has no view"
-    let some lane := image.eventLane? candidate | throw "source candidate has no lane"
-    let some color := image.eventFrameLabel? candidate | throw "source candidate has no wire label"
-    unless actualView == view do throw "source candidate has a foreign view"
-    match action with
-    | .send .. =>
-        if receive then throw "source send candidate has the wrong direction"
-        ready := true
-    | .local .. => ready := true
-    | .recv peer .. =>
-        unless receive do throw "source receive candidate has the wrong direction"
-        ready := ready || fixtureHead frames view lane ==
-          some [peer, view, lane, color]
-  pure ready
+private def fixtureCandidateReady (image : RustDescriptorImage) (view : Nat)
+    (frames : List (List Nat)) (receive : Bool) (candidate : Nat) : Except String Bool := do
+  let some action := image.eventAction? candidate | throw "source candidate has no operation"
+  let some actualView := image.eventView? candidate | throw "source candidate has no view"
+  let some lane := image.eventLane? candidate | throw "source candidate has no lane"
+  let some color := image.eventFrameLabel? candidate | throw "source candidate has no wire label"
+  unless actualView == view do throw "source candidate has a foreign view"
+  match action with
+  | .send .. =>
+      if receive then throw "source send candidate has the wrong direction"
+      pure true
+  | .local .. => pure true
+  | .recv peer .. =>
+      unless receive do throw "source receive candidate has the wrong direction"
+      pure (fixtureHead frames view lane == some [peer, view, lane, color])
+
+private def collectReadyRows (check : Nat → Except String Bool)
+    (ready : List Nat) : List Nat → Except String (List Nat)
+  | [] => .ok ready
+  | row :: tail => match check row with
+    | .error reason => .error reason
+    | .ok matched => collectReadyRows check (if matched then row :: ready else ready) tail
+
+/-- Source-authorized sends and local actions are ready. A receive also needs
+its exact FIFO head. The result retains every matching source row. -/
+def fixtureReadyRows (image : RustDescriptorImage) (view : Nat) (frames : List (List Nat))
+    (receive : Bool) : List Nat → Except String (List Nat) :=
+  collectReadyRows (fixtureCandidateReady image view frames receive) []
+
+private theorem recorded_rows_exact (check : Nat → Except String Bool) (rows acc out : List Nat)
+    (result : collectReadyRows check acc rows = .ok out) (r : Nat) :
+    r ∈ out ↔ r ∈ acc ∨ (r ∈ rows ∧ check r = .ok true) := by
+  induction rows generalizing acc with
+  | nil =>
+    have same : acc = out := by simpa [collectReadyRows] using result
+    simp [same]
+  | cons a as ih =>
+    cases h : check a with
+    | error e => simp [collectReadyRows, h] at result
+    | ok matched =>
+      cases matched <;> simp [collectReadyRows, h] at result
+      · rw [ih _ result]
+        by_cases eq : r = a <;> simp_all
+      · rw [ih _ result]
+        by_cases eq : r = a <;> simp_all
+
+theorem checked_ready_rows_match_the_fifo_predicate
+    {image : RustDescriptorImage} {view : Nat} {frames : List (List Nat)}
+    {receive : Bool} {rows out : List Nat} {row : Nat}
+    (recorded : fixtureReadyRows image view frames receive rows = .ok out) :
+    row ∈ out ↔ row ∈ rows ∧ fixtureCandidateReady image view frames receive row = .ok true := by
+  simpa using recorded_rows_exact _ rows [] out recorded row
+
+#print axioms checked_ready_rows_match_the_fifo_predicate
+
+/-- For any candidate population, a source-authorized receive with its exact
+FIFO head can never be classified as unavailable by the executable cut oracle.
+Malformed evidence remains an error, including malformed rows after a hit. -/
+theorem a_matching_fifo_receive_cannot_be_classified_as_unready
+    {image : RustDescriptorImage} {frames : List (List Nat)} {rows : List Nat}
+    {row view lane peer label schema wire : Nat} (candidate : row ∈ rows)
+    (action : image.eventAction? row = some (.recv peer label schema))
+    (role : image.eventView? row = some view) (port : image.eventLane? row = some lane)
+    (color : image.eventFrameLabel? row = some wire)
+    (arrived : fixtureHead frames view lane = some [peer, view, lane, wire]) :
+    fixtureReadyRows image view frames true rows ≠ .ok [] := by
+  intro empty
+  have matched : fixtureCandidateReady image view frames true row = .ok true := by
+    simp [fixtureCandidateReady, action, role, port, color, arrived,
+      Bind.bind, Except.bind, Pure.pure, Except.pure]
+  exact List.not_mem_nil ((checked_ready_rows_match_the_fifo_predicate empty).2 ⟨candidate, matched⟩)
+
+#print axioms a_matching_fifo_receive_cannot_be_classified_as_unready
+
+private theorem mapped_input_occurs {f : α → Option β} {inputs : List α} {outputs : List β}
+    {x : α} {y : β} (mapped : inputs.mapM f = some outputs) (member : x ∈ inputs)
+    (atInput : f x = some y) : y ∈ outputs := by
+  induction inputs generalizing outputs with
+  | nil => simp at member
+  | cons first rest ih =>
+    cases firstAt : f first with
+    | none => simp [firstAt] at mapped
+    | some value =>
+      cases restAt : rest.mapM f with
+      | none => simp [firstAt, restAt] at mapped
+      | some tail =>
+        have eq : value :: tail = outputs := by simpa [firstAt, restAt] using mapped
+        subst outputs
+        rcases List.mem_cons.mp member with same | later
+        · subst first
+          rw [atInput] at firstAt
+          simp [Option.some.inj firstAt]
+        · exact List.mem_cons_of_mem _ (ih restAt later)
+
+/-- A borrowed receive row is present in the actual contract lookup used by
+the source oracle. The caller may name a different occurrence of the same
+contract. No hypothesis mentions the returned candidate list. -/
+theorem typed_receive_lookup_includes_each_borrowed_alias
+    {cut : PublicOperationCut} {image : RustDescriptorImage} {origin row event lane peer : Nat}
+    {atoms : List DecodedProgramAtom} {requested : DecodedProgramAtom} {query}
+    (prepared : cut.contractQueries? image = some query)
+    (decoded : image.decodeAtoms? = some atoms)
+    (selected : atoms.find? (fun atom => atom.effIndex == origin) = some requested)
+    (inImage : row < image.eventCount)
+    (view : image.eventView? row = some cut.target.view)
+    (source : image.eventEffIndex? row = some event)
+    (port : image.eventLane? row = some lane)
+    (action : image.eventAction? row = some (.recv peer requested.label requested.schema))
+    (range : cut.target.start ≤ event ∧ event < cut.target.stop)
+    (borrowed : lane ∈ cut.target.ownedLanes) :
+    ∃ candidates, query origin true = some candidates ∧ row ∈ candidates := by
+  unfold PublicOperationCut.contractQueries? at prepared
+  obtain ⟨actualAtoms, actualAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
+  rw [decoded] at actualAt
+  cases actualAt
+  obtain ⟨rows, mapped, built⟩ := Option.bind_eq_some_iff.mp prepared
+  cases Option.some.inj built
+  simp only [selected, Bind.bind, Option.bind, Pure.pure]
+  refine ⟨_, rfl, List.mem_filterMap.mpr ?_⟩
+  refine ⟨(row, cut.target.view, event, lane, .recv peer requested.label requested.schema),
+    mapped_input_occurs mapped (List.mem_range.mpr inImage) ?_, ?_⟩
+  · simp [view, source, port, action]
+  · simp [range, borrowed, LocalAction.label, LocalAction.schema]
+
+#print axioms typed_receive_lookup_includes_each_borrowed_alias
+
+/-- The completion-bit prefilter of the candidate iterator may discard a row
+only in an image without reentry. A source-ready row in a checked image is
+unfinished now or has an explicit sealed roll. This holds for arbitrary cuts,
+including fresh visits whose previous occurrence already completed; it uses
+neither a recorded Rust admission nor the outcome of a public call. -/
+theorem source_ready_survives_completed_row_filter
+    {image : RustDescriptorImage} {choreo : Choreo} {retained : List Nat}
+    {data : DecodedActorOrder} {path : NormalizedPath} {before : ActorProgressObservation}
+    {row : DecodedActorRow} {previous next : Nat}
+    (sealedRolls : image.actorRollCheck choreo = true)
+    (ready : (sourceCurrentCandidateReady image choreo retained data path before row ||
+      sourceFreshCandidateReady image choreo retained before previous next data path row) = true) :
+    before.doneState.done row.eventId = false ∨ 0 < image.rollScopeCount := by
+  cases count : image.rollScopeCount with
+  | succ => exact Or.inr (by omega)
+  | zero =>
+    obtain ⟨_, _, rows, sourceRows, decoded⟩ := accepted_actor_rolls_bind_source_ranges sealedRolls
+    have empty : image.decodeRollRows? = some [] := by
+      simp [RustDescriptorImage.decodeRollRows?, count]
+    rw [empty] at decoded
+    cases decoded
+    have current : sourceCurrentCandidateReady image choreo retained data path before row = true := by
+      simpa [sourceFreshCandidateReady, sourceRows] using ready
+    have candidate := (Bool.and_eq_true_iff.mp current).2
+    exact Or.inl (by simpa using (Bool.and_eq_true_iff.mp candidate).1)
+
+#print axioms source_ready_survives_completed_row_filter
 
 -- A retained receive preview may only describe a prospective repetition. It
 -- does not assert that its packet arrived. The commit-derived FIFO above is

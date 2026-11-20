@@ -15,6 +15,83 @@ mod route_commit;
 mod route_topology;
 
 #[test]
+fn roll_retirement_requires_nonrepeating_causal_knowledge_and_no_return() {
+    type Loan = Msg<210, crate::Endpoint<'static, 2>>;
+    type Ask = Msg<211, ()>;
+    type Reply = Msg<212, ()>;
+    type Confirmed = Msg<213, ()>;
+    type Published = Msg<214, ()>;
+    let retry = g::seq(g::send::<2, 0, Ask>(), g::send::<0, 3, Reply>()).roll();
+    let handoff = g::seq(g::send::<1, 4, Loan>(), g::send::<2, 0, Confirmed>());
+    let source = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(retry, g::seq(handoff, g::send::<0, 3, Published>())),
+    );
+    let rows = project::<3>(&source).role_image_ref();
+    assert!(rows.has_roll_retirement());
+    let (transfer, witness) = rows.roll_scope_row(0).unwrap().retirement().unwrap();
+    assert_eq!(rows.program.event_endpoint(transfer as usize), Some(2));
+    assert_eq!(rows.local_step_effect(witness as usize).dense_ordinal(), 5);
+    for invalid_transfer in [0, 1, 2, 4, u16::MAX] {
+        reject(rows, |bytes, columns, _| {
+            put(
+                bytes,
+                columns.roll_scopes.offset as usize + 6,
+                invalid_transfer,
+            );
+        });
+    }
+    for invalid_witness in [0, u16::MAX - 1] {
+        reject(rows, |bytes, columns, _| {
+            put(
+                bytes,
+                columns.roll_scopes.offset as usize + 8,
+                invalid_witness,
+            );
+        });
+    }
+
+    let returning = g::seq(source, g::send::<4, 1, Loan>());
+    assert!(
+        !project::<3>(&returning)
+            .role_image_ref()
+            .has_roll_retirement()
+    );
+    assert!(
+        project::<3>(&returning)
+            .role_image_ref()
+            .roll_scope_row(0)
+            .unwrap()
+            .retirement()
+            .is_none()
+    );
+    let independent_notice = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(retry, g::par(handoff, g::send::<0, 3, Published>())),
+    );
+    assert!(
+        project::<3>(&independent_notice)
+            .role_image_ref()
+            .roll_scope_row(0)
+            .unwrap()
+            .retirement()
+            .is_none()
+    );
+    let repeated_notice = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(retry, g::seq(handoff, g::send::<0, 3, Published>().roll())),
+    );
+    assert!(
+        project::<3>(&repeated_notice)
+            .role_image_ref()
+            .roll_scope_row(0)
+            .unwrap()
+            .retirement()
+            .is_none()
+    );
+}
+
+#[test]
 fn receipt_retirement_requires_a_causal_receive_from_the_terminal_owner() {
     type File = Msg<201, crate::Endpoint<'static, 3>>;
     type Loan = Msg<202, crate::Endpoint<'static, 2>>;

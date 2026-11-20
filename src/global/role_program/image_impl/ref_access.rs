@@ -97,6 +97,7 @@ impl RuntimeRoleFacts {
 
 const PARALLEL_REENTRY_INDEX: u8 = 4;
 const REENTRY_INDEX: u8 = 8;
+const ROLL_RETIREMENT_INDEX: u8 = 16;
 
 impl RoleImageRef {
     pub(crate) const fn new<const N: usize>(
@@ -167,6 +168,17 @@ impl RoleImageRef {
         }
         if image.columns.roll_scopes.len != 0 {
             image.lookup_indexes |= REENTRY_INDEX;
+            let mut slot = 0;
+            while slot < image.columns.roll_scopes.len as usize {
+                let Some(row) = image.roll_scope_row(slot) else {
+                    invalid_resident_descriptor();
+                };
+                if row.retirement().is_some() {
+                    image.lookup_indexes |= ROLL_RETIREMENT_INDEX;
+                    break;
+                }
+                slot += 1;
+            }
         } else {
             let mut slot = 0;
             while slot < image.columns.route_scopes.len as usize {
@@ -223,6 +235,11 @@ impl RoleImageRef {
     #[inline(always)]
     pub(crate) const fn has_reentry_scopes(&self) -> bool {
         self.lookup_indexes & REENTRY_INDEX != 0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn has_roll_retirement(&self) -> bool {
+        self.lookup_indexes & ROLL_RETIREMENT_INDEX != 0
     }
 
     #[inline(always)]

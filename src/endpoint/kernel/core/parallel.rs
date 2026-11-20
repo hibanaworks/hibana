@@ -304,6 +304,21 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     if start < parent.start || end > parent.end {
                         return None;
                     }
+                    // A materialized preview already owns an input. Choose
+                    // among groups that can retain it, before preferring a
+                    // forward group to restarting the completed roll.
+                    if self
+                        .operation
+                        .public_route_branch
+                        .as_ref()
+                        .is_some_and(|branch| {
+                            branch.offered_frame.is_some()
+                                && !(start..end)
+                                    .contains(&branch.branch_meta.eff_index.dense_ordinal())
+                        })
+                    {
+                        return None;
+                    }
                     let left = self.arm_lane(start..split);
                     let right = self.arm_lane(split..end);
                     if (left.is_none() && right.is_none())

@@ -45,11 +45,9 @@ jobs:
         with:
           name: choreofix-core-regressions
           path: |
-            target/choreofix-regressions/**/evidence/**
-            target/choreofix-regressions/**/input-revisions.txt
-            target/choreofix-regressions/*/*-metadata.json
-            target/choreofix-regressions/*/*.log
-            target/choreofix-regressions/*/exit-status.txt
+            output/validation/choreofix-regressions/**
+            !output/validation/choreofix-regressions/**/target/**
+            !output/validation/choreofix-regressions/**/.venv/**
           if-no-files-found: error
 
   quality:

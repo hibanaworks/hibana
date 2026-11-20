@@ -510,6 +510,21 @@ impl<const E: usize, const D: usize> Obligation<'_, E, D> {
         actor: u8,
         iteration: usize,
     ) -> Result<bool, NeedChoice> {
+        let prefix_end = if range.end < target {
+            range.end
+        } else {
+            target
+        };
+        // These immutable sets contain every possible sender and receiver.
+        // An absent actor needs no ownership-choice expansion or leaf scan.
+        if range.start >= prefix_end
+            || !self
+                .scope_offsets
+                .participants_in(range.start, prefix_end)
+                .contains(actor)
+        {
+            return Ok(false);
+        }
         let mut membership = CausalRoles::empty();
         membership.insert(actor);
         while range.start < range.end && range.start < target {
@@ -822,28 +837,81 @@ pub(crate) const fn passive_choice_conflict<const E: usize, const D: usize>(
     while route < scopes.marker_len {
         let scope = scopes.scopes[route];
         if matches!(scope.kind, ScopeKind::Route) && scope.roll != u16::MAX {
+            let roll = scopes.scopes[scope.roll as usize];
+            let body = RollBodyRange::new(roll.start as usize, roll.end as usize);
+            let actor_map = match actors {
+                Some(image) => ActorMap::Owned {
+                    image,
+                    events: image.event_actors(),
+                    paths,
+                    repeated: Some(body),
+                },
+                None => ActorMap::Logical,
+            };
+            // A guaranteed earlier local action makes this receive an active
+            // continuation. Establish that once per row, before pairing heads.
+            // Empty shared/current/next contexts make this a universal fact;
+            // an unresolved holder remains in the exact path-specific check.
+            let mut active = [false; E];
+            let mut event = scope.start as usize;
+            while event < scope.end as usize {
+                let atom = events.atom_at(event);
+                if atom.from != atom.to
+                    && mixed.contains(atom.to)
+                    && let Ok(actor) = actor_map.receiver(event, atom, 0)
+                {
+                    let mut local = CausalRoles::empty();
+                    local.insert(actor);
+                    let prior = Obligation {
+                        events,
+                        scope_offsets: scopes,
+                        actors,
+                        earlier: event,
+                        end: event + 1,
+                        repeated: Some(body),
+                        passive_entry: Some(route),
+                    };
+                    let range = if event < scope.split as usize {
+                        FlowRange {
+                            start: scope.start as usize,
+                            end: scope.split as usize,
+                            marker_floor: route + 1,
+                        }
+                    } else {
+                        FlowRange {
+                            start: scope.split as usize,
+                            end: scope.end as usize,
+                            marker_floor: route + 1,
+                        }
+                    };
+                    active[event] =
+                        matches!(actor_map.sender_known(event, atom, 0, &local), Ok(true))
+                            || matches!(
+                                prior.actor_precedes(&actor_map, range, event, actor, 0),
+                                Ok(true)
+                            );
+                }
+                event += 1;
+            }
             let mut earlier = scope.start as usize;
             while earlier < scope.end as usize {
                 let before = events.atom_at(earlier);
-                if before.from != before.to && mixed.contains(before.to) {
+                if !active[earlier] && before.from != before.to && mixed.contains(before.to) {
                     let mut later = scopes.first_receive_to(before.to);
                     while later != u16::MAX && later < scope.end {
                         let after = events.atom_at(later as usize);
                         if later >= scope.start
+                            && !active[later as usize]
                             && (earlier < scope.split as usize) != (later < scope.split)
                             && before.from != after.from
                         {
-                            let roll = scopes.scopes[scope.roll as usize];
                             let obligation = Obligation {
                                 events,
                                 scope_offsets: scopes,
                                 actors,
                                 earlier,
                                 end: later as usize + 1,
-                                repeated: Some(RollBodyRange::new(
-                                    roll.start as usize,
-                                    roll.end as usize,
-                                )),
+                                repeated: Some(body),
                                 passive_entry: Some(route),
                             };
                             if obligation.conflict(paths, Some(later as usize)).is_some() {

@@ -15,7 +15,7 @@ pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_CAPACITY: usize =
     u16::MAX as usize / (2 * ROLE_IMAGE_ROUTE_ARM_STRIDE);
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
-pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
+pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 10;
 pub(crate) const ROLE_IMAGE_ROLL_ENTRY_STRIDE: usize = 7;
 // Each packed column has its own u16 byte/count domain. Their aggregate
 // address is wider; unrelated columns must not consume each other's span.
@@ -246,6 +246,7 @@ impl PackedRouteArmRow {
 pub(crate) struct PackedRollScopeRow {
     scope: u16,
     event_row: PackedLaneRange,
+    retirement: u32,
 }
 
 impl PackedRollScopeRow {
@@ -266,14 +267,36 @@ impl PackedRollScopeRow {
         Self {
             scope: scope.local_ordinal(),
             event_row: row,
+            retirement: u32::MAX,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn from_packed_parts(scope: u16, event_row_raw: u32) -> Self {
+    pub(crate) const fn from_packed_parts(scope: u16, event_row_raw: u32, retirement: u32) -> Self {
         Self {
             scope,
             event_row: PackedLaneRange::from_raw(event_row_raw),
+            retirement,
+        }
+    }
+
+    pub(crate) const fn with_retirement(mut self, transfer: u16, witness: u16) -> Self {
+        if transfer == u16::MAX || witness == u16::MAX {
+            crate::invariant();
+        }
+        self.retirement = transfer as u32 | ((witness as u32) << 16);
+        self
+    }
+
+    pub(crate) const fn retirement_raw(self) -> u32 {
+        self.retirement
+    }
+
+    pub(crate) const fn retirement(self) -> Option<(u16, u16)> {
+        if self.retirement == u32::MAX {
+            None
+        } else {
+            Some((self.retirement as u16, (self.retirement >> 16) as u16))
         }
     }
 

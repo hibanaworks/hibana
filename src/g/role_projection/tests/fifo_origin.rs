@@ -45,16 +45,9 @@ fn receive_fences_keep_their_actual_direction_colors() {
             g::Par<g::Send<0, 1, Tail>, g::Send<2, 1, Complete>>,
         >,
     >;
-    let source = g::ProgramProjection::<Fenced, 32>::SOURCE_EFF_LIST;
-    let lanes = core::array::from_fn::<_, 6, _>(|event| {
-        let atom = source.atom_at(event);
-        (atom.from, atom.to, atom.lane)
-    });
-    assert!(
-        g::ProgramProjection::<Fenced, 32>::RECEIVE_CAUSAL,
-        "source lanes={lanes:?}; passive={:?}",
-        crate::global::const_dsl::passive_choice_conflict::<32, 0>(source, None, None)
-    );
+    const {
+        assert!(g::ProgramProjection::<Fenced, 32>::RECEIVE_CAUSAL);
+    }
 }
 
 #[test]
@@ -89,4 +82,50 @@ fn branch_and_reentry_sender_changes_require_receive_causality() {
         assert!(g::ProgramProjection::<Closed, 32>::ERROR.is_none());
         let () = g::ProgramProjection::<Closed, 32>::VALIDATION;
     }
+}
+
+#[test]
+fn co_resident_reviewers_do_not_order_unconsumed_cross_author_notices() {
+    type ReviewA = g::Msg<20, Endpoint<'static, 3>>;
+    type ReviewB = g::Msg<21, Endpoint<'static, 4>>;
+    let bootstrap = g::seq(g::send::<5, 0, ReviewA>(), g::send::<5, 0, ReviewB>());
+    let broadcast = g::route(
+        g::seq(
+            g::send::<5, 3, Ready>(),
+            g::seq(
+                g::send::<3, 1, LeftNotice>(),
+                g::seq(g::send::<3, 2, LeftNotice>(), g::send::<3, 5, LeftNotice>()),
+            ),
+        ),
+        g::seq(
+            g::send::<5, 4, g::Msg<18, u32>>(),
+            g::seq(
+                g::send::<4, 2, RightNotice>(),
+                g::seq(
+                    g::send::<4, 1, RightNotice>(),
+                    g::send::<4, 5, RightNotice>(),
+                ),
+            ),
+        ),
+    );
+    let invalid = g::seq(bootstrap, broadcast.roll());
+    let diagnostic =
+        g::diagnose(&invalid).expect("logical send directions can overtake each other");
+    assert_eq!(
+        diagnostic.problem,
+        g::ProjectionProblem::ReceiveLaneCausality
+    );
+
+    // Both recipients must have consumed this visit before the controller
+    // can issue a request that produces another logical sender's notice.
+    let fenced = g::seq(
+        bootstrap,
+        g::seq(
+            broadcast,
+            g::par(g::send::<1, 5, Ack>(), g::send::<2, 5, Ack>()),
+        )
+        .roll(),
+    );
+    assert!(g::diagnose(&fenced).is_none());
+    let _ = crate::runtime::program::project::<1>(&fenced);
 }

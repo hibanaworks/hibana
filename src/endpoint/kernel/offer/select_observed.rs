@@ -60,7 +60,7 @@ where
                     admission_pending = true;
                     continue;
                 }
-                Err(EventAdmissionError::Invariant) => {
+                Err(EventAdmissionError::Invariant | EventAdmissionError::EntryViewUnavailable) => {
                     // A sender may finish its visit before this receiver's
                     // nested work. Keep the next visit's entry on its original
                     // port, without replacing the current committed arm.

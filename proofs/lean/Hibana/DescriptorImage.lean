@@ -24,7 +24,7 @@ def productionRoleLaneRangeStride : Nat := 4
 
 def productionRoleRouteArmLaneStepStride : Nat := 5
 
-def productionRoleRollScopeStride : Nat := 6
+def productionRoleRollScopeStride : Nat := 10
 def productionRoleRollEntryStride : Nat := 7
 
 def productionEventIdentityCapacity : Nat := 65535
@@ -2613,6 +2613,12 @@ def RustDescriptorImage.decodeRollRow?
   if scope < productionScopeCapacity then pure () else none
   let eventRangeRaw ← readU32LE? image.roleBytes (offset + 2)
   let (start, length) ← decodePackedLaneRange? eventRangeRaw image.eventCount
+  -- The optional causal handoff witness follows the range. It affects empty
+  -- receive wait classification, not the source-derived operation set below.
+  let retirement ← readU32LE? image.roleBytes (offset + 6)
+  if retirement = 4294967295 ∨
+      (retirement % 65536 < image.atomCount ∧ retirement / 65536 < image.eventCount)
+    then pure () else none
   if 0 < length then pure { scope, eventStart := start, eventLength := length } else none
 
 def RustDescriptorImage.decodeRollRows?

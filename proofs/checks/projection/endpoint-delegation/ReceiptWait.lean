@@ -90,6 +90,29 @@ theorem receipt_wait_does_not_depend_on_catalog_order
   cases leftResult : check left returnsHere borrowed sourceBefore <;>
     cases rightResult : check right returnsHere borrowed sourceBefore <;> simp_all
 
+/-- With no self-dependency among the still possible receipts, waiting is
+justified exactly when at least one of them remains. This includes both a
+permanent handoff and an independent future return. -/
+theorem independent_wait_iff_possible_receipt
+    {receipts : List α} {possible returnsHere borrowed : α → Bool}
+    {sourceBefore : α → α → Bool}
+    (independent : ∀ r ∈ receipts, possible r = true → borrowed r = false) :
+    check (receipts.filter possible) returnsHere borrowed sourceBefore = true ↔
+      ∃ r ∈ receipts, possible r = true := by
+  rw [checked_wait_covers_every_borrowed_receipt]
+  constructor
+  · rintro ⟨nonempty, _⟩
+    obtain ⟨r, member⟩ := List.exists_mem_of_ne_nil _ nonempty
+    exact ⟨r, List.mem_filter.mp member⟩
+  · rintro ⟨r, member, active⟩
+    have kept : r ∈ receipts.filter possible := List.mem_filter.mpr ⟨member, active⟩
+    refine ⟨fun empty => by simp [empty] at kept, ?_⟩
+    intro other retained held
+    obtain ⟨belongs, allowed⟩ := List.mem_filter.mp retained
+    rw [independent other belongs allowed] at held
+    contradiction
+
+#print axioms independent_wait_iff_possible_receipt
 #print axioms checked_wait_covers_every_borrowed_receipt
 #print axioms an_uncovered_self_dependency_rejects_wait
 #print axioms receipt_wait_does_not_depend_on_catalog_order

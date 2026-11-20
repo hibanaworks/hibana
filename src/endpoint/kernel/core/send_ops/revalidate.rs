@@ -63,7 +63,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         ) {
             Ok(enabled) => enabled,
             Err(EventAdmissionError::OtherViewPending) => return Poll::Pending,
-            Err(EventAdmissionError::Invariant) => {
+            Err(EventAdmissionError::Invariant | EventAdmissionError::EntryViewUnavailable) => {
                 return Poll::Ready(Err(SendError::PhaseInvariant));
             }
             Err(

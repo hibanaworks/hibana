@@ -99,6 +99,10 @@ run_miri_test \
   retired-and-temporary-resource-reentry \
   -p hibana --lib a_file_view_ -- --test-threads=1
 
+run_miri_test \
+  rolled-choice-parallel-retirement \
+  -p hibana --lib a_rolled_choice_can_borrow_its_parallel_retirement_while_another_view_finishes -- --test-threads=1
+
 (
   hibana_disable_repo_tests_cfg
   run_miri_test transferred-roll-entry-offer -p hibana --test conditional_owner_reentry \
@@ -121,12 +125,24 @@ run_miri_test \
     an_independent_arrived_frame_does_not_reject_a_pending_receive -- --exact --test-threads=1
   run_miri_test co-resident-file-choice -p hibana --test callsite_regression \
     co_resident_file_requests_select_their_own_implicit_arm -- --exact --test-threads=1
+  run_miri_test empty-receive-excluded-by-another-view -p hibana --test callsite_regression \
+    an_empty_receive_can_be_refused_after_another_view_learns_the_choice -- --exact --test-threads=1
+  run_miri_test empty-receive-after-resource-departure -p hibana --test callsite_regression \
+    a_rolled_receive_is_unavailable_after_its_resource_permanently_leaves -- --exact --test-threads=1
+  run_miri_test early-frame-before-receiver-prefix -p hibana --test callsite_regression \
+    an_early_frame_from_another_arm_survives_its_undelivered_prefix -- --exact --test-threads=1
+  run_miri_test accepted-roll-message-after-resource-departure -p hibana --test callsite_regression \
+    retiring_a_sender_does_not_erase_an_already_accepted_roll_message -- --exact --test-threads=1
   run_miri_test close-authority-and-parallel-borrow -p hibana --test callsite_regression \
     close -- --test-threads=1
   run_miri_test local-parallel-suffix-boundary -p hibana --test nested_parallel_reentry \
     sequential_suffix_ -- --test-threads=1
   run_miri_test future-holder-receive -p hibana --test nested_parallel_reentry \
     a_resource_receive_for_its_future_holder_is_unavailable_before_the_loan -- --exact --test-threads=1
+  run_miri_test fresh-roll-other-view-wait -p hibana --test route_branch_receive_continuation \
+    a_fresh_roll_send_waits_for_another_views_unconsumed_reply -- --exact --test-threads=1
+  run_miri_test choice-reentry-parallel-retirement -p hibana --test route_branch_receive_continuation \
+    parallel_retirement_follows_a_completed_choice_in_a_different_roll_arm -- --exact --test-threads=1
 )
 fi
 

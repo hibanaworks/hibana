@@ -18,6 +18,213 @@ fn event(from: u8, to: u8) -> EffAtom {
 }
 
 #[test]
+fn actor_prefix_queries_match_direct_physical_participation() {
+    use super::{ActorMap, FlowRange};
+    let events = EffList::<3>::new()
+        .push(event(0, 1))
+        .push(event(0, 1))
+        .push(event(0, 1));
+    let empty = SourceContext::new(&[]);
+    let paths = Paths {
+        shared: &empty,
+        current: &empty,
+        next: &empty,
+    };
+    let mut checked = 0;
+    for mut encoding in 0..3usize.pow(6) {
+        let mut physical = [[0u16; 2]; 3];
+        for pair in &mut physical {
+            for actor in pair {
+                *actor = (encoding % 3) as u16;
+                encoding /= 3;
+            }
+        }
+        let image = SourceActorImage::<3, 0>::causal_fixture(&physical, &[]);
+        let scopes = FlowIndex::new(&events, Some(&image));
+        let actors = ActorMap::Owned {
+            image: &image,
+            events: image.event_actors(),
+            paths,
+            repeated: None,
+        };
+        let query = Obligation {
+            events: &events,
+            scope_offsets: &scopes,
+            actors: Some(&image),
+            earlier: 0,
+            end: 3,
+            repeated: None,
+            passive_entry: None,
+        };
+        for target in 0..=3 {
+            for actor in 0..3 {
+                let expected = physical[..target]
+                    .iter()
+                    .flatten()
+                    .any(|&value| value == actor as u16);
+                assert_eq!(
+                    query
+                        .actor_precedes(
+                            &actors,
+                            FlowRange {
+                                start: 0,
+                                end: 3,
+                                marker_floor: 0
+                            },
+                            target,
+                            actor,
+                            0
+                        )
+                        .ok(),
+                    Some(expected),
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, 8748);
+}
+
+#[test]
+fn an_absent_prefix_actor_needs_no_unrelated_owner_choice() {
+    use super::{ActorMap, FlowRange, SourceArm, SourceSelection};
+    let mut events = EffList::<8>::new_partitioned(3, 4, 0)
+        .push(event(0, 1))
+        .push(event(0, 1))
+        .push(event(0, 1));
+    events.push_route_scope_mut(ScopeId::route(0), 0, 1, 2, ReentryMark::SinglePass);
+    let scope = SourceScope {
+        start: 0,
+        split: 1,
+        stop: 2,
+    };
+    let image =
+        SourceActorImage::<8, 1>::causal_fixture(&[[3, 256], [3, 4], [4, 0]], &[(scope, [1, 2])]);
+    let scopes = FlowIndex::new(&events, Some(&image));
+    let empty = SourceContext::new(&[]);
+    let query = Obligation {
+        events: &events,
+        scope_offsets: &scopes,
+        actors: Some(&image),
+        earlier: 0,
+        end: 3,
+        repeated: None,
+        passive_entry: None,
+    };
+    for (selected, expected) in [
+        (None, None),
+        (Some(SourceArm::Left), Some(true)),
+        (Some(SourceArm::Right), Some(false)),
+    ] {
+        let context = selected.map(|arm| empty.select(SourceSelection { scope, arm }));
+        let actors = ActorMap::Owned {
+            image: &image,
+            events: image.event_actors(),
+            paths: Paths {
+                shared: context.as_ref().unwrap_or(&empty),
+                current: &empty,
+                next: &empty,
+            },
+            repeated: None,
+        };
+        let range = FlowRange {
+            start: 0,
+            end: 2,
+            marker_floor: 0,
+        };
+        assert_eq!(
+            query.actor_precedes(&actors, range, 2, 0, 0).ok(),
+            Some(false)
+        );
+        assert_eq!(query.actor_precedes(&actors, range, 2, 1, 0).ok(), expected);
+    }
+}
+
+#[test]
+fn cached_passive_heads_preserve_every_pointwise_obligation() {
+    let mut events = EffList::<12>::new_partitioned(4, 6, 0)
+        .push(event(0, 2))
+        .push(event(0, 2))
+        .push(event(1, 2))
+        .push(event(1, 2));
+    events.push_route_scope_mut(ScopeId::route(1), 0, 2, 4, ReentryMark::Reentrant);
+    events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 4);
+    fn check<const D: usize>(events: &EffList<12>, image: &SourceActorImage<12, D>, case: usize) {
+        let empty = SourceContext::new(&[]);
+        let paths = Paths {
+            shared: &empty,
+            current: &empty,
+            next: &empty,
+        };
+        let scopes = FlowIndex::new(events, Some(image));
+        let route = (0..scopes.marker_len)
+            .find(|&index| matches!(scopes.scopes[index].kind, super::ScopeKind::Route))
+            .unwrap();
+        let expected = (0..4).find_map(|earlier| {
+            (0..4)
+                .filter(|&later| (earlier < 2) != (later < 2))
+                .find_map(|later| {
+                    let query = Obligation {
+                        events,
+                        scope_offsets: &scopes,
+                        actors: Some(image),
+                        earlier,
+                        end: later + 1,
+                        repeated: Some(RollBodyRange::new(0, 4)),
+                        passive_entry: Some(route),
+                    };
+                    query.conflict(paths, Some(later)).map(|_| (earlier, later))
+                })
+        });
+        assert_eq!(
+            super::passive_choice_conflict(events, Some(image), Some(&scopes))
+                .map(|(earlier, later, _)| (earlier, later)),
+            expected,
+            "physical actor case={case}",
+        );
+    }
+    let mut checked = 0;
+    for encoding in 0..3usize.pow(8) {
+        let mut word = encoding;
+        let mut physical = [[0u16; 2]; 4];
+        for pair in &mut physical {
+            for actor in pair {
+                *actor = (word % 3) as u16;
+                word /= 3;
+            }
+        }
+        check(
+            &events,
+            &SourceActorImage::<12, 0>::causal_fixture(&physical, &[]),
+            encoding,
+        );
+        checked += 1;
+    }
+    for position in 0..8 {
+        for left in 0..3 {
+            for right in 0..3 {
+                let mut physical = [[0, 2], [1, 2], [1, 2], [0, 2]];
+                physical[position / 2][position % 2] = 256;
+                let image = SourceActorImage::<12, 1>::causal_fixture(
+                    &physical,
+                    &[(
+                        SourceScope {
+                            start: 0,
+                            split: 2,
+                            stop: 4,
+                        },
+                        [left, right],
+                    )],
+                );
+                check(&events, &image, checked);
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, 6633);
+}
+
+#[test]
 fn a_known_sender_still_teaches_an_unknown_parallel_receiver() {
     let mut events = EffList::<8>::new_partitioned(5, 3, 0)
         .push(event(4, 0))
@@ -127,10 +334,10 @@ fn split_seed_scans_and_cached_scope_offsets_match_full_queries() {
             let actors = SourceActorImage::<8, 0>::causal_fixture(&references, &[]);
             let offsets = FlowIndex::new(&events, Some(&actors));
             let markers = events.scope_markers();
-            for event in 0..events.len() {
+            for (event, first) in offsets.first.iter().take(events.len()).enumerate() {
                 for floor in 0..=markers.len() {
                     assert_eq!(
-                        floor.max(offsets.first[event] as usize),
+                        floor.max(*first as usize),
                         markers.offset_lower_bound(event, floor),
                     );
                 }
@@ -180,10 +387,10 @@ fn cached_offsets_keep_all_nested_markers_at_a_shared_boundary() {
     events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 4);
     let offsets = FlowIndex::new::<0>(&events, None);
     let markers = events.scope_markers();
-    for event in 0..events.len() {
+    for (event, first) in offsets.first.iter().take(events.len()).enumerate() {
         for floor in 0..=markers.len() {
             assert_eq!(
-                floor.max(offsets.first[event] as usize),
+                floor.max(*first as usize),
                 markers.offset_lower_bound(event, floor)
             );
         }

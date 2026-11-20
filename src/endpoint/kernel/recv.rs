@@ -115,13 +115,16 @@ where
         let lanes = match self.live_recv_lanes(target_label, target_payload, &mut words) {
             Ok(lanes) => lanes,
             Err(RecvError::Unavailable | RecvError::OutOfOrder)
-                if self.operation.public_active_op == super::core::PublicActiveOp::Recv
-                    && pending_recv.is_unpolled() =>
+                if self.operation.public_active_op == super::core::PublicActiveOp::Recv =>
             {
+                // A transport poll that returned Pending accepted no frame.
+                // Another view can now exclude this contract without making
+                // this call a protocol violation. Every frame observed by a
+                // plain receive is committed or requeued within that poll.
                 return Poll::Ready(Err(RecvError::Unavailable));
             }
-            // A started receive or materialized preview retains the terminal
-            // failure contract. Unavailability never discards accepted input.
+            // A materialized branch preview retains its terminal contract.
+            // Unavailability must not discard that already accepted input.
             Err(RecvError::Unavailable) => {
                 return Poll::Ready(Err(RecvError::PhaseInvariant));
             }
@@ -185,10 +188,12 @@ where
                 frame.lane_wire(),
                 frame.observed_frame_label_raw(),
             );
-            match self.unique_recv_candidate(observed) {
+            match self.framed_recv_candidate(observed) {
                 Ok(Ok(candidate)) => {
                     let desc = candidate.desc;
-                    if desc.meta.label == target_label && desc.meta.payload_kind == target_payload {
+                    let same_contract =
+                        desc.meta.label == target_label && desc.meta.payload_kind == target_payload;
+                    if same_contract && candidate.admission.is_ok() {
                         return Poll::Ready(
                             self.accept_materialized_transport_frame(
                                 lane_idx,
@@ -200,11 +205,19 @@ where
                             .map(|frame| MatchedRecvFrame { desc, frame }),
                         );
                     }
-                    // This is a valid source operation, but not this call's
-                    // contract. Retain its FIFO head even on the final lane.
+                    // A recognized source operation can belong to another
+                    // contract or still await its receiver's local prefix.
+                    // Retain its FIFO head even on the final lane.
                     // Looking at the header commits neither receive nor choice.
                     self.requeue_transport_frame(frame)?;
                     parked_lane = true;
+                    if same_contract {
+                        pending_lane |= matches!(
+                            candidate.admission,
+                            Err(crate::global::typestate::EventAdmissionError::OtherViewPending)
+                        );
+                        continue;
+                    }
                     if self.operation.public_active_op == super::core::PublicActiveOp::Recv
                         && !self.recv_contract_allows_observation(
                             target_label,
@@ -236,13 +249,14 @@ where
             return Poll::Ready(Err(RecvError::PhaseInvariant));
         }
         if self.operation.public_active_op == super::core::PublicActiveOp::Recv
-            && self.poll_excluding_receive_observation(
-                target_label,
-                target_payload,
-                &words,
-                pending_recv,
-                cx,
-            )?
+            && (self.recv_contract_excludes_wait(target_label, target_payload, None)
+                || self.poll_excluding_receive_observation(
+                    target_label,
+                    target_payload,
+                    &words,
+                    pending_recv,
+                    cx,
+                )?)
         {
             return Poll::Ready(Err(RecvError::Unavailable));
         }
@@ -311,7 +325,7 @@ where
                 frame.lane_wire(),
                 frame.observed_frame_label_raw(),
             );
-            let candidate = self.unique_recv_candidate(observed);
+            let candidate = self.framed_recv_candidate(observed);
             // This port was inspected only for a choice excluding the
             // requested call. Do not consume even an unmatched FIFO head.
             self.requeue_transport_frame(frame)?;

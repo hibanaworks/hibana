@@ -180,6 +180,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                                 continue;
                             }
                             error @ (EventAdmissionError::Invariant
+                            | EventAdmissionError::EntryViewUnavailable
                             | EventAdmissionError::PredecessorPending
                             | EventAdmissionError::HeldPredecessorPending) => return Err(error),
                         }

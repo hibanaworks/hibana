@@ -14,6 +14,7 @@ pub(crate) use projection::{
     ActorLocalRows, LocalRows, RoleLocalRows, ScopeFacts, retained_route_counts,
 };
 mod ref_access;
+mod retirement;
 pub(crate) use ref_access::RoleImageRef;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;

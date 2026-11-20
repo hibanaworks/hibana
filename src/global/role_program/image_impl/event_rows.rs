@@ -1,4 +1,5 @@
 use super::super::{PackedLocalEventRow, RoleLaneImage, ScopeId};
+use crate::eff::EffAtom;
 use crate::global::{
     compiled::images::CompiledProgramRef,
     typestate::{
@@ -15,6 +16,21 @@ pub(crate) enum RoleLocalDirection {
 }
 
 impl RoleLocalDirection {
+    /// The carrier is borrowed by every operation; an owned send also holds
+    /// its payload Endpoint until that send has finished.
+    pub(crate) const fn required_views(self, atom: EffAtom) -> (u8, Option<u8>) {
+        let carrier = if matches!(self, Self::Recv) {
+            atom.to
+        } else {
+            atom.from
+        };
+        let payload = match (self, atom.payload) {
+            (Self::Send, crate::eff::EventPayload::Endpoint(role)) => Some(role),
+            _ => None,
+        };
+        (carrier, payload)
+    }
+
     const fn packed_bits(self) -> u8 {
         match self {
             Self::Local => 0,

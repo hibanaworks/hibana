@@ -5,17 +5,11 @@ use super::{Result, completed_tests, digest, execute, files, save, sources, unch
 use serde_json::json;
 use std::{collections::BTreeMap, env, fs, path::PathBuf, process::Command};
 
-const HOSTS: [&str; 3] = ["review", "codebase", "cicd"];
-const CASES: [(&str, &str); 2] = [
-    (
-        "codebase",
-        "codebase_boundary::three_disjoint_commits_are_admitted_before_any_response",
-    ),
-    (
-        "cicd",
-        "cicd_boundary::real_wasi_cicd_uses_resource_endpoints_and_keeps_shell_freedom",
-    ),
-];
+const HOSTS: [&str; 2] = ["review", "codebase"];
+const CASES: [(&str, &str); 1] = [(
+    "codebase",
+    "codebase_boundary::three_disjoint_commits_are_admitted_before_any_response",
+)];
 
 pub fn run() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();

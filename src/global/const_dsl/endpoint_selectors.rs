@@ -264,9 +264,7 @@ const fn sorted_selector_events<const E: usize>(keys: &[u64; E], len: usize) -> 
     let mut end = len;
     while end > 1 {
         end -= 1;
-        let last = order[end];
-        order[end] = order[0];
-        order[0] = last;
+        order.swap(end, 0);
         sift_selector_heap(keys, &mut order, 0, end);
     }
     order
@@ -289,9 +287,7 @@ const fn sift_selector_heap<const E: usize>(
         if keys[order[root]] >= keys[order[child]] {
             return;
         }
-        let old = order[root];
-        order[root] = order[child];
-        order[child] = old;
+        order.swap(root, child);
         root = child;
     }
 }

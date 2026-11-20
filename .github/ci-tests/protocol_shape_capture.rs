@@ -231,7 +231,7 @@ fn candidate(plan: &SourcePlan, run: &CapturedRun, snapshot: &[[u64; 5]]) -> Res
             }
         }
     }
-    let mut bytes = b"HEPC\0\0\0\x01".to_vec();
+    let mut bytes = b"HEPC\0\0\0\x02".to_vec();
     bytes.extend_from_slice(&2u32.to_be_bytes());
     for count in [
         plan.unfolding.len(),
@@ -321,9 +321,19 @@ impl CaptureCheck<'_> {
             .into());
         }
         let checked: serde_json::Value = serde_json::from_reader(File::open(certificate)?)?;
+        let order = checked["order"]
+            .as_array()
+            .ok_or("EPF certificate has no record order")?;
         if checked["kind"] != "source_interpretation"
             || checked["session"] != 2
-            || checked["order"].as_array().map(Vec::len) != Some(run.events.len())
+            || order.len() != run.events.len()
+            || !order.iter().zip(&run.events).all(|(point, row)| {
+                point["producer"].as_u64() == Some(row[0])
+                    && point["ordinal"].as_u64() == Some(row[1])
+                    && (!matches!(row[2], 0x0202..=0x0204)
+                        || row[4] != 2
+                        || point["source_event"].as_u64() == Some(row[5] & 65535))
+            })
         {
             return Err("EPF returned an incomplete or unrelated execution certificate".into());
         }
@@ -466,7 +476,9 @@ fn run() -> Result<()> {
     serde_json::to_writer_pretty(create(&output.join("summary.json"))?, &summary)?;
     println!("{summary}");
     if summary["completed_query_execution"]["unresolved"] != 0 {
-        return Err("some completed queries have no checked source candidate in the supplied finite plan family; this is not an illegality verdict".into());
+        return Err(
+            "the supplied finite plans did not yield a checked history for every query".into(),
+        );
     }
     Ok(())
 }

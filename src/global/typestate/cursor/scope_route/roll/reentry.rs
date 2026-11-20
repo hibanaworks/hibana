@@ -8,6 +8,45 @@ pub(crate) struct PreparedRollReset {
 }
 
 impl EventCursor {
+    #[inline(always)]
+    pub(crate) fn has_roll_retirement(&self) -> bool {
+        self.machine().event_program().has_roll_retirement()
+    }
+
+    pub(crate) fn roll_retirement_observed(
+        &self,
+        scope: ScopeId,
+        candidate: usize,
+        observed: Option<usize>,
+    ) -> bool {
+        self.machine()
+            .event_program()
+            .roll_retirement_witness(scope)
+            .is_some_and(|witness| {
+                let (Some(incoming), Some(notice)) =
+                    (self.event_row_at(candidate), self.event_row_at(witness))
+                else {
+                    return false;
+                };
+                // A notice on a different wire direction can overtake an old
+                // visit's input. Only this receive's own FIFO can seal it.
+                if incoming.atom().from != notice.atom().from
+                    || incoming.atom().to != notice.atom().to
+                    || self.event_lane_at(candidate) != self.event_lane_at(witness)
+                {
+                    return false;
+                }
+                self.local_event_done(witness)
+                    || observed.is_some_and(|index| {
+                        self.machine()
+                            .state_for_step_index(witness)
+                            .is_some_and(|state| {
+                                super::super::super::state_index_to_usize(state) == index
+                            })
+                    })
+            })
+    }
+
     pub(crate) fn roll_entry_views(
         &self,
         scope: ScopeId,

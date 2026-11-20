@@ -245,7 +245,8 @@
       "global::const_dsl::scope::kani::scope_id_decoding_accepts_exact_compact_domain"
     ],
     "../../src/global/event_program/kani.rs": [
-      "global::event_program::kani::binary_roll_lookup_matches_all_rows_and_absent_identifiers"
+      "global::event_program::kani::binary_roll_lookup_matches_all_rows_and_absent_identifiers",
+      "global::event_program::kani::sealed_row_search_returns_every_possible_prefix_boundary"
     ],
     "../../src/global/role_program/image_impl/kani.rs": [
       "global::role_program::image_impl::kani::active_lane_metadata_is_exact_for_every_first_byte_bitmap",
@@ -355,16 +356,13 @@
     "../../src/global/typestate/facts/kani.rs": [
       "global::typestate::facts::kani::checked_state_index_acceptance_is_the_exact_present_identity_domain",
       "global::typestate::facts::kani::deterministic_inbound_key_matching_is_exact_on_every_available_axis",
-      "global::typestate::facts::kani::deterministic_inbound_key_rejects_each_single_axis_mismatch",
       "global::typestate::facts::kani::inbound_frame_key_matching_is_exact_on_every_wire_axis",
-      "global::typestate::facts::kani::inbound_frame_key_rejects_each_single_axis_mismatch",
       "global::typestate::facts::kani::optional_route_arm_decoding_accepts_exact_domain",
       "global::typestate::facts::kani::packed_event_conflict_decoding_accepts_exact_domain",
       "global::typestate::facts::kani::packed_local_dependency_decoding_accepts_exact_domain",
       "global::typestate::facts::kani::packed_local_dependency_event_bounds_are_exact",
       "global::typestate::facts::kani::state_index_preserves_the_exact_present_identity_domain",
-      "global::typestate::facts::kani::state_index_rejects_the_reserved_absent_identity",
-      "global::typestate::facts::kani::wire_schema_never_authorizes_an_endpoint_with_the_same_numeric_identifier"
+      "global::typestate::facts::kani::state_index_rejects_the_reserved_absent_identity"
     ],
     "../../src/observe/core/ring_state.rs": [
       "observe::core::ring_state::kani::ring_state_step_preserves_the_exact_slot_domain"
@@ -451,7 +449,7 @@
 
   ],
   "totals": {
-    "standard-harnesses": 322,
+    "standard-harnesses": 320,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

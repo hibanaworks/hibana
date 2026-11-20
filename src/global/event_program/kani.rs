@@ -28,3 +28,19 @@ fn binary_roll_lookup_matches_all_rows_and_absent_identifiers() {
     kani::cover!(expected == Some(2));
     kani::cover!(ordinal == ScopeId::LOCAL_CAPACITY - 1 && expected.is_none());
 }
+
+/// Every pure prefix predicate of a sorted column has one such boundary.
+/// Use independent arbitrary endpoints to include the empty and full prefixes.
+#[kani::proof]
+#[kani::unwind(18)]
+fn sealed_row_search_returns_every_possible_prefix_boundary() {
+    let a = usize::from(kani::any::<u16>());
+    let b = usize::from(kani::any::<u16>());
+    let count = a.max(b);
+    let boundary = a.min(b);
+    let actual = super::row_partition_point(count, |index| {
+        assert!(index < count);
+        index < boundary
+    });
+    assert_eq!(actual, boundary);
+}

@@ -624,7 +624,8 @@ impl EventCursor {
             )
             .map_err(|error| match error {
                 super::EventAdmissionError::OtherViewPending => SendPreviewError::OtherViewPending,
-                super::EventAdmissionError::Invariant => SendPreviewError::Invariant,
+                super::EventAdmissionError::Invariant
+                | super::EventAdmissionError::EntryViewUnavailable => SendPreviewError::Invariant,
                 super::EventAdmissionError::HeldPredecessorPending
                     if selector.borrowed.is_some()
                         && matches!(target_payload, crate::eff::EventPayload::Wire(_)) =>
@@ -674,8 +675,29 @@ impl EventCursor {
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
         let target_label = selector.label;
         let target_payload = selector.payload_kind;
-        let mut idx =
-            self.send_preview_start_index_for_contract(selector, source, committed_arm_for_scope)?;
+        let mut idx = match self.send_preview_start_for_contract(
+            selector,
+            source,
+            committed_arm_for_scope,
+        )? {
+            Some(idx) => {
+                // The indexed row was just admitted under this same immutable
+                // cursor borrow. With no route, no callback or choice can
+                // change its interpretation before returning its metadata.
+                if !self.has_route_scopes() {
+                    return Ok((
+                        self.send_preview_meta_at_index(selector.role, idx, None)?,
+                        StateIndex::from_usize(idx),
+                    ));
+                }
+                idx
+            }
+            None if self.enclosing_route_scope_rows_at(self.index()).is_some() => self.index(),
+            None => match self.first_pending_step_index() {
+                Some(idx) => idx,
+                None => self.index(),
+            },
+        };
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
         {

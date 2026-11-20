@@ -20,9 +20,8 @@ struct WholeCallObservation {
     prefix: Vec<u16>,
     prefix_inputs: Vec<Vec<u16>>,
     input: Vec<u16>,
-    // Actual result metadata, used only by the offer-availability assertion.
-    // It is deliberately absent from the independent permission check's input.
-    committed_source: Option<u16>,
+    // Actual result, kept on the question and outside the passive cut.
+    commit: Option<(u16, u8)>,
 }
 
 struct WholeCutWriter {
@@ -53,7 +52,10 @@ impl WholeCutWriter {
             self.ids.insert(key, id);
             id
         };
-        id.to_string()
+        match observation.commit {
+            Some((source, lane)) => format!("[{id},[{source},{lane}]]"),
+            None => format!("[{id},null]"),
+        }
     }
 
     fn finish(mut self) {

@@ -25,7 +25,6 @@ note: required by a bound in `send`
  --> src/g.rs
   |
   | pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
-  |              ---- required by a bound in this function
   | where
   |     M: Message,
   |        ^^^^^^^ required by this bound in `send`
@@ -57,7 +56,6 @@ note: required by a bound in `send`
  --> src/g.rs
   |
   | pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
-  |              ---- required by a bound in this function
   | where
   |     M: Message,
   |        ^^^^^^^ required by this bound in `send`

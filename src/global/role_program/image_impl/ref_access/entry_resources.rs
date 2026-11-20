@@ -117,6 +117,32 @@ impl RoleImageRef {
             {
                 invalid_resident_descriptor();
             }
+            if let Some((transfer, witness)) = row.retirement() {
+                let witness = witness as usize;
+                if witness < finish
+                    || witness >= rows.len
+                    || !matches!(
+                        rows.directions[witness],
+                        super::super::super::RoleLocalDirection::Recv
+                    )
+                {
+                    invalid_resident_descriptor();
+                }
+                let Some(known) =
+                    super::super::retirement::knowledge(self.program, scope, transfer as usize)
+                else {
+                    invalid_resident_descriptor();
+                };
+                let before = known[self.role as usize];
+                let event = rows.effects[witness] as usize;
+                if before == u16::MAX
+                    || !self.program.source_mandatory_with_scope(scope, event)
+                    || !(before as usize == event
+                        || self.program.source_precedes(before as usize, event))
+                {
+                    invalid_resident_descriptor();
+                }
+            }
             if let Some(prior) = previous
                 && prior >= scope.local_ordinal()
             {

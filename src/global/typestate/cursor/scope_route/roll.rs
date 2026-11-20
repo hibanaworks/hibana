@@ -8,10 +8,11 @@ mod reentry;
 mod tests;
 
 impl EventCursor {
-    /// A completed repeat may restart instead of continuing its current body.
-    /// Its next visit may also choose another arm. Neither alternative belongs
-    /// to a borrow of the current arm. Unfinished prefixes and parallel siblings
-    /// remain required members of the frontier.
+    /// Repeating an earlier body is an alternative to borrowing its sequential
+    /// continuation. A completed row can still await another view's completion
+    /// before restarting; it is not an extra branch of that forward borrow.
+    /// The borrowed operations retain their ordinary predecessor checks.
+    /// Unfinished prefixes and parallel siblings remain in the frontier.
     pub(crate) fn completed_roll_alternative_to(
         &self,
         index: usize,
@@ -52,8 +53,9 @@ impl EventCursor {
                         program.source_route_separates(route.scope(), source, continuation)
                     })
             };
-            if (prefix || enclosing || other_arm())
-                && self.roll_scope_complete_for_entry(scope, index, selected)
+            if (prefix && self.local_event_done(index))
+                || ((prefix || enclosing || other_arm())
+                    && self.roll_scope_complete_for_entry(scope, index, selected))
             {
                 return true;
             }
@@ -169,6 +171,24 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let row = crate::invariant_some(self.machine().roll_scope_row(scope));
+        // Every sealed row participates when ownership and existence are
+        // unconditional. Without retained child credits, completion is exactly
+        // the existing bitmap range; no row or route guard needs decoding.
+        if !self.has_route_scopes()
+            && self.program_ref().actor_decision_count() == 0
+            && self
+                .machine()
+                .event_program()
+                .footprint()
+                .borrow_epoch_count
+                == 0
+        {
+            return row.start() < row.end()
+                && self
+                    .pending_event_steps(row.start()..row.end())
+                    .next()
+                    .is_none();
+        }
         // Completion is the existing bitmap's authority. Only its clear bits
         // can block this scope. An excluded arm has no participating events,
         // so skip its whole row rather than decoding each clear bit in it.

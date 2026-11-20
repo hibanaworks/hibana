@@ -9,6 +9,65 @@ use std::{
 };
 pub type Names = BTreeSet<String>;
 pub type AuditResult<T> = Result<T, String>;
+/// Audit compiled declarations by module provenance, including unused private
+/// declarations. Native regression modules are the only permitted decision
+/// axioms; their owning compiled theorem must actually depend on them.
+pub fn declaration_guard(owns: &str, native_modules: &[&str]) -> String {
+    let native = match native_modules {
+        [] => "fun (_ : Name) => false".to_owned(),
+        modules => format!(
+            "fun (moduleName : Name) => {}",
+            modules
+                .iter()
+                .map(|module| format!("moduleName == `{module}"))
+                .collect::<Vec<_>>()
+                .join(" || ")
+        ),
+    };
+    format!(
+        r#"
+open Lean Elab Command in
+run_cmd
+  let env ← getEnv
+  let isNativeModule := {native}
+  let moduleOf := fun name => (env.getModuleIdxFor? name).map fun idx =>
+    env.header.moduleNames[idx.toNat]!
+  let nativeModule := fun name => isNativeModule ((moduleOf name).getD env.mainModule)
+  let nativeDecision := fun (name : Name) => do
+    unless nativeModule name do return false
+    match name with
+    | .str (.str (.str owner "_native") "native_decide") suffix =>
+      unless suffix.startsWith "ax_" &&
+          !(suffix.drop 3).isEmpty &&
+          (suffix.drop 3).toString.toList.all (fun c => c.isDigit || c == '_') do
+        return false
+      unless (env.find? owner).any (·.isTheorem) do return false
+      return (← Lean.collectAxioms owner).contains name
+    | _ => return false
+  let mut checked : Nat := 0
+  let mut nativeDecisions : Nat := 0
+  for (name, info) in env.constants.toList do
+    let definingModule := moduleOf name
+    if {owns} then
+      if info.isAxiom then
+        unless ← nativeDecision name do
+          throwError "Untrusted axiom declaration: {{name}}"
+        nativeDecisions := nativeDecisions + 1
+      else
+        if info.isTheorem then checked := checked + 1
+        for axiomName in ← Lean.collectAxioms name do
+          unless axiomName == `propext || axiomName == `Quot.sound ||
+              axiomName == `Classical.choice do
+            unless nativeModule name &&
+                moduleOf axiomName == definingModule && (← nativeDecision axiomName) do
+              throwError "Untrusted declaration dependency: {{name}}: {{axiomName}}"
+  if checked == 0 then
+    throwError "No compiled theorem was checked"
+  logInfo m!"HIBANA_COMPILED_AXIOMS={{nativeDecisions}}"
+"#
+    )
+}
+
 pub fn read(path: &Path) -> AuditResult<String> {
     fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
 }

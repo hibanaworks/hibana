@@ -1,4 +1,5 @@
 //! Compile and audit every standalone implementation theorem.
+mod lean_audit;
 mod lean_module;
 use std::{
     env, fs,

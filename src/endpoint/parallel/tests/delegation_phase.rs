@@ -677,3 +677,96 @@ async fn a_parallel_borrow_keeps_its_endpoint_payload_available_for_the_prefix()
     }
     Ok(())
 }
+
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn a_rolled_choice_can_borrow_its_parallel_retirement_while_another_view_finishes()
+-> Result<(), crate::EndpointError> {
+    type File<'r> = g::Msg<200, Endpoint<'r, 4>>;
+    type Work = g::Msg<201, ()>;
+    type Ack = g::Msg<202, ()>;
+    type FileNotice = g::Msg<203, ()>;
+    type PeerNotice = g::Msg<204, ()>;
+    type Stop = g::Msg<205, ()>;
+    let global = g::seq(
+        g::send::<2, 0, File>(),
+        g::seq(
+            g::route(
+                g::seq(g::send::<0, 1, Work>(), g::send::<1, 0, Ack>()),
+                g::par(g::send::<0, 4, FileNotice>(), g::send::<0, 1, PeerNotice>()),
+            )
+            .roll(),
+            g::par(g::send::<0, 2, File>(), g::send::<0, 1, Stop>()),
+        ),
+    );
+    let p0 = project::<0>(&global);
+    let p1 = project::<1>(&global);
+    let p2 = project::<2>(&global);
+    let p4 = project::<4>(&global);
+    for delayed_file_receive in [false, true] {
+        let network = TestTransport::new();
+        let mut slab = std::vec![0; 128 * 1024];
+        let mut storage = SessionKitStorage::uninit();
+        let rv = storage
+            .init()
+            .rendezvous(&mut slab, network.clone())
+            .unwrap();
+        let session = SessionId::new(991);
+        let mut issuer = rv.enter(session, &p2).unwrap();
+        let file = rv.enter(session, &p4).unwrap();
+        let mut owner = rv.enter(session, &p0).unwrap();
+        let mut peer = rv.enter(session, &p1).unwrap();
+        issuer.send::<File>(file).await?;
+        let mut file = owner.recv::<File>().await?;
+        owner.send::<FileNotice>(&()).await?;
+        owner.send::<PeerNotice>(&()).await?;
+        peer.recv::<PeerNotice>().await?;
+        if !delayed_file_receive {
+            file.recv::<FileNotice>().await?;
+        }
+        // SAFETY: this live view was attached with the concrete TestTransport above.
+        let snapshot = unsafe { crate::endpoint::proof_snapshot::actor_snapshot(&owner) };
+        let [mut retirement, mut stop] = owner.par().unwrap_or_else(|error| {
+            panic!("retirement delayed={delayed_file_receive}, {error:?}; {snapshot:#?}")
+        });
+        if delayed_file_receive {
+            let before = rv.tap().checkpoint();
+            {
+                let value = ();
+                let mut pending = core::pin::pin!(stop.send::<Stop>(&value));
+                core::future::poll_fn(|cx| {
+                    assert!(
+                        pending.as_mut().poll(cx).is_pending(),
+                        "borrowing cannot discharge the other view's receipt"
+                    );
+                    core::task::Poll::Ready(())
+                })
+                .await;
+            }
+            assert_eq!(
+                rv.tap().checkpoint(),
+                before,
+                "the suspended send must not commit or start transport"
+            );
+            file.recv::<FileNotice>().await?;
+        }
+        async {
+            async {
+                retirement.send::<File>(file).await?;
+            };
+            async {
+                stop.send::<Stop>(&()).await?;
+            };
+            async {
+                drop(issuer.recv::<File>().await?);
+            };
+            async {
+                peer.recv::<Stop>().await?;
+            };
+            Ok(())
+        }
+        .await?;
+        assert!(network.queue_is_empty());
+    }
+    Ok(())
+}

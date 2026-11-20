@@ -88,4 +88,56 @@ theorem PendingAcceptance.completing_that_body_enables_the_continuation :
 
 #print axioms PendingAcceptance.a_committed_entry_still_waits_for_its_remaining_body
 #print axioms PendingAcceptance.completing_that_body_enables_the_continuation
+
+-- A delegated file and its holder are different views of one actor. The
+-- second visit cannot publish until both current receipts have committed.
+-- This checks the source cut; the public Endpoint regression separately
+-- distinguishes a legal suspended call from an immediate rejection.
+private def fileLoan : Message := ⟨⟨0, 2⟩, ⟨0, 0⟩, 30, .endpoint resource⟩
+private def fileRequest : Message := ⟨resource, ⟨0, 1⟩, 31, .wire 0⟩
+private def holderReply : Message := ⟨⟨0, 1⟩, ⟨0, 0⟩, 32, .wire 0⟩
+private def fileReply : Message := ⟨⟨0, 1⟩, resource, 33, .wire 0⟩
+private def fileBody : Source :=
+  .seq (.send fileRequest) (.par (.send holderReply) (.send fileReply))
+private def fileSource : Source := .seq (.send fileLoan) (.roll fileBody)
+private def fileOriginal : Normalization := (normalize fileSource).get (by decide)
+private def fileExpanded : Source := .seq (.send fileLoan) (.seq fileBody fileBody)
+private def fileNormalized : Normalization :=
+  (normalizeExpansion fileOriginal.issuance fileExpanded).get (by decide)
+private def filePlan : SourceOccurrenceCut fileSource := {
+  original := fileOriginal
+  originalAccepted := by decide
+  expanded := fileExpanded
+  unfolding := .seq (.send fileLoan)
+    (.rollMore (.rollOnce (.oneCopy fileBody)) (.oneCopy fileBody))
+  normalized := fileNormalized
+  accepted := by decide
+  sameIssuance := by decide
+  path := fileNormalized.paths[0]'(by decide)
+  selected := by decide
+  separated := by decide
+  guarded := by decide
+  observed := fun _ => false
+}
+private def beforeParallelReceipts : List SourcePoint := [
+  .accepted 0, .committed ⟨0, .send⟩, .committed ⟨0, .receive⟩,
+  .accepted 1, .committed ⟨1, .send⟩, .committed ⟨1, .receive⟩,
+  .accepted 2, .committed ⟨2, .send⟩,
+  .accepted 3, .committed ⟨3, .send⟩]
+
+theorem PendingAcceptance.next_file_visit_waits_for_the_holders_current_receipt :
+    (occurrenceCut filePlan (beforeParallelReceipts ++ [.committed ⟨3, .receive⟩])).ready
+      (.accepted 4) = false := by decide
+
+theorem PendingAcceptance.next_file_visit_waits_for_its_own_current_receipt :
+    (occurrenceCut filePlan (beforeParallelReceipts ++ [.committed ⟨2, .receive⟩])).ready
+      (.accepted 4) = false := by decide
+
+theorem PendingAcceptance.both_current_receipts_enable_the_next_file_visit :
+    (occurrenceCut filePlan (beforeParallelReceipts ++
+      [.committed ⟨3, .receive⟩, .committed ⟨2, .receive⟩])).ready (.accepted 4) = true := by decide
+
+#print axioms PendingAcceptance.next_file_visit_waits_for_the_holders_current_receipt
+#print axioms PendingAcceptance.next_file_visit_waits_for_its_own_current_receipt
+#print axioms PendingAcceptance.both_current_receipts_enable_the_next_file_visit
 end Hibana

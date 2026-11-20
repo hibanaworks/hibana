@@ -1196,7 +1196,7 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
     if let Some(program)=programs.p2.as_ref(){{write_operation_image(program,{case});}}
     if let Some(program)=programs.p3.as_ref(){{write_operation_image(program,{case});}}
     let query_inputs:&[&[u16]]=&[{input_array}];
-    let mut completed_plan_words=std::collections::BTreeSet::new();
+    let mut planned_words=std::collections::BTreeSet::new();
     let script_range=selected_script_range({script_count});
     let scripts=std::io::BufRead::lines(std::io::BufReader::new(std::fs::File::open(std::path::Path::new(PROTOCOL_SOURCE_DIR).join("scripts/{case}.jsonl")).expect("missing script plans")));
     use std::io::Write as _;
@@ -1219,12 +1219,15 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
     let snapshot=if let Some(program)=programs.p0.as_ref(){{hibana::runtime::tap::projected(program).collect::<Vec<_>>()}}else if let Some(program)=programs.p1.as_ref(){{hibana::runtime::tap::projected(program).collect::<Vec<_>>()}}else if let Some(program)=programs.p2.as_ref(){{hibana::runtime::tap::projected(program).collect::<Vec<_>>()}}else{{hibana::runtime::tap::projected(programs.p3.as_ref().expect("missing source program")).collect::<Vec<_>>()}};
     write!(projection,"[").unwrap();for(index,event)in snapshot.iter().enumerate(){{if index!=0{{write!(projection,",").unwrap();}}write!(projection,"[{{}},{{}},{{}},{{}},{{}}]",event.ts(),event.id(),event.causal_key(),event.arg0(),event.arg1()).unwrap();}}writeln!(projection,"]").unwrap();projection.flush().unwrap();
     let mut checked_scripts=0usize;
-    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let planned_probes=scope_plans.next(script_index);let record_script=script_range.contains(&script_index);let probes=if record_script{{planned_probes.as_slice()}}else{{&[]}};for reverse_poll in [false,true] {{
-    if record_script{{write!(scope_observations,"{{{{\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}}").unwrap();}}
+    for (script_index,line) in scripts.enumerate() {{ let decoded_script=Script::from_json(&line.expect("unreadable script plan")).expect("invalid script plan");let script=&decoded_script;let probes=scope_plans.next(script_index);
+    if script_range.start==0{{planned_words.insert(script.line());}}
+    if !script_range.contains(&script_index){{continue;}}
+    for reverse_poll in [false,true] {{
+    write!(scope_observations,"{{{{\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}}").unwrap();
     let mut scoped_rejections=Vec::new();
     let mut baseline_events=Vec::new();let mut baseline_borrows=Vec::new();let mut baseline_calls=Vec::new();
     let expected_admissions=probes.iter().filter(|probe|matches!(probe,LocalProbe::Admission{{..}})).count();let mut measured_admissions=0usize;
-    if record_script{{writeln!(admissions,"{{{{\"kind\":\"inventory\",\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}},\"queries\":{{expected_admissions}}}}}}").unwrap();}}
+    writeln!(admissions,"{{{{\"kind\":\"inventory\",\"script\":{{script_index}},\"reversePoll\":{{reverse_poll}},\"queries\":{{expected_admissions}}}}}}").unwrap();
     for probe in core::iter::once(None).chain(probes.iter().copied().map(Some)) {{
       let _=reverse_poll;
       let mut decision_inputs:Vec<std::collections::VecDeque<bool>>=(0..{}).map(|_|std::collections::VecDeque::new()).collect();{initial_inputs}
@@ -1242,7 +1245,7 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
       let rv1=s1.init().rendezvous(&mut slab1,network.clone()).unwrap();
       let rv2=s2.init().rendezvous(&mut slab2,network.clone()).unwrap();
       let rv3=s3.init().rendezvous(&mut slab3,network.clone()).unwrap();
-      if record_script && (probe.is_none() || matches!(probe,Some(LocalProbe::Admission{{..}}))){{rv0.observe(&capture0);rv1.observe(&capture1);rv2.observe(&capture2);rv3.observe(&capture3);}}
+      if probe.is_none() || matches!(probe,Some(LocalProbe::Admission{{..}})){{rv0.observe(&capture0);rv1.observe(&capture1);rv2.observe(&capture2);rv3.observe(&capture3);}}
     "#,
         script_count,
         script_count,
@@ -1329,13 +1332,16 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
                 None,
             )
         };
-        let delay = if actor == owner {
-            "hibana_runtime::yield_now().await;"
+        // Exercise the same fresh receive with and without already queued input.
+        // Alternating only the parallel branches left the initial sender late
+        // in both schedules, even when the source contained no parallel node.
+        let yield_first = if actor == owner {
+            "!reverse_poll"
         } else {
-            ""
+            "reverse_poll"
         };
         code += &format!(
-            "async{{{db}{delay}{body}{}Ok::<_,TrialError>(())}};",
+            "async{{{db}if {yield_first}{{hibana_runtime::yield_now().await;}}{body}{}Ok::<_,TrialError>(())}};",
             if mobile(source) && actor < 3 {
                 "drop(db);"
             } else {
@@ -1361,20 +1367,23 @@ pub(super) fn runs(plans: &super::plans::Plans<'_>, owner: u8, case: usize) -> S
     }
     if let Some(probe)=probe{assert!(result.is_err(),"local probe did not stop its run");let actual=observed.scope_rejections.borrow();assert_eq!(*actual,[probe],"planned local probe was not reached");scoped_rejections.push(actual[0].json());continue;}
     result.unwrap_or_else(|error|panic!("generated baseline failed: script={script_index}, reverse={reverse_poll}, error={error:?}, completed={:?}",observed.completed.borrow()));
-    if record_script{write!(scope_observations,",\"completed\":[").unwrap();
+    write!(scope_observations,",\"completed\":[").unwrap();
     for (index,(actor,role,label,receive)) in observed.completed.borrow().iter().enumerate(){if index!=0{write!(scope_observations,",").unwrap();}write!(scope_observations,"[{actor},{role},{label},{receive}]").unwrap();}
     write!(scope_observations,"]").unwrap();
     write!(captures,"{{\"script\":{script_index},\"reversePoll\":{reverse_poll},\"checkpoints\":{:?},\"events\":[",[&rv0,&rv1,&rv2,&rv3].map(|rv|rv.tap().checkpoint().expect("capture ordinal exhausted"))).unwrap();
     for (index,(producer,event)) in captured.borrow().iter().enumerate(){if index!=0{write!(captures,",").unwrap();}write!(captures,"[{producer},{},{},{},{},{}]",event.ts(),event.id(),event.causal_key(),event.arg0(),event.arg1()).unwrap();}
     write!(captures,"],\"borrows\":{:?}",observed.borrows.borrow()).unwrap();
-    writeln!(captures,"}}").unwrap();}
+    writeln!(captures,"}}").unwrap();
     baseline_events=captured.borrow().clone();baseline_borrows=observed.borrows.borrow().clone();baseline_calls=observed.completed.borrow().clone();
     assert!(observed.calls.borrow().is_empty());
     "#;
-    code += &format!(
-        r#"}}assert_eq!(measured_admissions,expected_admissions,"missing scoped admission measurements");if record_script{{writeln!(scope_observations,",\"probes\":[{{}}]}}}}",scoped_rejections.join(",")).unwrap();}}}}completed_plan_words.insert(script.line());checked_scripts+=1;}}assert_eq!(checked_scripts,{},"missing script plan");scope_plans.finish();scope_observations.flush().unwrap();captures.flush().unwrap();admissions.flush().unwrap();states.flush().unwrap();"#,
-        script_count
-    );
+    code += r#"}assert_eq!(measured_admissions,expected_admissions,"missing scoped admission measurements");
+    writeln!(scope_observations,",\"probes\":[{}]}}",scoped_rejections.join(",")).unwrap();
+    }checked_scripts+=1;}
+    assert_eq!(checked_scripts,script_range.len(),"missing assigned script");scope_plans.finish();
+    scope_observations.flush().unwrap();captures.flush().unwrap();admissions.flush().unwrap();states.flush().unwrap();
+    if script_range.start!=0{return Ok(());}
+    "#;
     code
 }
 

@@ -21,14 +21,24 @@ production core remains independent of the executor.
 | Physical and portable cost constraints | Host and embedded no_std builds, forbidden long const evaluation, existing layout/allocation tests and portable work-count budgets on macOS and ARM Linux |
 | Actual long consumer programs | Required macOS ChoreoFix integration: build the pinned 6E, codebase and 16E real globals and localsides, including all projections of the 1,586-event review source; drive 1H concurrent delegated commits and 16E two-resource processing with the real WASI guest. Every compiled host selects this candidate core and keeps forbidden long const evaluation. |
 
-`check_choreofix.sh` uses immutable public consumer, EPF, WASI and guest sources
-as regression inputs. Its candidate-core override is confined to the private
-test fixture; operational consumer manifests keep their qualified public pins.
-The consumer's production global/localside Rust is not rewritten. A small
-additional test binary reuses the pinned consumer qualifier's source freezing,
-build receipts and result checks, then explicitly runs its existing real WASI
-test functions. The two functions cover one 1H three-commit schedule and all
-three original 16E failure depths. This is four scripted mechanism cases,
+`check_choreofix.sh` preserves immutable public inputs for the original
+1,586-event review projection and one 1H three-commit schedule. Its candidate-core
+override is confined to that test fixture. CI/CD executes the current direct-file
+implementation from a pinned adjacent ChoreoFix checkout, with the recorded
+WASI/EPF sources and the executor selected by `.github/runtime-revision`.
+Development consumers use the actual canonical adjacent worktrees, with their
+revision and dirty source recorded; the public pins initialize missing CI
+inputs and never rewind an existing development tree. Cargo metadata must
+resolve core, executor, EPF and WASI to those canonical directories.
+`--historical` and `--current` select the two complementary consumer checks for
+local resumption. Ordinary CI invokes both through the default command; neither
+part alone satisfies the consumer contract. Published
+experiment artifacts retain the exact source they actually qualified.
+The consumer's production global/localside Rust is not rewritten. The current
+qualifier records source hashes, dependency resolution, build receipts and actual
+results. Its four CI/CD conditions cover original failure depths 0/1/2, invalid
+input/retry and early termination without an effect. Together with 1H these are
+five scripted mechanism cases,
 not live AI, all 48 task ports or scored
 comparison data. An absent test, failed compile, missing receipt, source change
 or unsuccessful dependency fails the required aggregate. Full consumer
@@ -43,6 +53,62 @@ generated conformance. It assigns the complete budget-2 population across all
 its own assignment, alongside the 32 constructor shards and the common controls
 assignment, with every source, variant and script executed once. There is no
 old-implementation rebuild job.
+At a fixed prefix and resolver input the whole-Endpoint driver runs each
+distinct public selector once directly and once after an offer. Source aliases
+of that selector reference those observations. Every source question and its
+resolver history are retained. Lean proves that equivalent public selectors
+match the same candidate occurrences and checks the full answer matrix.
+The delegated-file catalog includes a repeated request with parallel replies to
+the file view and its physical holder, both reply orders and two visits. The
+real Endpoint regression additionally retains the next send Future before the
+holder receives: it must stay Pending without sending or resetting progress,
+then resume. An unread caller reply is still rejected. Acceptance-only probes
+do not by themselves distinguish that suspension from a recoverable rejection.
+The three `PendingAcceptance` lemmas check those concrete source cuts; they do
+not prove the Rust wait classifier for arbitrary protocols.
+The next catalog entry covers a rolled choice with a co-resident file reply
+and a parallel retirement suffix. Its native/Miri case borrows that suffix
+before the file receive, requires its send to remain Pending without any tap
+or transport progress, then consumes the actual file receipt and completes
+the real Endpoint return. The local-fork theorem preserves every unfinished
+row when completed prefix rows are ignored during borrow selection; it is not
+a general Rust refinement theorem.
+The same catalog exercises repeated left and right choices before retirement.
+A group belonging to another arm of a completed roll is classified as reentry,
+while choices outside that roll retain their committed context. A materialized
+preview constrains candidate groups before the current/reentry preference, so
+forward selection cannot strand an accepted input. The public Endpoint/Miri
+regression covers both choices and one to three visits across separate runtimes.
+The local-fork proofs establish whole-range arm containment and preservation of
+the materialized-input filter; they do not prove the complete Rust selector.
+
+The 6M-derived receive regression observes a nonrepeating endpoint handoff
+through a repository relay. It checks an empty wait before that knowledge,
+recoverable refusal after it, an arrived but unconsumed notice, a borrowed view,
+and the same run's valid continuation. A second real Endpoint case sends two
+visits ahead of the file and delivers the retirement notice from another peer;
+the earlier accepted file message must still be received. Both are ordinary
+Rust and critical Miri obligations. Image validation checks the stored handoff
+and witness against source-only causal knowledge; return paths, independent
+parallel notices and repeated notices prevent that proof. This is an empty-wait
+classification, not a new owner table or a claim of arbitrary AI termination.
+The notice must use the requested receive's own peer/view/lane FIFO direction:
+a control return on another direction can overtake legitimate work still in
+flight. The existing typed control-return regression remains required.
+The 7H-derived case combines a completed rewrite visit with a new two-edit
+visit on a delegated document. The native Endpoint test checks the early
+result receive after the first edit and then completes both edits and the
+real result. It also checks that the peer cannot send the result yet and
+that its first edit reply and final result use the same FIFO direction.
+The generated catalog includes both visits and their legal continuation.
+The native test checks the distinction between an empty wait and rejection.
+A separate returned-loan case probes a borrowed send at the head of a roll
+after its holder's only handoff. Each public-contract assignment exercises
+the same source. The generated driver checks the error category and the
+unchanged actor, custody and tap history. The native 7H regression then runs
+the next holder's review through its final reply. The receipt-wait lemma
+characterizes when an independent possible receipt justifies waiting. The
+public return value and continuation are checked on the actual Endpoint.
 The shared-contract catalog also covers a view-local parallel prefix followed
 by a foreign sequential suffix, both with ordinary messages and after an
 actual resource loan, request and reply. Generated localsides retain the join
@@ -234,7 +300,49 @@ The ordinary shared-contract assignment 17 requires independently validated
 delayed-parent schedule witnesses in both poll orders. A header-only coverage
 report cannot qualify that assignment.
 
-The same capture tool can additionally pass the saved histories to a qualified EPF executable with --epf. It proposes finite source witnesses and requires EPF to recheck each successful history. A missing witness remains unresolved and fails that requested qualification; it is never interpreted as proof that the global is illegal. The finite cut gate has no EPF search prerequisite and does not claim dynamic EPF history certification. Its summaries report that boundary explicitly. Source witnesses and actual scripts have separate inventories, so extending the untrusted witness proposals never changes the executed case population.
+Typed receive lookup and framed source lookup use the same binary partition loop.
+For any sorted sealed column, `sorted_column_queries_are_prefixes` proves that
+both key comparisons are prefix predicates and that their two cuts delimit
+exactly the equal rows. Kani checks the actual Rust loop for every prefix and
+every supported 16-bit row count, including bounds on each probe. The two
+inbound-key harnesses compare production matching to the independently chosen
+input tuples, including all wire labels and both payload variants.
+For every row of a decoded image, Lean proves that a typed receive lookup
+includes each matching alias in the borrowed view, source range and lanes.
+Once a row is admitted by the source guards, its exact queued FIFO head
+prevents the executable Lean oracle from returning an empty ready set.
+`source_ready_survives_completed_row_filter` also shows that a source-ready
+current or fresh row is unfinished or its checked image contains a roll. Thus
+the prefilter that drops completed rows only when reentry is absent can retain
+legitimate revisits without adding a special case for each nested roll.
+Completeness of live Rust candidate admission through route choice, roll reentry,
+and delegation remains a separate obligation.
+
+To check public-call readiness and dynamic execution on the same observations, run
+`check_protocol_shapes.sh --epf /path/to/hibana-epf --contracts FIRST COUNT`.
+The runner executes the Endpoint population once. Lean checks the measured calls,
+including refusals. EPF checks the recorded prefix and probe events for
+completed, pending, and rejected calls. Each query names its certificate.
+Identical histories within the same baseline share that certificate after
+their individual checkpoints are checked. EPF certifies the observed history.
+Lean checks whether the call could complete at that point with the fixture FIFO.
+It returns every ready row with its source event and lane, independently of the
+actual outcome. A successful call must commit one of those precise operations.
+A refusal or a pending poll requires an empty ready set when the required
+payload is available. The same ready-row check applies to the ordinary
+whole-Endpoint calls, including calls made after dropping an offer. Each trial
+records the actual source and lane beside its passive cut identifier, so
+sharing one cut between different calls never shares their outcomes.
+An unresolved witness fails qualification. The receipt records the EPF binary
+digest, witnesses, captures, and certificates.
+`--check --epf` verifies that evidence against the supplied executable.
+The ordinary `contracts-39` assignment builds EPF against the same core. It
+requires a matched receive in both physical schedules. At the same local call
+and with the same nonempty Lean candidate set, one poll waits for its FIFO
+head and the other commits the arrived frame. The other assignments use the
+Lean cut check.
+Extending the source-witness
+proposals does not change which Endpoint scripts run.
 
 Prefix existence is an existential search over the complete original witness
 family. The driver uses the proved `shapeGroupAnswers_as_candidate_queries`
@@ -277,7 +385,11 @@ retained intact and the runner requires their complete executable inventory.
 The runner verifies the root manifest, executable inventory, source hash and
 binary hash before and after execution. It runs every generated source case
 exactly once across that inventory, including both poll orders and every
-assigned script interval. Ordinary native tests run in their separate required
+assigned script interval. Each bounded worker drives the positive baselines
+and scoped probes for its own interval. The first interval also drives the
+whole-Endpoint prefix matrix once for the source. Assembly requires both poll
+orders for every script, and Lean checks the assembled executions and the
+complete prefix inventory. Ordinary native tests run in their separate required
 gate, rather than being repeated for every generated input. A second build
 only to enumerate the same executables is not needed. Actual borrow targets,
 resident images, copied actor state and producer captures remain associated

@@ -101,55 +101,108 @@ where
         {
             return Ok(lanes);
         }
-        match expected_payload {
-            Some(expected) => Err(RecvError::PayloadMismatch {
+        if let Some(error) = blocked {
+            return Err(error);
+        }
+        // A live row with the same label can carry a different contract.
+        // Check whether this exact contract is declared before reporting a
+        // schema violation. This cold lookup never grants a lane.
+        let declared_here = self
+            .progress
+            .cursor
+            .declared_receive_candidates(self.public_header.role(), target_label)
+            .any(|index| {
+                self.permits_event(index)
+                    && self
+                        .progress
+                        .cursor
+                        .event_row_at(index)
+                        .is_some_and(|row| row.atom().payload == target_payload)
+            });
+        // The current holder may have a whole view whose matching rows all
+        // belong to a future holder's image.
+        let declared_for_another_holder = !declared_here
+            && self.region.is_whole()
+            && self.context.program.has_actor_bindings()
+            && (0..self.context.program.columns.atom_count()).any(|event| {
+                let atom = self.context.program.event_atom_at(event);
+                atom.from != atom.to
+                    && atom.to == self.public_header.role()
+                    && atom.label == target_label
+                    && atom.payload == target_payload
+                    && !atom.origin.is_session()
+            });
+        if declared_here || declared_for_another_holder {
+            return Err(RecvError::Unavailable);
+        }
+        Err(match expected_payload {
+            Some(expected) => RecvError::PayloadMismatch {
                 expected,
                 actual: target_payload,
-            }),
-            None => {
-                if let Some(error) = blocked {
-                    return Err(error);
-                }
-                // A known contract can be complete or belong to an unavailable
-                // source alternative. Distinguish it from a wrong fragment or
-                // an undeclared contract. This cold path shares the same source
-                // admission above and never changes the accepted lane set.
-                let declared_here = self
-                    .progress
+            },
+            None => RecvError::PhaseInvariant,
+        })
+    }
+
+    /// No matching receive can advance without an operation held by this view,
+    /// or after a causal retirement receipt. Check after matching queued input.
+    pub(in crate::endpoint::kernel::recv) fn recv_contract_excludes_wait(
+        &self,
+        target_label: u8,
+        target_payload: crate::eff::EventPayload,
+        observed: Option<usize>,
+    ) -> bool {
+        let retired = self.progress.cursor.has_roll_retirement();
+        let retained = observed.is_none() && self.progress.cursor.has_retained_roll_completion();
+        if !retired && !retained {
+            return false;
+        }
+        let mut found = false;
+        for index in self
+            .progress
+            .cursor
+            .receive_candidates(self.public_header.role(), target_label)
+        {
+            let Some(meta) = self.progress.cursor.try_recv_meta_at(index) else {
+                continue;
+            };
+            if meta.payload_kind != target_payload {
+                continue;
+            }
+            let enabled = match self.recv_event_enabled(index, meta.into()) {
+                Ok(enabled) => enabled,
+                Err(EventAdmissionError::OtherViewPending) => return false,
+                Err(_) => continue,
+            };
+            found = true;
+            if retained
+                && self.progress.cursor.retained_receive_waits_for_own_send(
+                    index,
+                    |prior| self.permits_event(prior),
+                    &mut |scope| self.selected_arm_for_scope(scope),
+                )
+            {
+                continue;
+            }
+            if !retired {
+                return false;
+            }
+            let scope = self.borrowed_reentry_scope(index).or_else(|| {
+                self.progress
                     .cursor
-                    .declared_receive_candidates(self.public_header.role(), target_label)
-                    .any(|index| {
-                        self.permits_event(index)
-                            && self
-                                .progress
-                                .cursor
-                                .event_row_at(index)
-                                .is_some_and(|row| row.atom().payload == target_payload)
-                    });
-                // This actor can own the view before its loan even when all
-                // matching receive rows belong to a future holder's image.
-                // A whole-view call of that source contract is unavailable;
-                // it must not poll a port or poison the current owner's run.
-                // Fragment misuse and genuinely undeclared contracts retain
-                // their invariant failure. This cold lookup grants no lane.
-                let declared_for_another_holder = !declared_here
-                    && self.region.is_whole()
-                    && self.context.program.has_actor_bindings()
-                    && (0..self.context.program.columns.atom_count()).any(|event| {
-                        let atom = self.context.program.event_atom_at(event);
-                        atom.from != atom.to
-                            && atom.to == self.public_header.role()
-                            && atom.label == target_label
-                            && atom.payload == target_payload
-                            && !atom.origin.is_session()
-                    });
-                Err(if declared_here || declared_for_another_holder {
-                    RecvError::Unavailable
-                } else {
-                    RecvError::PhaseInvariant
-                })
+                    .roll_body_reentry_scope_for_step(enabled.progress_step(), &mut |scope| {
+                        self.selected_arm_for_scope(scope)
+                    })
+            });
+            if !scope.is_some_and(|scope| {
+                self.progress
+                    .cursor
+                    .roll_retirement_observed(scope, index, observed)
+            }) {
+                return false;
             }
         }
+        found
     }
 
     /// An arrived source occurrence can exclude every current occurrence of
@@ -161,6 +214,9 @@ where
         target_payload: crate::eff::EventPayload,
         observed_index: usize,
     ) -> bool {
+        if self.recv_contract_excludes_wait(target_label, target_payload, Some(observed_index)) {
+            return false;
+        }
         let observed = self
             .progress
             .cursor

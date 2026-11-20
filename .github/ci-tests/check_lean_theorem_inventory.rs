@@ -11,25 +11,10 @@ fn native_module(path: &Path) -> bool {
 }
 fn validate_source(root: &Path) -> AuditResult<Names> {
     let source_root = root.join("Hibana");
-    let mut decisions = 0;
     let mut declared = Names::new();
     for path in lean_files(&source_root)? {
         let relative = path.strip_prefix(&source_root).map_err(|e| e.to_string())?;
         let source = read(&path)?;
-        let code = erase_non_code(&source)?;
-        if let Some(token) = forbidden(&code, PROOF_TOKENS) {
-            return Err(format!(
-                "{}: forbidden proof token {token:?}",
-                relative.display()
-            ));
-        }
-        if let Some(token) = forbidden(&code, GENERATOR_TOKENS) {
-            return Err(format!(
-                "{}: proof-generating command {token:?} would bypass source theorem discovery",
-                relative.display()
-            ));
-        }
-        let count = token_positions(&code, "native_decide").len();
         let named = theorem_names(&source)?;
         if native_module(relative) {
             require(
@@ -39,22 +24,9 @@ fn validate_source(root: &Path) -> AuditResult<Names> {
                     relative.display()
                 ),
             )?;
-            decisions += count;
-        } else {
-            require(
-                count == 0,
-                format!(
-                    "{}: native_decide is outside a native regression module",
-                    relative.display()
-                ),
-            )?;
         }
         declared.extend(named);
     }
-    require(
-        decisions == 31,
-        format!("native regression inventory changed: expected 31, found {decisions}"),
-    )?;
     Ok(declared)
 }
 fn validate_environment(output: &str, theorems: &Names) -> AuditResult<()> {
@@ -134,10 +106,21 @@ fn check_static(
     source += &format!(
         "#eval IO.println \"{END}\"\nrun_cmd\n  let env ← getEnv\n  for (name, info) in env.constants.toList do\n    if name.getPrefix == `Hibana && info.isTheorem then\n      logInfo m!\"HIBANA_ENV_THEOREM={{name}}\"\n"
     );
+    source += &declaration_guard(
+        "definingModule.any (fun moduleName => (`Hibana).isPrefixOf moduleName)",
+        &[],
+    );
     for name in &declared {
         source += &format!("#print axioms Hibana.{name}\n");
     }
     let output = successful_lean(root, &source)?;
+    require(
+        output
+            .lines()
+            .filter(|line| line.starts_with("HIBANA_COMPILED_AXIOMS="))
+            .eq(["HIBANA_COMPILED_AXIOMS=0"]),
+        "a model module contains a decision axiom",
+    )?;
     let actual = extract_claim_surface(&output, BEGIN, END)?;
     same_inventory("static claim type", &claim_names(&actual, true)?, &declared)?;
     validate_static_axioms(&output, &declared, counts)?;
@@ -218,6 +201,7 @@ fn validate_examples(output: &str, path: &Path, theorems: &[String]) -> AuditRes
 fn example_surface(root: &Path) -> AuditResult<(String, Names)> {
     let mut surface = String::new();
     let mut all = Names::new();
+    let mut decisions = 0;
     let source_root = root.join("Hibana");
     for path in lean_files(&source_root)? {
         let relative = path.strip_prefix(&source_root).map_err(|e| e.to_string())?;
@@ -225,6 +209,7 @@ fn example_surface(root: &Path) -> AuditResult<(String, Names)> {
         if theorems.is_empty() {
             continue;
         }
+        source = format!("import Lean.Elab.Command\n{source}");
         for n in &theorems {
             require(
                 all.insert(n.clone()),
@@ -238,13 +223,42 @@ fn example_surface(root: &Path) -> AuditResult<(String, Names)> {
             source += &format!("#check @Hibana.{n}\n");
         }
         source += &format!("#eval IO.println \"{END}\"\n");
+        source += &declaration_guard(
+            "definingModule.isNone",
+            if native_module(relative) {
+                &["_stdin"]
+            } else {
+                &[]
+            },
+        );
         for n in &theorems {
             source += &format!("#print axioms Hibana.{n}\n");
         }
         let output = successful_lean(root, &source)?;
+        let native = if native_module(relative) {
+            theorems.len()
+        } else {
+            0
+        };
+        let marker = format!("HIBANA_COMPILED_AXIOMS={native}");
+        require(
+            output
+                .lines()
+                .filter(|line| line.starts_with("HIBANA_COMPILED_AXIOMS="))
+                .eq([marker.as_str()]),
+            format!(
+                "{}: compiled decision axiom inventory changed",
+                relative.display()
+            ),
+        )?;
+        decisions += native;
         validate_examples(&output, relative, &theorems)?;
         surface += &extract_claim_surface(&output, BEGIN, END)?;
     }
+    require(
+        decisions == 31,
+        format!("expected 31 compiled native decisions, found {decisions}"),
+    )?;
     Ok((surface, all))
 }
 fn check_examples(root: &Path, snapshot: &Path, count: usize, write: bool) -> AuditResult<()> {
@@ -291,22 +305,6 @@ end Hibana"#;
         "declaration scanner",
         &theorem_names(declarations)?,
         &expected,
-    )?;
-    require(
-        forbidden(
-            &erase_non_code("private axiom hidden : False")?,
-            PROOF_TOKENS,
-        )
-        .is_some(),
-        "accepted prefixed axiom",
-    )?;
-    require(
-        forbidden(&erase_non_code("-- axiom hidden : False\n")?, PROOF_TOKENS).is_none(),
-        "comment treated as axiom",
-    )?;
-    require(
-        forbidden("macro generated : command", GENERATOR_TOKENS).is_some(),
-        "accepted proof generator",
     )?;
     let env = expected
         .iter()

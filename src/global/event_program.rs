@@ -55,21 +55,29 @@ impl LocalEventProgram {
     }
 }
 
+/// First slot outside the prefix of a sealed, sorted row index.
+#[inline]
+pub(super) fn row_partition_point(mut high: usize, before: impl Fn(usize) -> bool) -> usize {
+    let mut low = 0;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if before(middle) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
 impl LocalEventProgram {
     /// Rows are constructor-checked in source order. A framed message names
     /// its source effect directly; only its co-resident facets can match.
     pub(crate) fn source_effect_candidates(&self, effect: usize) -> core::ops::Range<usize> {
-        let mut low = 0;
-        let mut high = self.local_len();
-        while low < high {
-            let middle = low + (high - low) / 2;
-            if self.rows().local_step_effect(middle).dense_ordinal() < effect {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        let start = low;
+        let start = row_partition_point(self.local_len(), |slot| {
+            self.rows().local_step_effect(slot).dense_ordinal() < effect
+        });
+        let mut low = start;
         while low < self.local_len() && self.rows().local_step_effect(low).dense_ordinal() == effect
         {
             low += 1;
@@ -319,12 +327,41 @@ impl LocalEventProgram {
             .map(|(_, row)| row)
     }
 
+    pub(crate) fn roll_retirement_witness(&self, scope_id: ScopeId) -> Option<usize> {
+        self.rows()
+            .roll_scope_row(self.roll_scope_slot(scope_id)?)?
+            .retirement()
+            .map(|(_, witness)| witness as usize)
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_roll_retirement(&self) -> bool {
+        self.rows().has_roll_retirement()
+    }
+
     pub(crate) fn roll_ancestors(&self, index: usize) -> impl Iterator<Item = ScopeId> + '_ {
-        let source = match self.operation_at(index) {
-            Some((event, _)) => event.dense_ordinal(),
-            None => self.program_ref().columns.atom_count(),
+        if index > self.local_len() {
+            crate::invariant();
+        }
+        let count = self.footprint().roll_scope_count;
+        // A sealed row range exactly covers this actor's members. With one
+        // roll it is already the complete ancestry answer, including events
+        // outside that range; no source identity or parent lookup is needed.
+        let single = if count == 1 {
+            self.roll_scope_row_by_slot(0).and_then(|(scope, row)| {
+                (row.start() <= index && index < row.end()).then_some(scope)
+            })
+        } else {
+            None
         };
-        self.program_ref().source_roll_ancestors(source)
+        let nested = (count > 1).then(|| {
+            let source = match self.operation_at(index) {
+                Some((event, _)) => event.dense_ordinal(),
+                None => self.program_ref().columns.atom_count(),
+            };
+            self.program_ref().source_roll_ancestors(source)
+        });
+        single.into_iter().chain(nested.into_iter().flatten())
     }
 
     pub(crate) fn roll_entry_range(&self, scope: ScopeId) -> Option<PackedLaneRange> {

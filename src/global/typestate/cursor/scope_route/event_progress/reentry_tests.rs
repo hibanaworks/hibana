@@ -3,6 +3,64 @@ use crate::global::typestate::cursor::validated_metadata_tests::with_rows;
 use crate::{Endpoint, g, runtime::program::project};
 
 #[test]
+fn unfinished_roll_waits_distinguish_other_caller_and_borrowed_views() {
+    type File = g::Msg<0, Endpoint<'static, 2>>;
+    let global = g::seq(
+        g::send::<3, 0, File>(),
+        g::seq(
+            g::send::<2, 1, g::Msg<1, u64>>(),
+            g::par(
+                g::send::<1, 0, g::Msg<2, u64>>(),
+                g::send::<1, 2, g::Msg<3, u64>>(),
+            ),
+        )
+        .roll(),
+    );
+    with_rows(project::<0>(&global).role_image_ref(), |cursor| {
+        for step in 0..cursor.local_steps_len() {
+            cursor.mark_local_event_done(step);
+        }
+        let request = (0..cursor.local_steps_len())
+            .find(|&index| {
+                cursor
+                    .try_send_meta_at(index)
+                    .is_some_and(|meta| meta.label == 1)
+            })
+            .unwrap();
+        let ack = (0..cursor.local_steps_len())
+            .find(|&index| {
+                cursor
+                    .try_recv_meta_at(index)
+                    .is_some_and(|meta| meta.label == 2)
+            })
+            .unwrap();
+        let reply = (0..cursor.local_steps_len())
+            .find(|&index| {
+                cursor
+                    .try_recv_meta_at(index)
+                    .is_some_and(|meta| meta.label == 3)
+            })
+            .unwrap();
+        cursor.clear_local_event_done(ack);
+        let event = EventCommitMeta::from(cursor.try_send_meta_at(request).unwrap());
+        assert_eq!(
+            cursor.event_enabled(request, event, &mut |_, _| None),
+            Err(EventAdmissionError::OtherViewPending)
+        );
+        assert_eq!(
+            cursor
+                .event_enabled_borrowing(request, event, Some(&|role| role == 0), &mut |_, _| None),
+            Err(EventAdmissionError::HeldPredecessorPending)
+        );
+        cursor.clear_local_event_done(reply);
+        assert_eq!(
+            cursor.event_enabled(request, event, &mut |_, _| None),
+            Err(EventAdmissionError::PredecessorPending)
+        );
+    });
+}
+
+#[test]
 fn a_retired_optional_receipt_does_not_refuse_an_unknown_or_resource_free_arm() {
     type File = g::Msg<201, Endpoint<'static, 3>>;
     type Loan = g::Msg<202, Endpoint<'static, 2>>;

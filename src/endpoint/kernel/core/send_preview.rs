@@ -32,9 +32,16 @@ where
         match self.preflight_roll_entry_views(Some(event)) {
             Ok(_) => Poll::Ready(Ok(())),
             Err(crate::global::typestate::EventAdmissionError::OtherViewPending) => Poll::Pending,
-            Err(crate::global::typestate::EventAdmissionError::Invariant) => {
-                Poll::Ready(Err(SendError::PhaseInvariant))
+            Err(crate::global::typestate::EventAdmissionError::EntryViewUnavailable)
+                if self.operation.public_active_op == PublicActiveOp::Send
+                    && matches!(meta.payload_kind, crate::eff::EventPayload::Wire(_)) =>
+            {
+                Poll::Ready(Err(SendError::Unavailable))
             }
+            Err(
+                crate::global::typestate::EventAdmissionError::Invariant
+                | crate::global::typestate::EventAdmissionError::EntryViewUnavailable,
+            ) => Poll::Ready(Err(SendError::PhaseInvariant)),
             Err(
                 crate::global::typestate::EventAdmissionError::PredecessorPending
                 | crate::global::typestate::EventAdmissionError::HeldPredecessorPending,

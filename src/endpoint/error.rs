@@ -13,7 +13,7 @@ pub(crate) enum EndpointOp {
 ///
 /// Its `Display` and `Debug` output identify the failed operation and cause.
 /// `is_unavailable()` identifies a declared receive or borrowed-payload send
-/// refused before transport polling or progress publication. That
+/// refused without consuming a frame or publishing progress. That
 /// rejection leaves the run usable.
 /// Protocol violations after admission and transport failures fault the run.
 /// Starting another run requires fresh transport state that excludes frames
@@ -33,11 +33,12 @@ impl fmt::Debug for EndpointError {
 }
 
 impl EndpointError {
-    /// Whether this call was unavailable before starting communication.
+    /// Whether this call was unavailable without consuming its input.
     ///
-    /// No frame was read or sent and no progress or authority was published.
+    /// No frame was consumed or sent and no progress or authority was published.
     /// A caller can return this rejection to its input source and continue with
-    /// another permitted call. A receive waiting on another view stays Pending.
+    /// another permitted call. A call waiting only on an independently usable
+    /// co-resident view stays Pending.
     /// A failed owned send does not restore its moved Endpoint and remains
     /// terminal; it is never reported as unavailable.
     pub const fn is_unavailable(&self) -> bool {

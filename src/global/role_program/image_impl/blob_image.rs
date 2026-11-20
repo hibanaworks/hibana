@@ -166,6 +166,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let offset = Self::column_offset(column, row, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
         self.write_u16(offset, roll_row.scope_raw());
         self.write_u32(offset + 2, roll_row.event_row_raw());
+        self.write_u32(offset + 6, roll_row.retirement_raw());
     }
 
     pub(crate) const fn emit<const E: usize>(
@@ -462,11 +463,13 @@ impl<const N: usize> RoleImageBytes<N> {
                             PackedLaneRange::new(first_entry, roll_entry - first_entry).raw(),
                         );
                     }
-                    out.write_roll_scope_row(
-                        columns.roll_scopes,
-                        roll_scope,
-                        PackedRollScopeRow::new(marker.scope_id, row),
-                    );
+                    let mut packed = PackedRollScopeRow::new(marker.scope_id, row);
+                    if let Some((transfer, witness)) =
+                        rows.roll_retirement(eff_list, marker.scope_id, end_eff)
+                    {
+                        packed = packed.with_retirement(transfer, witness);
+                    }
+                    out.write_roll_scope_row(columns.roll_scopes, roll_scope, packed);
                     roll_scope += 1;
                 }
             }

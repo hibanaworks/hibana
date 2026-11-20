@@ -309,6 +309,7 @@ impl<'a> RoleLaneImage<'a> {
                 let row = PackedRollScopeRow::from_packed_parts(
                     self.read_u16_at(offset),
                     self.read_u32_at(offset + 2),
+                    self.read_u32_at(offset + 6),
                 );
                 let event_row = row.event_row();
                 if event_row.is_zero_len() || event_row.end() > self.columns.events.len as usize {

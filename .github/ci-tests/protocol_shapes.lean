@@ -19,6 +19,9 @@ structure ShapeInput where
   parallelCoverage : Bool := false
   deriving Lean.FromJson
 
+-- The result is attached to its individual call. Only the passive state is shared.
+abbrev ShapeCallReceipt := Nat × Option (Nat × Nat)
+
 structure ShapeAttempt where
   choice : List Nat
   «prefix» : List Nat
@@ -27,7 +30,7 @@ structure ShapeAttempt where
   receive : Bool
   accepted : Bool
   parked : List (Nat × Bool)
-  cuts : Option Nat × Option Nat := (none, none)
+  cuts : Option ShapeCallReceipt × Option ShapeCallReceipt := (none, none)
   deriving Lean.FromJson
 
 -- One immutable query matrix per source; every history retains every answer.
@@ -42,7 +45,7 @@ structure ShapeOutputGroup where
   «prefix» : List Nat
   prefixChoices : List (List Nat)
   answers : Array (Bool × List (Nat × Bool))
-  cuts : Array (Option Nat × Option Nat)
+  cuts : Array (Option ShapeCallReceipt × Option ShapeCallReceipt)
   deriving Lean.FromJson
 
 structure ShapeCallContext where
@@ -582,6 +585,15 @@ theorem shapeRequest_matches_its_exact_public_contract
       expected.label = actual.label ∧ expected.payload = actual.payload ∧
         (if receive then expected.receiver = actual.receiver else expected.sender = actual.sender) := by
   simp [shapeMatchesRequest]
+
+/-- At a fixed direction, two aliases of the same public call match exactly
+the same candidate occurrences, including occurrences at a different peer. -/
+theorem matching_aliases_preserve_every_candidate (a b candidate : Message) (receive : Bool)
+    (same : shapeMatchesRequest a b receive = true) :
+    shapeMatchesRequest a candidate receive = shapeMatchesRequest b candidate receive := by
+  cases receive <;> simp_all [shapeMatchesRequest]
+
+#print axioms matching_aliases_preserve_every_candidate
 
 theorem a_send_alias_does_not_select_the_remote_peer
     (message : Message) (peer : EndpointKey) :
@@ -2093,7 +2105,7 @@ def shapeCheckPublicCuts (name : Nat) (catalog images states questions output : 
   let answers ← match ProtocolCutEvidence.evaluate choreo images stateRows queries with
     | .ok value => pure value
     | .error error => throw (IO.userError error)
-  let mut readiness : Array (Nat × Bool) := #[]
+  let mut readiness : Array (Nat × List (List Nat)) := #[]
   let mut fifoCache : Std.HashMap (Nat × List (List Nat)) (List (List Nat)) := {}
   for (query, (_, candidates)) in queries.zip answers do
     let some state := stateRows[query.state]? | throw (IO.userError "query has no actual cut")
@@ -2106,10 +2118,14 @@ def shapeCheckPublicCuts (name : Nat) (catalog images states questions output : 
         | .ok frames => pure frames
         | .error error => throw (IO.userError error)
     fifoCache := fifoCache.insert key frames
-    let ready ← match ProtocolCutEvidence.fixtureReady image state.cut.target.view frames query.receive candidates with
-      | .ok ready => pure ready
+    let readyRows ← match ProtocolCutEvidence.fixtureReadyRows image state.cut.target.view frames query.receive candidates with
+      | .ok rows => pure rows
       | .error error => throw (IO.userError error)
-    readiness := readiness.push (query.id, ready)
+    let points ← readyRows.mapM fun row => do
+      let some origin := image.eventEffIndex? row | throw (IO.userError "ready row has no source occurrence")
+      let some lane := image.eventLane? row | throw (IO.userError "ready row has no lane")
+      pure [row, origin, lane]
+    readiness := readiness.push (query.id, points)
   if ← output.pathExists then throw (IO.userError "public-cut output already exists")
   IO.FS.writeFile output (Lean.Json.mkObj [
     ("source", Lean.toJson name), ("answers", Lean.toJson answers),
@@ -2786,7 +2802,7 @@ def main (args : List String) : IO UInt32 := do
           for (parked, contextId, accepted) in [(false, attempt.cuts.1, attempt.accepted)] ++ parked do
             let permitted ← match contextId with
               | none => pure false -- No affine handle exists to construct this call.
-              | some id =>
+              | some (id, commit) =>
                   let some context := contexts[id]? | throw (IO.userError "missing whole-call cut")
                   unless context.prefix == attempt.prefix && context.prefixChoices == attempt.prefixChoices &&
                       context.input == attempt.choice && context.commits.length == attempt.prefix.length do
@@ -2867,10 +2883,18 @@ def main (args : List String) : IO UInt32 := do
                     throw (IO.userError "a direct call contains unclaimed preview evidence")
                   let some queued := frames[id]? | throw (IO.userError "missing whole-call FIFO")
                   usedContexts := usedContexts.insert id
-                  if !context.payloadAvailable then pure false else
-                  match ProtocolCutEvidence.fixtureReady image view queued attempt.receive candidates with
-                  | .ok value => pure value
-                  | .error error => throw (IO.userError error)
+                  let ready ← match ProtocolCutEvidence.fixtureReadyRows image view queued attempt.receive candidates with
+                    | .ok rows => pure rows
+                    | .error error => throw (IO.userError error)
+                  let permitted := context.payloadAvailable && !ready.isEmpty
+                  if permitted == accepted then
+                    let exact := match commit with
+                      | none => !accepted
+                      | some (origin, lane) => accepted && ready.any (fun row =>
+                          image.eventEffIndex? row == some origin && image.eventLane? row == some lane)
+                    unless exact do
+                      throw (IO.userError s!"shape {input.name}: whole call committed the wrong source occurrence or lane: event={attempt.event} cut={id} committed={commit} ready={ready}")
+                  pure permitted
             if permitted != accepted then
               if runtimeOnly + modelOnly < 10 then
                 IO.println s!"shape {input.name} parked={parked} choice={attempt.choice} prefix={attempt.prefix} event={attempt.event} receive={attempt.receive}: model={permitted} runtime={accepted}"

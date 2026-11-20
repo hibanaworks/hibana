@@ -25,7 +25,7 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn send_preview_progress_start_index_for_contract(
+    pub(super) fn send_preview_start_for_contract(
         &self,
         selector: MessageSelector,
         source: Option<core::ops::Range<usize>>,
@@ -76,6 +76,7 @@ impl EventCursor {
                 }
                 Err(
                     EventAdmissionError::Invariant
+                    | EventAdmissionError::EntryViewUnavailable
                     | EventAdmissionError::PredecessorPending
                     | EventAdmissionError::HeldPredecessorPending,
                 ) => {}
@@ -105,28 +106,5 @@ impl EventCursor {
         } else {
             Ok(None)
         }
-    }
-
-    #[inline]
-    pub(super) fn send_preview_start_index_for_contract(
-        &self,
-        selector: MessageSelector,
-        source: Option<core::ops::Range<usize>>,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Result<usize, SendPreviewError> {
-        if let Some(idx) = self.send_preview_progress_start_index_for_contract(
-            selector,
-            source,
-            selected_arm_for_scope,
-        )? {
-            return Ok(idx);
-        }
-        if self.enclosing_route_scope_rows_at(self.index()).is_some() {
-            return Ok(self.index());
-        }
-        if let Some(idx) = self.first_pending_step_index() {
-            return Ok(idx);
-        }
-        Ok(self.index())
     }
 }

@@ -69,6 +69,55 @@ theorem first_greater_ends_equal_group (t : Nat → Nat) (q n j i : Nat)
   have order := sorted j i later hin
   omega
 
+/-- Every sorted sealed column induces two prefix predicates. A search over
+arbitrary prefix boundaries therefore covers arbitrary column contents, even
+when many rows have the same public contract or wire identity. -/
+theorem sorted_column_queries_are_prefixes (t : Nat → Nat) (n key : Nat)
+    (sorted : Sorted t n) :
+    ∃ lower upper, lower ≤ upper ∧ upper ≤ n ∧
+      ∀ i, i < n →
+        (t i < key ↔ i < lower) ∧ (t i ≤ key ↔ i < upper) ∧
+        (t i = key ↔ lower ≤ i ∧ i < upper) := by
+  obtain ⟨loBound, loBefore, loAfter⟩ := initial_search_lower_bound t key n sorted
+  obtain ⟨hiBound, hiBefore, hiAfter⟩ := initial_search_lower_bound t (key + 1) n sorted
+  let lo := search t key 0 n (n + 1)
+  let hi := search t (key + 1) 0 n (n + 1)
+  change lo ≤ n at loBound
+  change hi ≤ n at hiBound
+  change ∀ i, i < lo → t i < key at loBefore
+  change ∀ i, lo ≤ i → i < n → key ≤ t i at loAfter
+  change ∀ i, i < hi → t i < key + 1 at hiBefore
+  change ∀ i, hi ≤ i → i < n → key + 1 ≤ t i at hiAfter
+  have order : lo ≤ hi := by
+    apply Nat.le_of_not_gt
+    intro h
+    have := loBefore hi h
+    have := hiAfter hi (Nat.le_refl _) (by omega)
+    omega
+  refine ⟨lo, hi, order, hiBound, ?_⟩
+  intro i inside
+  have below : t i < key ↔ i < lo := by
+    constructor
+    · intro h
+      apply Nat.lt_of_not_ge
+      intro later
+      have := loAfter i later inside
+      omega
+    · exact loBefore i
+  have atMost : t i ≤ key ↔ i < hi := by
+    constructor
+    · intro h
+      apply Nat.lt_of_not_ge
+      intro later
+      have := hiAfter i later inside
+      omega
+    · intro h
+      have := hiBefore i h
+      omega
+  exact ⟨below, atMost, by omega⟩
+
+#print axioms sorted_column_queries_are_prefixes
+
 /- Preserve the exact stable fold over candidates. The state and visit function
    are arbitrary, so this includes the source's outermost tie selection and an
    error/invalid state: no commutativity, uniqueness, or tree assumption is used. -/

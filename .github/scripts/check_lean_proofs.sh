@@ -83,12 +83,13 @@ run_audit() {
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard toolchain "${PROOF_DIR}"
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" build-serial "${PROOF_DIR}"
 if [[ "$selection" != generated ]]; then
-bash "${ROOT_DIR}/.github/scripts/lib/supplemental_proofs_tool.sh" module-self-test
+lean_binary="$(ELAN_TOOLCHAIN="$(cat "$PROOF_DIR/lean-toolchain")" elan which lean)"
+LEAN_BIN="$lean_binary" bash "${ROOT_DIR}/.github/scripts/lib/supplemental_proofs_tool.sh" module-self-test
 
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1306 791 378 137)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1316 796 382 138)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \

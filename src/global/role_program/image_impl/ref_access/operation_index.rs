@@ -44,18 +44,10 @@ impl RoleImageRef {
     }
 
     fn operation_bound(&self, key: u32, upper: bool) -> usize {
-        let mut low = 0;
-        let mut high = self.local_step_count();
-        while low < high {
-            let middle = low + (high - low) / 2;
-            let candidate = self.operation_key_for_step(self.operation_step_at(middle));
-            if candidate < key || (upper && candidate == key) {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        low
+        crate::global::event_program::row_partition_point(self.local_step_count(), |slot| {
+            let candidate = self.operation_key_for_step(self.operation_step_at(slot));
+            candidate < key || (upper && candidate == key)
+        })
     }
 
     /// This narrows immutable message identity only. Every candidate still

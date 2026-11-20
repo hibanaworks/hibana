@@ -293,7 +293,7 @@ impl EventCursor {
             crate::invariant();
         }
         let retained_completion = target.is_some() && self.has_retained_roll_completion();
-        let retained = target.is_some_and(|target| self.is_recv_at(target)) && retained_completion;
+        let retained = retained_completion && target.is_some_and(|target| self.is_recv_at(target));
         let mut pending = self.pending_event_steps(row_set.start()..row_set.end());
         while let Some(idx) = pending.next() {
             if retained

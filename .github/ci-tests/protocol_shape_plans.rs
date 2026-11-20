@@ -462,7 +462,7 @@ fn expand(
     let Some(execution) = execution else {
         let mut messages = Vec::new();
         source.messages(&mut messages);
-        return Some((push(plan, [0; 7]), messages.len(), holder));
+        return Some((push(plan, [0; 6]), messages.len(), holder));
     };
     let (row, size, after) = match (source, execution) {
         (
@@ -499,7 +499,7 @@ fn expand(
                     offset as u64,
                 ]);
             }
-            ([0; 7], 1, if *owned { *to } else { holder })
+            ([0; 6], 1, if *owned { *to } else { holder })
         }
         (Protocol::Seq(..), Execution::Seq(..)) => {
             // The packed source preserves sequence order, not Rust's binary
@@ -545,7 +545,7 @@ fn expand(
                     if next_holder != segment_holders[index] {
                         return None;
                     }
-                    let resumed = push(plan, [4, resumed as u64, 0, 0, 0, 0, 0]);
+                    let resumed = push(plan, [4, resumed as u64, 0, 0, 0, 0]);
                     // The expanded order is earlier ++ par(next, tail).
                     // Preserve every existing tail occurrence, shifting its
                     // expanded position without changing its source identity.
@@ -560,22 +560,27 @@ fn expand(
                             choice[1] += count as u64;
                         }
                     }
+                    let earlier = push(plan, [1, left as u64, root as u64, 0, 0, 0]);
+                    let left_start = if index == 0 {
+                        offset
+                    } else {
+                        segment_ends[index - 1]
+                    };
                     root = push(
                         plan,
                         [
                             8,
                             *scope,
-                            left as u64,
+                            earlier as u64,
                             resumed as u64,
-                            root as u64,
-                            0,
-                            (stop - start) as u64,
+                            (start - left_start) as u64,
+                            (stop - left_start) as u64,
                         ],
                     );
                     size += count;
                     continue;
                 }
-                root = push(plan, [1, left as u64, root as u64, 0, 0, 0, 0]);
+                root = push(plan, [1, left as u64, root as u64, 0, 0, 0]);
                 if let Some(ProposedExpansion::Resume {
                     at,
                     scope,
@@ -589,7 +594,7 @@ fn expand(
                     // children and individual outer visits as well as at root.
                     let (resumed, count, holder) =
                         expand(body, Some(next), after, offset + size, plan, &[])?;
-                    root = push(plan, [7, *scope, root as u64, resumed as u64, 0, 0, 0]);
+                    root = push(plan, [7, *scope, root as u64, resumed as u64, 0, 0]);
                     size += count;
                     after = holder;
                 }
@@ -607,7 +612,7 @@ fn expand(
                 right_holder
             };
             (
-                [2, left_id as u64, right_id as u64, 0, 0, 0, 0],
+                [2, left_id as u64, right_id as u64, 0, 0, 0],
                 left_size + right_size,
                 after,
             )
@@ -635,7 +640,7 @@ fn expand(
                 u64::from(*right),
             ]);
             (
-                [3, left_id as u64, right_id as u64, 0, 0, 0, 0],
+                [3, left_id as u64, right_id as u64, 0, 0, 0],
                 left_size + right_size,
                 if *right { right_holder } else { left_holder },
             )
@@ -652,7 +657,7 @@ fn expand(
                 .unwrap_or(2);
             let (first_id, first_size, first_holder) =
                 expand(body, Some(first), holder, offset, plan, changes)?;
-            let once = push(plan, [4, first_id as u64, 0, 0, 0, 0, 0]);
+            let once = push(plan, [4, first_id as u64, 0, 0, 0, 0]);
             if copies == 1 {
                 return Some((once, first_size, first_holder));
             }
@@ -665,7 +670,7 @@ fn expand(
                 changes,
             )?;
             if copies == 3 {
-                let earlier = push(plan, [5, once as u64, second_id as u64, 0, 0, 0, 0]);
+                let earlier = push(plan, [5, once as u64, second_id as u64, 0, 0, 0]);
                 let (third, third_size, third_holder) = expand(
                     body,
                     Some(second),
@@ -675,14 +680,14 @@ fn expand(
                     changes,
                 )?;
                 return Some((
-                    push(plan, [5, earlier as u64, third as u64, 0, 0, 0, 0]),
+                    push(plan, [5, earlier as u64, third as u64, 0, 0, 0]),
                     first_size + second_size + third_size,
                     third_holder,
                 ));
             }
             assert_eq!(copies, 2);
             (
-                [5, once as u64, second_id as u64, 0, 0, 0, 0],
+                [5, once as u64, second_id as u64, 0, 0, 0],
                 first_size + second_size,
                 second_holder,
             )
@@ -868,6 +873,9 @@ mod tests {
             .iter()
             .find(|plan| plan.unfolding.last().unwrap()[0] == 8)
             .expect("missing resumption alongside the continuation");
+        let [_, _, earlier, _, start, stop] = *plan.unfolding.last().unwrap();
+        assert_eq!(plan.unfolding[earlier as usize][0], 1);
+        assert_eq!([start, stop], [6, 7]);
         assert_eq!(
             plan.calls
                 .iter()

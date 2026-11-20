@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
+case "$#:${1:-}" in
+    0:) selection=all ;;
+    1:--historical) selection=historical ;;
+    1:--current) selection=current ;;
+    *) echo 'usage: check_choreofix.sh [--historical|--current]' >&2; exit 2 ;;
+esac
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+workspace="$(dirname "$root")"
 source "$root/.github/scripts/repo_rustflags.sh"
 hibana_disable_repo_tests_cfg
 unset CARGO_TARGET_DIR
-mkdir -p "$root/target/choreofix-regressions" "$root/target/choreofix-source-cache"
-out="$(mktemp -d "$root/target/choreofix-regressions/run.XXXXXXXX")"
+mkdir -p "$root/output/validation/choreofix-regressions" "$root/target/choreofix-source-cache"
+out="$(mktemp -d "$root/output/validation/choreofix-regressions/run.XXXXXXXX")"
 trap 'status=$?; printf "%s\n" "$status" > "$out/exit-status.txt"' EXIT
 printf 'Consumer regression inputs: %s\n' "$out"
+printf '%s\n' "$selection" > "$out/selection.txt"
+export CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1
+export PYTHONHASHSEED=0 PYTHONDONTWRITEBYTECODE=1
+if [[ "$selection" != current ]]; then
 
 # These are immutable test inputs, never alternative development checkouts or
-# operational consumer dependencies. Normal consumers keep their public pins.
+# operational consumer dependencies. Development uses the canonical adjacent sources.
 archive_source() {
     local name="$1" url="$2" revision="$3"
     local cache="$root/target/choreofix-source-cache/$name.git"
@@ -59,8 +70,6 @@ mod core_regressions;
 fn main() -> Result<()> { core_regressions::run() }
 RUST
 
-export CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUST_TEST_THREADS=1
-export PYTHONHASHSEED=0 PYTHONDONTWRITEBYTECODE=1
 cd "$fixture"
 for package in app runner inputs wash; do
     case "$package" in
@@ -79,3 +88,43 @@ cargo +stable run --locked --manifest-path tools/inputs/Cargo.toml -- restore \
 export PYO3_PYTHON="$fixture/.venv/bin/python"
 cargo +stable run --locked --manifest-path tools/runner/Cargo.toml --bin core-regressions -- "$root" "$out/evidence" \
     > "$out/regressions.log" 2>&1
+fi
+
+# Preserve the historical large projection and held-commit regressions above.
+# CI/CD now uses the direct-file boundary, not the removed generic-close adapter.
+if [[ "$selection" != historical ]]; then
+source "$root/.github/scripts/lib/current_input.sh"
+checkout_current_input "$workspace/hibana-tracefix" https://github.com/hibanaworks/choreofix.git cbd8614b72ca644099d072eedf3dc89a70cdbf00 "$out"
+checkout_current_input "$workspace/hibana-epf" https://github.com/hibanaworks/hibana-epf.git "$(cat "$root/.github/epf-revision")" "$out"
+checkout_current_input "$workspace/hibana-wasip1-runtime" https://github.com/hibanaworks/hibana-wasip1-runtime.git cc71768056bc504e4f2d8f005718bea7e77b0840 "$out"
+test "$(git -C "$root/../hibana-runtime" rev-parse HEAD)" = "$(cat "$root/.github/runtime-revision")"
+git -C "$root/../hibana-runtime" diff --quiet HEAD --
+current="$root/../hibana-tracefix"
+if [[ ! -f "$current/vendor/hibana-wash/Cargo.toml" ]]; then
+    git -C "$current" submodule update --init --depth 1
+fi
+cd "$current"
+cargo +stable metadata --locked --format-version 1 > "$out/current-app-metadata.json"
+cargo +stable metadata --locked --manifest-path tools/runner/Cargo.toml --format-version 1 > "$out/current-runner-metadata.json"
+for manifest in "$out/current-app-metadata.json" "$out/current-runner-metadata.json"; do
+    jq -e --arg core "$root/Cargo.toml" \
+        --arg executor "$workspace/hibana-runtime/Cargo.toml" \
+        --arg epf "$workspace/hibana-epf/Cargo.toml" \
+        --arg wasi "$workspace/hibana-wasip1-runtime/Cargo.toml" \
+        '.packages as $packages |
+         [["hibana",$core],["hibana-runtime",$executor],["hibana-epf",$epf],["hibana-wasip1-runtime",$wasi]] |
+         all(.[]; . as $expected |
+             [$packages[] | select(.name == $expected[0])] |
+             length == 1 and .[0].source == null and .[0].manifest_path == $expected[1])' \
+        "$manifest" > /dev/null
+done
+cargo +stable run --locked --manifest-path tools/inputs/Cargo.toml -- restore > "$out/current-restore.log" 2>&1
+"${CHOREOFIX_PYTHON:-python3}" -m venv .venv
+.venv/bin/python -m pip install --requirement requirements.lock > "$out/current-python-install.log" 2>&1
+export PYO3_PYTHON="$current/.venv/bin/python"
+cargo +stable run --locked --manifest-path tools/runner/Cargo.toml --bin choreofix-experiments -- \
+    --qualify-wasi "$out/current-cicd" 'cicd_boundary::' > "$out/current-cicd.log" 2>&1
+jq -e '.source_unchanged == true and .test_functions_passed == {"cicd":4} and .model_calls == 0 and .scored_runs == 0' \
+    "$out/current-cicd/result.json" > /dev/null
+fi
+printf 'Required consumer regressions passed selection=%s\n' "$selection"

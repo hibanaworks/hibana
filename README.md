@@ -528,6 +528,13 @@ failure and remains terminal. Calling outside a borrowed fragment's source
 range remains a protocol violation. `PhaseInvariant` reports other
 inconsistencies in the operation's progress or descriptor facts.
 
+A plain receive can also return `is_unavailable()` rather than waiting on an
+empty old repetition when a causal receipt on its own FIFO direction proves
+that the entry resource cannot return. Already accepted messages from earlier
+visits can still be received. The error does not fault the run or promise that
+no delayed message can arrive; the caller can try another permitted operation
+or receive again later.
+
 A transport close does not signal successful protocol completion. `roll()`
 lets a completed fragment run again and has no end message. To tell a worker
 that work has ended, include a message or a route in the global protocol.

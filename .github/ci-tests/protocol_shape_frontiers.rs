@@ -1,7 +1,8 @@
 //! Parallel repetitions followed by a choice on another logical direction.
 use super::Protocol;
 
-pub(super) const COUNT: usize = 32;
+const PARALLEL_CONTINUATIONS: usize = 32;
+pub(super) const COUNT: usize = PARALLEL_CONTINUATIONS + 1;
 
 fn message(from: u8, to: u8, owned: bool) -> Protocol {
     Protocol::Message {
@@ -28,7 +29,7 @@ fn choice(from: u8, to: u8, resolved: bool) -> Protocol {
 }
 
 fn source(rank: usize, resource_initiates: bool) -> Protocol {
-    assert!(rank < COUNT);
+    assert!(rank < PARALLEL_CONTINUATIONS);
     let owned = rank & 16 != 0;
     let outgoing = rank & 8 != 0;
     let receiver = if owned { 3 } else { 1 };
@@ -82,6 +83,31 @@ fn source(rank: usize, resource_initiates: bool) -> Protocol {
 }
 
 pub(super) fn protocol(rank: usize) -> (Protocol, String) {
+    assert!(rank < COUNT);
+    if rank == PARALLEL_CONTINUATIONS {
+        // The file never owns resource 3. Its repository receipt proves that
+        // the old holder cannot start another visit after the actual return.
+        let retry = seq(
+            message(3, 0, false),
+            seq(
+                message(0, 2, false),
+                seq(
+                    message(0, 3, false),
+                    seq(message(2, 3, false), message(3, 0, false)),
+                ),
+            ),
+        );
+        return (
+            seq(
+                message(0, 1, true),
+                seq(
+                    Protocol::Roll(Box::new(retry)),
+                    seq(message(1, 0, true), message(0, 2, false)),
+                ),
+            ),
+            "remote-file-receive-after-permanent-resource-return".into(),
+        );
+    }
     (
         source(rank, true),
         format!(
@@ -113,8 +139,13 @@ mod tests {
         for rank in 0..COUNT {
             let (mut source, _) = protocol(rank);
             let (_, resolvers) = super::super::syntax::number(&mut source);
-            assert_eq!(resolvers, (rank & 7).count_ones() as u16);
-            assert_eq!(super::super::context::has_transfer(&source), rank & 16 != 0);
+            if rank < PARALLEL_CONTINUATIONS {
+                assert_eq!(resolvers, (rank & 7).count_ones() as u16);
+                assert_eq!(super::super::context::has_transfer(&source), rank & 16 != 0);
+            } else {
+                assert_eq!(resolvers, 0);
+                assert!(super::super::context::has_transfer(&source));
+            }
             assert!(
                 super::super::ownership::violations(&source).is_empty(),
                 "rank={rank}"

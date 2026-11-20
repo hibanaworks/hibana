@@ -60,7 +60,7 @@ impl EventCursor {
         let target = progress_step.0;
         let end = usize::from(target.step_idx);
         let retained_completion = self.has_retained_roll_completion();
-        let retained = self.is_recv_at(end) && retained_completion;
+        let retained = retained_completion && self.is_recv_at(end);
         let mut pending = self.pending_event_steps(0..end);
         while let Some(step_idx) = pending.next() {
             if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane)

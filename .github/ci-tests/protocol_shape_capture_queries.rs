@@ -1,6 +1,6 @@
 //! Preserve the exact measured public-call cuts while checking their evidence.
 //! Completion eligibility comes from the source-cut checker and the actual
-//! fixture FIFO. Positive histories additionally need an EPF source witness;
+//! fixture FIFO. EPF qualification checks histories at every outcome;
 //! a failed witness search is never interpreted as proof of an illegal call.
 use super::*;
 
@@ -45,11 +45,11 @@ struct Measurement {
 struct SourceAnswers {
     source: usize,
     answers: Vec<(usize, Vec<usize>)>,
-    readiness: Vec<(usize, bool)>,
+    readiness: Vec<(usize, Vec<[usize; 3]>)>,
 }
 
 impl SourceAnswers {
-    fn ready(&self, query: usize) -> Result<bool> {
+    fn check_commit(&self, query: usize, commit: Option<[usize; 2]>) -> Result<()> {
         let (id, candidates) = self
             .answers
             .get(query)
@@ -61,11 +61,27 @@ impl SourceAnswers {
         if *id != query
             || *ready_id != query
             || candidates.iter().collect::<BTreeSet<_>>().len() != candidates.len()
-            || (*ready && candidates.is_empty())
+            || ready
+                .iter()
+                .map(|point| point[0])
+                .collect::<BTreeSet<_>>()
+                .len()
+                != ready.len()
+            || !ready.iter().all(|[row, _, _]| candidates.contains(row))
         {
             return Err("missing, duplicate or reordered source query answer".into());
         }
-        Ok(*ready)
+        let allowed = match commit {
+            None => ready.is_empty(),
+            Some([source, lane]) => ready.iter().any(|point| point[1..] == [source, lane]),
+        };
+        if !allowed {
+            return Err(format!(
+                "source/runtime completion mismatch: ready_rows={ready:?} committed={commit:?}"
+            )
+            .into());
+        }
+        Ok(())
     }
 }
 
@@ -219,7 +235,11 @@ fn prefix(baseline: &CapturedRun, measurement: &Measurement, calls: usize) -> Re
     })
 }
 
-fn matches_call(snapshot: &[[u64; 5]], measurement: &Measurement, input: &[u16]) -> Result<()> {
+fn matches_call(
+    snapshot: &[[u64; 5]],
+    measurement: &Measurement,
+    input: &[u16],
+) -> Result<Option<[usize; 2]>> {
     let number = |field: &str| {
         measurement.probe[field]
             .as_u64()
@@ -273,7 +293,7 @@ fn matches_call(snapshot: &[[u64; 5]], measurement: &Measurement, input: &[u16])
         if !committed.is_empty() {
             return Err("a pending or rejected query published a completed operation".into());
         }
-        return Ok(());
+        return Ok(None);
     }
     let [record] = committed.as_slice() else {
         return Err("a completed query needs exactly one actual operation commit".into());
@@ -289,7 +309,10 @@ fn matches_call(snapshot: &[[u64; 5]], measurement: &Measurement, input: &[u16])
     {
         return Err("completed query does not match its typed public message contract".into());
     }
-    Ok(())
+    Ok(Some([
+        (record[5] & 65535) as usize,
+        ((record[5] >> 16) & 255) as usize,
+    ]))
 }
 
 pub(super) fn check(checker: &CaptureCheck<'_>, input: &Path) -> Result<serde_json::Value> {
@@ -383,7 +406,19 @@ pub(super) fn check(checker: &CaptureCheck<'_>, input: &Path) -> Result<serde_js
     let mut rejected = 0usize;
     let mut unresolved = 0usize;
     let mut epf_checked = 0usize;
+    let mut epf_pending = 0usize;
+    let mut epf_rejected = 0usize;
+    let mut distinct_histories = 0usize;
+    let mut certificates = checker
+        .epf
+        .map(|_| create(&output.join("query-certificates.jsonl")))
+        .transpose()?
+        .map(BufWriter::new);
     for baseline in baselines {
+        // Within this one baseline these two prefix lengths and the complete
+        // suffix identify the exact event and borrow lists supplied to EPF.
+        // Each probe's producer checkpoints and outcome are checked separately.
+        let mut certified = BTreeMap::new();
         let inventory: Inventory = read(&mut lines)?;
         let mut missing = planned[baseline.script].clone();
         if inventory.kind != "inventory"
@@ -427,62 +462,87 @@ pub(super) fn check(checker: &CaptureCheck<'_>, input: &Path) -> Result<serde_js
             let run = prefix(baseline, &measurement, plans[baseline.script].calls.len())?;
             let input =
                 &header.resolver_inputs[measurement.probe["choice"].as_u64().unwrap() as usize];
-            matches_call(checker.snapshot, &measurement, input)?;
-            let ready = answers.ready(query_index)?;
-            query_index += 1;
-            if ready != (measurement.outcome == "completed") {
+            let commit = matches_call(checker.snapshot, &measurement, input)?;
+            if let Err(reason) = answers.check_commit(query_index, commit) {
                 return Err(format!(
-                    "source/runtime completion mismatch: source={} script={} reverse={} probe={} state={} source_ready={ready} outcome={} error={}",
+                    "{reason}: source={} script={} reverse={} probe={} state={} outcome={} error={}",
                     header.name, measurement.script, measurement.reverse_poll, measurement.probe,
                     measurement.state, measurement.outcome,
                     String::from_utf8_lossy(&measurement.error_utf8),
                 ).into());
             }
-            if measurement.outcome == "pending" {
-                pending += 1;
+            query_index += 1;
+            let checked_count = match measurement.outcome.as_str() {
+                "completed" => {
+                    completed += 1;
+                    &mut epf_checked
+                }
+                "pending" => {
+                    pending += 1;
+                    &mut epf_pending
+                }
+                "rejected" => {
+                    rejected += 1;
+                    &mut epf_rejected
+                }
+                _ => unreachable!(),
+            };
+            let Some(receipts) = certificates.as_mut() else {
                 continue;
-            }
-            if measurement.outcome == "rejected" {
-                rejected += 1;
-                continue;
-            }
-            completed += 1;
-            if checker.epf.is_none() {
-                continue;
-            }
-            let mut errors = Vec::new();
-            let mut checked = false;
-            for plan in std::iter::once(&plans[baseline.script]).chain(candidates.iter()) {
-                let label = format!(
-                    "query-script-{}-reverse-{}-index-{query}-attempt-{}",
-                    baseline.script,
-                    baseline.reverse_poll,
-                    errors.len()
-                );
-                match checker.audit(&label, &run, plan) {
-                    Ok(_) => {
-                        checked = true;
-                        break;
+            };
+            let history = (
+                measurement.prefix_records,
+                measurement.prefix_borrows,
+                measurement.suffix,
+            );
+            let evidence = certified.entry(history).or_insert_with(|| {
+                let mut errors = Vec::new();
+                for plan in std::iter::once(&plans[baseline.script]).chain(candidates.iter()) {
+                    let label = format!(
+                        "query-script-{}-reverse-{}-index-{query}-attempt-{}",
+                        baseline.script,
+                        baseline.reverse_poll,
+                        errors.len()
+                    );
+                    match checker.audit(&label, &run, plan) {
+                        Ok(_) => return Ok(label),
+                        Err(error) => errors.push(error.to_string()),
                     }
-                    Err(error) => errors.push(error.to_string()),
+                }
+                Err(errors)
+            });
+            match evidence {
+                Ok(label) => {
+                    *checked_count += 1;
+                    serde_json::to_writer(
+                        &mut *receipts,
+                        &serde_json::json!({
+                            "id":query_index-1, "script":baseline.script, "reversePoll":baseline.reverse_poll,
+                            "probe":measurement.probe, "sourceRows":answers.answers[query_index-1].1,
+                            "outcome":measurement.outcome, "certificate":label
+                        }),
+                    )?;
+                    receipts.write_all(b"\n")?;
+                }
+                Err(errors) => {
+                    unresolved += 1;
+                    serde_json::to_writer_pretty(
+                        create(&output.join(format!(
+                            "unresolved-script-{}-reverse-{}-query-{query}.json",
+                            baseline.script, baseline.reverse_poll
+                        )))?,
+                        &serde_json::json!({"probe":measurement.probe,"errors":errors}),
+                    )?;
                 }
             }
-            if checked {
-                epf_checked += 1;
-            } else {
-                unresolved += 1;
-                serde_json::to_writer_pretty(
-                    create(&output.join(format!(
-                        "unresolved-script-{}-reverse-{}-query-{query}.json",
-                        baseline.script, baseline.reverse_poll
-                    )))?,
-                    &serde_json::json!({"probe":measurement.probe,"errors":errors}),
-                )?;
-            }
         }
+        distinct_histories += certified.len();
         if !missing.is_empty() {
             return Err("incomplete scoped-query matrix".into());
         }
+    }
+    if let Some(mut file) = certificates {
+        file.flush()?;
     }
     if lines.next().is_some()
         || used_states.len() != states.len()
@@ -492,6 +552,7 @@ pub(super) fn check(checker: &CaptureCheck<'_>, input: &Path) -> Result<serde_js
     }
     Ok(serde_json::json!({
         "checked":completed,"epf_checked":epf_checked,"epf_requested":checker.epf.is_some(),"unresolved":unresolved,
+        "epf_pending_histories":epf_pending,"epf_rejected_histories":epf_rejected,"distinct_epf_query_histories":distinct_histories,
         "pending":pending,"rejected":rejected,
         "negative_eligibility_checked":true,
         "eligibility_scope":"measured public calls at actual scoped cuts with the fixture FIFO; completion only, not the Pending/error distinction",
@@ -508,23 +569,27 @@ mod tests {
         let mut answers = SourceAnswers {
             source: 0,
             answers: vec![(0, vec![0])],
-            readiness: vec![(0, true)],
+            readiness: vec![(0, vec![[0, 17, 3]])],
         };
-        assert!(answers.ready(0).unwrap());
-        answers.readiness[0].1 = false;
-        assert!(!answers.ready(0).unwrap());
+        assert!(answers.check_commit(0, Some([17, 3])).is_ok());
+        assert!(answers.check_commit(0, Some([18, 3])).is_err());
+        assert!(answers.check_commit(0, Some([17, 4])).is_err());
+        assert!(answers.check_commit(0, None).is_err());
+        answers.readiness[0].1.clear();
+        assert!(answers.check_commit(0, None).is_ok());
+        assert!(answers.check_commit(0, Some([17, 3])).is_err());
         answers.answers[0].1.push(0);
-        assert!(answers.ready(0).is_err());
+        assert!(answers.check_commit(0, None).is_err());
         answers.answers[0].1.clear();
-        answers.readiness[0].1 = true;
-        assert!(answers.ready(0).is_err());
+        answers.readiness[0].1.push([0, 17, 3]);
+        assert!(answers.check_commit(0, None).is_err());
         answers.answers[0] = (1, vec![0]);
-        assert!(answers.ready(0).is_err());
+        assert!(answers.check_commit(0, None).is_err());
         answers.answers[0] = (0, vec![0]);
         answers.readiness[0].0 = 1;
-        assert!(answers.ready(0).is_err());
+        assert!(answers.check_commit(0, None).is_err());
         answers.readiness.clear();
-        assert!(answers.ready(0).is_err());
+        assert!(answers.check_commit(0, None).is_err());
     }
 
     fn measurement() -> Measurement {
