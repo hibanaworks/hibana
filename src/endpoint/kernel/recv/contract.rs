@@ -5,7 +5,9 @@ use crate::{
         role_program::{
             LANE_SET_VIEW_WORDS, LaneSetView, LaneWord, lane_word_count, lane_word_index,
         },
-        typestate::{EnabledEventCommit, EventAdmissionError, EventCommitMeta},
+        typestate::{
+            EnabledEventCommit, EventAdmissionError, EventCommitMeta, state_index_to_usize,
+        },
     },
     transport::Transport,
 };
@@ -33,11 +35,11 @@ where
         target_label: u8,
         target_payload: crate::eff::EventPayload,
         words: &'lanes mut [LaneWord; LANE_SET_VIEW_WORDS],
-    ) -> RecvResult<LaneSetView<'lanes>> {
+    ) -> RecvResult<(LaneSetView<'lanes>, usize)> {
         words.fill(0);
         let mut expected_payload = None;
         let mut blocked = None;
-        let mut other_view_pending = false;
+        let mut wait_candidate = None;
         for idx in self
             .progress
             .cursor
@@ -60,7 +62,7 @@ where
                 if matches!(admission, Err(EventAdmissionError::OtherViewPending))
                     && meta.payload_kind == target_payload
                 {
-                    other_view_pending = true;
+                    wait_candidate = Some(idx);
                 }
                 if matches!(admission, Err(EventAdmissionError::PredecessorPending))
                     && meta.payload_kind == target_payload
@@ -75,6 +77,7 @@ where
                         }
                         let (word, bit) = lane_word_index(lane);
                         words[word] |= bit;
+                        wait_candidate.get_or_insert(idx);
                     } else {
                         expected_payload = Some(meta.payload_kind);
                     }
@@ -94,12 +97,9 @@ where
         };
         // No port is polled for a blocked row. The common actor's commit wakes
         // this view, which then repeats admission against the same progress.
-        if other_view_pending
-            || lanes
-                .first_set(self.progress.cursor.logical_lane_count())
-                .is_some()
-        {
-            return Ok(lanes);
+        if let Some(index) = wait_candidate {
+            // Only an immutable row locator crosses a transport callback.
+            return Ok((lanes, index));
         }
         if let Some(error) = blocked {
             return Err(error);
@@ -144,13 +144,49 @@ where
         })
     }
 
-    /// No matching receive can advance without an operation held by this view,
-    /// or after a causal retirement receipt. Check after matching queued input.
+    fn recv_row_excludes_wait(
+        &self,
+        enabled: EnabledEventCommit,
+        observed: Option<usize>,
+        retained: bool,
+        retired: bool,
+    ) -> bool {
+        let index = state_index_to_usize(enabled.event_index());
+        if retained
+            && self.progress.cursor.retained_receive_waits_for_own_send(
+                index,
+                |prior| self.permits_event(prior),
+                &mut |scope| self.selected_arm_for_scope(scope),
+            )
+        {
+            return true;
+        }
+        retired
+            && self
+                .borrowed_reentry_scope(index)
+                .or_else(|| {
+                    self.progress
+                        .cursor
+                        .roll_body_reentry_scope_for_step(enabled.progress_step(), &mut |scope| {
+                            self.selected_arm_for_scope(scope)
+                        })
+                })
+                .is_some_and(|scope| {
+                    self.progress
+                        .cursor
+                        .roll_retirement_observed(scope, index, observed)
+                })
+    }
+
+    /// Every admitted row must be excluded before a quiet or observed port can
+    /// disprove this wait. Check the last promising row first against the
+    /// progress and custody visible after the transport callback.
     pub(in crate::endpoint::kernel::recv) fn recv_contract_excludes_wait(
         &self,
         target_label: u8,
         target_payload: crate::eff::EventPayload,
         observed: Option<usize>,
+        preferred: Option<usize>,
     ) -> bool {
         let retired = self.progress.cursor.has_roll_retirement();
         let retained = observed.is_none() && self.progress.cursor.has_retained_roll_completion();
@@ -158,10 +194,13 @@ where
             return false;
         }
         let mut found = false;
-        for index in self
+        let candidates = self
             .progress
             .cursor
-            .receive_candidates(self.public_header.role(), target_label)
+            .receive_candidates(self.public_header.role(), target_label);
+        for index in preferred
+            .into_iter()
+            .chain(candidates.filter(|index| Some(*index) != preferred))
         {
             let Some(meta) = self.progress.cursor.try_recv_meta_at(index) else {
                 continue;
@@ -175,30 +214,7 @@ where
                 Err(_) => continue,
             };
             found = true;
-            if retained
-                && self.progress.cursor.retained_receive_waits_for_own_send(
-                    index,
-                    |prior| self.permits_event(prior),
-                    &mut |scope| self.selected_arm_for_scope(scope),
-                )
-            {
-                continue;
-            }
-            if !retired {
-                return false;
-            }
-            let scope = self.borrowed_reentry_scope(index).or_else(|| {
-                self.progress
-                    .cursor
-                    .roll_body_reentry_scope_for_step(enabled.progress_step(), &mut |scope| {
-                        self.selected_arm_for_scope(scope)
-                    })
-            });
-            if !scope.is_some_and(|scope| {
-                self.progress
-                    .cursor
-                    .roll_retirement_observed(scope, index, observed)
-            }) {
+            if !self.recv_row_excludes_wait(enabled, observed, retained, retired) {
                 return false;
             }
         }
@@ -214,7 +230,12 @@ where
         target_payload: crate::eff::EventPayload,
         observed_index: usize,
     ) -> bool {
-        if self.recv_contract_excludes_wait(target_label, target_payload, Some(observed_index)) {
+        if self.recv_contract_excludes_wait(
+            target_label,
+            target_payload,
+            Some(observed_index),
+            None,
+        ) {
             return false;
         }
         let observed = self

@@ -1,8 +1,9 @@
 use super::lane_port;
-use crate::global::typestate::{RecvMeta, StateIndex};
+use crate::global::typestate::{EnabledEventCommit, EventAdmissionError, RecvMeta, StateIndex};
 
 pub(crate) struct MatchedRecvFrame<'a> {
     pub(super) desc: RecvDescriptor,
+    pub(super) enabled: EnabledEventCommit,
     pub(super) frame: lane_port::ReceivedFrame<'a>,
 }
 
@@ -12,7 +13,7 @@ pub(in crate::endpoint::kernel::recv) struct RecvCandidate {
     // One synchronous kernel observation. A recognized early frame is retained
     // until its prefix completes; only an enabled candidate can be consumed.
     pub(in crate::endpoint::kernel::recv) admission:
-        Result<(), crate::global::typestate::EventAdmissionError>,
+        Result<EnabledEventCommit, EventAdmissionError>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -12,6 +12,7 @@ use inbox::{Broker, NetworkTransport, Process};
 
 mod composed;
 mod failure;
+mod open_choice;
 mod peers;
 mod preemption;
 

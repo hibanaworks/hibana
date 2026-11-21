@@ -9,8 +9,9 @@ mod tests;
 
 impl EventCursor {
     /// Repeating an earlier body is an alternative to borrowing its sequential
-    /// continuation. A completed row can still await another view's completion
-    /// before restarting; it is not an extra branch of that forward borrow.
+    /// continuation. An already completed row or one excluded by the committed
+    /// choice can run again only in a different visit. Another view may still
+    /// need to finish its share of the current visit.
     /// The borrowed operations retain their ordinary predecessor checks.
     /// Unfinished prefixes and parallel siblings remain in the frontier.
     pub(crate) fn completed_roll_alternative_to(
@@ -53,7 +54,17 @@ impl EventCursor {
                         program.source_route_separates(route.scope(), source, continuation)
                     })
             };
-            if (prefix && self.local_event_done(index))
+            if (prefix
+                && (self.local_event_done(index)
+                    || matches!(
+                        self.event_conflict_row_admission(
+                            self.machine().event_conflict_for_index(index),
+                            ScopeId::none(),
+                            None,
+                            selected,
+                        ),
+                        super::ConflictAdmission::Excluded { .. }
+                    )))
                 || ((prefix || enclosing || other_arm())
                     && self.roll_scope_complete_for_entry(scope, index, selected))
             {
@@ -164,7 +175,7 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn roll_scope_events_complete_at(
+    pub(super) fn roll_scope_events_complete_at(
         &self,
         scope: ScopeId,
         entry: Option<usize>,

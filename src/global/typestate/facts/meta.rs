@@ -5,13 +5,33 @@ use crate::{
 
 use super::{RouteChoiceMark, StateIndex};
 
+/// Source operations excluded by the caller's Rust borrow. Explicit peer
+/// endpoints are whole values. The carrier may be a parallel fragment.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct OperationBorrow<'a> {
+    pub(crate) fragment: Option<&'a core::ops::Range<usize>>,
+    pub(crate) peers: Option<&'a dyn Fn(u8) -> bool>,
+}
+
+impl OperationBorrow<'_> {
+    pub(crate) fn holds_carrier(
+        self,
+        program: &crate::global::compiled::images::CompiledProgramRef,
+        source: usize,
+    ) -> bool {
+        self.fragment.is_none_or(|range| {
+            !program.source_range_parallel_to_event(range.start, range.end, source)
+        })
+    }
+}
+
 /// The logical view and message family requested by one endpoint operation.
 #[derive(Clone, Copy)]
 pub(crate) struct MessageSelector<'borrow> {
     pub(crate) role: u8,
     pub(crate) label: u8,
     pub(crate) payload_kind: crate::eff::EventPayload,
-    pub(crate) borrowed: Option<&'borrow dyn Fn(u8) -> bool>,
+    pub(crate) borrowed: OperationBorrow<'borrow>,
 }
 
 impl MessageSelector<'_> {
@@ -20,7 +40,10 @@ impl MessageSelector<'_> {
             role,
             label,
             payload_kind,
-            borrowed: None,
+            borrowed: OperationBorrow {
+                fragment: None,
+                peers: None,
+            },
         }
     }
 }

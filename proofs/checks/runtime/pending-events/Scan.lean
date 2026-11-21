@@ -45,42 +45,123 @@ theorem mask_exact (done : BitVec 32) (low high bit : Nat) (b : bit < 32) :
   cases d : done.getLsbD bit <;> by_cases lo : bit < low <;>
     simp [lo, Nat.le_of_not_gt, Nat.not_le_of_gt]
 
--- Clearing the lowest selected bit removes exactly that bit; no other pending
--- predecessor is dropped. Rust calls trailing_zeros only on a nonzero word.
-theorem clear_selected (pending : BitVec 32) (bit i : Nat)
-    (within : i < 32) :
-    (pending &&& ~~~(BitVec.twoPow 32 bit)).getLsbD i =
-      (pending.getLsbD i && decide (i ≠ bit)) := by
-  by_cases equal : bit = i
-  · simp [equal, within]
-  · simp [within, Ne.symm equal]
+private theorem set_bit_after_decrement (n i : Nat) (setBit : n.testBit i = true) :
+    (n - 1).testBit i = true ↔ ∃ j < i, n.testBit j = true := by
+  induction i generalizing n with
+  | zero =>
+    simp only [Nat.testBit_zero, decide_eq_true_eq] at setBit ⊢
+    simp only [Nat.not_lt_zero, false_and, exists_false, iff_false]
+    omega
+  | succ i ih =>
+    rw [Nat.testBit_succ] at setBit ⊢
+    by_cases odd : n % 2 = 1
+    · rw [show (n - 1) / 2 = n / 2 by omega, setBit]
+      exact ⟨fun _ => ⟨0, Nat.zero_lt_succ _, by simp [odd]⟩, fun _ => rfl⟩
+    · rw [show (n - 1) / 2 = n / 2 - 1 by omega, ih _ setBit]
+      constructor
+      · rintro ⟨j, lt, yes⟩
+        exact ⟨j + 1, by omega, by rwa [Nat.testBit_succ]⟩
+      · rintro ⟨j, lt, yes⟩
+        cases j with
+        | zero => simp [odd] at yes
+        | succ j => exact ⟨j, by omega, by rwa [Nat.testBit_succ] at yes⟩
 
-theorem lowest_present (pending : BitVec 32) (nonzero : pending ≠ 0#32) :
-    pending.getLsbD pending.ctz.toNat = true := by
-  exact BitVec.getLsbD_true_ctz_of_ne_zero nonzero
+private theorem word_decrement (w : BitVec 32) (nz : w ≠ 0#32) :
+    (w - 1#32).toNat = w.toNat - 1 := by
+  have pos : 0 < w.toNat := by
+    exact Nat.pos_of_ne_zero (fun h => nz (BitVec.eq_of_toNat_eq h))
+  exact BitVec.toNat_sub_of_le (by simpa [BitVec.le_def] using pos : 1#32 ≤ w)
+
+theorem advance_word_exact (pending : BitVec 32) (nz : pending ≠ 0#32) (i : Nat) :
+    (pending &&& (pending - 1#32)).getLsbD i = true ↔
+      pending.getLsbD i = true ∧ pending.ctz.toNat < i := by
+  rw [BitVec.getLsbD_and, Bool.and_eq_true]
+  constructor
+  · rintro ⟨setBit, stays⟩
+    change (pending - 1#32).toNat.testBit i = true at stays
+    rw [word_decrement _ nz] at stays
+    obtain ⟨j, lower, yes⟩ := (set_bit_after_decrement _ _ setBit).mp stays
+    have : pending.ctz.toNat ≤ j := by
+      apply Nat.le_of_not_gt
+      intro h
+      have absent := BitVec.getLsbD_false_of_lt_ctz (x := pending) (i := j) (by omega)
+      change pending.getLsbD j = true at yes
+      simp [absent] at yes
+    exact ⟨setBit, by omega⟩
+  · rintro ⟨setBit, higher⟩
+    refine ⟨setBit, ?_⟩
+    change (pending - 1#32).toNat.testBit i = true
+    rw [word_decrement _ nz]
+    exact (set_bit_after_decrement _ _ setBit).mpr
+      ⟨_, higher, BitVec.getLsbD_true_ctz_of_ne_zero nz⟩
+
+private def wordSteps (w : BitVec 32) : List Nat :=
+  if _zero : w = 0#32 then []
+  else w.ctz.toNat :: wordSteps (w &&& (w - 1#32))
+termination_by w.toNat
+decreasing_by
+  rw [BitVec.toNat_and, word_decrement _ _zero]
+  have bound := Nat.and_le_right (n := w.toNat) (m := w.toNat - 1)
+  have : w.toNat ≠ 0 := fun h => _zero (BitVec.eq_of_toNat_eq h)
+  omega
+
+theorem word_steps_membership (w : BitVec 32) (i : Nat) :
+    i ∈ wordSteps w ↔ w.getLsbD i = true := by
+  fun_induction wordSteps w with
+  | case1 => simp
+  | case2 word nz ih =>
+    rw [List.mem_cons, ih, advance_word_exact _ nz]
+    constructor
+    · rintro (rfl | ⟨atI, _⟩)
+      · exact BitVec.getLsbD_true_ctz_of_ne_zero nz
+      · exact atI
+    · intro atI
+      by_cases low : i < word.ctz.toNat
+      · simp [BitVec.getLsbD_false_of_lt_ctz low] at atI
+      · by_cases same : i = word.ctz.toNat
+        · exact Or.inl same
+        · exact Or.inr ⟨atI, by omega⟩
+
+theorem word_steps_strict (w : BitVec 32) : (wordSteps w).Pairwise (· < ·) := by
+  fun_induction wordSteps w with
+  | case1 => simp
+  | case2 word nz ih =>
+    rw [List.pairwise_cons]
+    exact ⟨fun i inside => ((advance_word_exact word nz i).mp
+      ((word_steps_membership _ i).mp inside)).2, ih⟩
+
+/-- Each visited word contributes its unfinished bits in increasing order.
+The first and last masks restrict the scan to the half-open caller range. -/
+private def pendingSteps (done : Nat → BitVec 32) (start finish : Nat) : List Nat :=
+  (List.range' (start / 32) ((finish + 31) / 32 - start / 32)).flatMap fun word =>
+    let base := word * 32
+    (wordSteps (~~~(done word) &&& rangeMask (start - base) (min (finish - base) 32))).map
+      (fun bit => base + bit)
+
+theorem scanned_step_iff_unfinished (done : Nat → BitVec 32) (start finish i : Nat) :
+    i ∈ pendingSteps done start finish ↔
+      start ≤ i ∧ i < finish ∧ (done (i / 32)).getLsbD (i % 32) = false := by
+  simp only [pendingSteps, List.mem_flatMap, List.mem_map, List.mem_range'_1, word_steps_membership]
+  constructor
+  · rintro ⟨w, _, b, active, rfl⟩
+    have width : b < 32 := by
+      apply Nat.lt_of_not_ge
+      intro outside
+      simp [BitVec.getLsbD_of_ge _ _ outside] at active
+    obtain ⟨undone, low, high⟩ := (mask_exact _ _ _ _ width).mp active
+    have idx : (w * 32 + b) / 32 = w := by omega
+    have rem : (w * 32 + b) % 32 = b := by omega
+    rw [idx, rem]
+    exact ⟨by omega, by omega, undone⟩
+  · rintro ⟨low, high, undone⟩
+    refine ⟨i / 32, ⟨by omega, by omega⟩, i % 32, ?_, by omega⟩
+    exact (mask_exact _ _ _ _ (by omega)).mpr ⟨undone, by omega, by omega⟩
 
 -- A word selected by a nonempty compact range always has a backing word.
 theorem word_in_backing (start finish length : Nat)
     (nonempty : start < finish) (bound : finish ≤ length) :
     start / 32 < (length + 31) / 32 := by
   omega
-
-theorem yielded_step_in_range (start finish word bit : Nat)
-    (low : start ≤ word * 32 + bit)
-    (high : word * 32 + bit < finish) :
-    start ≤ word * 32 + bit ∧ word * 32 + bit < finish := by
-  exact ⟨low, high⟩
-
--- Replacing a scan of all rows with the exact uncompleted subset preserves
--- rejection for arbitrary lane/route predicates. No predicate is weakened.
-theorem admission_equivalent (done live : Nat → Prop) (start finish : Nat) :
-    (∀ i, start ≤ i → i < finish → (¬ done i → ¬ live i)) ↔
-      (∀ i, (start ≤ i ∧ i < finish ∧ ¬ done i) → ¬ live i) := by
-  constructor
-  · intro all i h
-    exact all i h.1 h.2.1 h.2.2
-  · intro pending i low high incomplete
-    exact pending i ⟨low, high, incomplete⟩
 
 -- A completed scope must have a participant. Searching only unfinished events
 -- for blockers preserves that requirement for arbitrary selected local domains.
@@ -178,11 +259,11 @@ theorem a_conflicting_ancestor_excludes_its_event
 #print axioms mask_exact
 #print axioms source_mask_exact
 #print axioms source_word_bounds
-#print axioms clear_selected
-#print axioms lowest_present
+#print axioms advance_word_exact
+#print axioms word_steps_membership
+#print axioms word_steps_strict
+#print axioms scanned_step_iff_unfinished
 #print axioms word_in_backing
-#print axioms yielded_step_in_range
-#print axioms admission_equivalent
 #print axioms scope_completion_equivalent
 #print axioms compact_word_arithmetic
 #print axioms local_event_words_fit_storage

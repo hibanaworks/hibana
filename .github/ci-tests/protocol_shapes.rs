@@ -2529,6 +2529,35 @@ mod population_tests {
     }
 
     #[test]
+    fn delegated_suffix_is_probed_after_the_loan_on_both_open_choice_paths() {
+        let catalog = contract_cases(contract_collision_cases(43, 1).unwrap());
+        let distinct = 43 * contracts::VARIANTS;
+        assert!(catalog.delegated.contains(&distinct));
+        assert!(!catalog.expected_rejections.contains_key(&distinct));
+        let (_, _, _, _, source, _) = catalog.cases.iter().find(|c| c.0 == distinct).unwrap();
+        let paths = source
+            .executions()
+            .map(|execution| execution.trace().messages)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            paths,
+            BTreeSet::from([
+                vec![(0, false), (1, true), (2, false), (4, false)],
+                vec![(0, false), (3, true), (4, false)],
+            ])
+        );
+        // The whole-call driver tries every public selector after every script
+        // prefix. The loan is received before either arm's first operation.
+        assert_eq!(source.prefix_visits(), 1);
+        assert!(
+            scope_probes::public_queries(source, 3, None)
+                .iter()
+                .any(|(message, receive)| !*receive
+                    && matches!(message, Protocol::Message { event: 4, .. }))
+        );
+    }
+
+    #[test]
     fn compilation_units_preserve_all_cases_and_isolate_oversized_inputs() {
         let cases = vec![
             "a".repeat(1_400_000),

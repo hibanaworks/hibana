@@ -36,12 +36,15 @@ theorem all_present_true_checks_every_member
 
 /-- A view is required by its logical send/receive or as the owned payload of
 a send. A view with no own wire operation may still be required for a loan. -/
-def sourceActionRequiresView (role : Nat) (binding : Binding) (side : Side) : Bool :=
-  let key : EndpointKey := { component := 0, role }
+abbrev sourceActionRequiresEndpoint (key : EndpointKey) (binding : Binding) (side : Side) : Bool :=
   match side with
   | .receive => binding.message.receiver == key
   | .send | .local =>
       binding.message.sender == key || binding.message.payload == .endpoint key
+
+/-- A resident image names the role within its own component. -/
+def sourceActionRequiresView (role : Nat) (binding : Binding) (side : Side) : Bool :=
+  sourceActionRequiresEndpoint ⟨0, role⟩ binding side
 
 def sourceRetirementRowComplete?
     (snapshot : ActorProgressObservation) (role : Nat)

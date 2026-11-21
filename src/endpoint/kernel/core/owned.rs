@@ -170,9 +170,15 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     if view.is_some_and(|view| view.public_header.generation() != 0) {
                         true
                     } else {
+                        let borrowed = |role| {
+                            self.held.is_some_and(|views| {
+                                views.contains(self.public_header.actor(), role)
+                            })
+                        };
                         match self.progress.cursor.resource_receipt_wait(
                             receipts,
                             (self.public_header.role(), sent),
+                            self.operation_borrow(&self.region.bounds(), &borrowed),
                             &mut |scope| self.selected_arm_for_scope(scope),
                         ) {
                             EventAdmissionError::OtherViewPending => {

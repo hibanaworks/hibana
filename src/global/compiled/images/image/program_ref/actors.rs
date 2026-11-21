@@ -369,12 +369,30 @@ impl CompiledProgramRef {
         child: ScopeId,
         event: usize,
     ) -> bool {
-        if !matches!(child.kind(), Some(ScopeKind::Roll)) || event >= self.columns.atom_count() {
+        if !matches!(child.kind(), Some(ScopeKind::Roll)) {
             return false;
         }
         let Some((start, _, end)) = self.source_scope_bounds(child) else {
             return false;
         };
+        self.source_range_parallel_to_event(start, end, event)
+    }
+
+    /// A distinct fragment can execute the event while the complete source
+    /// interval is borrowed only across opposite arms of an enclosing par.
+    pub(crate) const fn source_range_parallel_to_event(
+        &self,
+        start: usize,
+        end: usize,
+        event: usize,
+    ) -> bool {
+        if start >= end
+            || end > self.columns.atom_count()
+            || event >= self.columns.atom_count()
+            || (start <= event && event < end)
+        {
+            return false;
+        }
         let mut parent = self.source_order_u16(self.source_scopes as usize * 9 + start * 2);
         while parent != u16::MAX {
             let row = parent as usize * 9;

@@ -3,22 +3,71 @@ import Hibana.ActorReentryCommit
 
 namespace Hibana
 
-/-- A restart retains its own completed visit and clears nested retained
-visits. Equal projected ranges use the same source preorder as Rust. These
-are writes to the existing cursor bitset, not a second progress authority. -/
-def rollCompletionWriteCount (image : RustDescriptorImage) (roll : DecodedRollRow) : Nat :=
-  match image.decodeRollRows? with
-  | none => 0
-  | some rows => (rows.filter fun child =>
-      child.scope == roll.scope ||
-        (roll.eventStart ≤ child.eventStart &&
-          child.eventStart + child.eventLength ≤ roll.eventStart + roll.eventLength &&
-          (child.eventStart != roll.eventStart || child.eventLength != roll.eventLength ||
-            roll.scope < child.scope))).length
+/-- A sealed role image allocates borrow epochs when a repeated source region
+contains a complete parallel operation with at least one local event. Compare
+global effect offsets here, since projection can make separate intervals coincide. -/
+def RustDescriptorImage.usesBorrowEpochs (image : RustDescriptorImage) : Bool := Id.run do
+  let some rows := image.decodeRollRows? | return false
+  let some markers := image.decodeScopeMarkers? | return false
+  let some localEvents := image.decodeEventEffIndices? | return false
+  let entries := markers.zipIdx.filter (fun (marker, _) => marker.tag % 4 == 0)
+  return entries.any fun (par, index) =>
+    par.scope / productionScopeCapacity == 2 && Id.run do
+      let stop := scopeSegmentEnd markers index image.atomCount par
+      return localEvents.any (fun eff => par.offset ≤ eff && eff < stop) &&
+        entries.any fun (marker, i) =>
+          marker.scope / productionScopeCapacity == 1 &&
+            marker.offset ≤ par.offset && stop ≤ scopeSegmentEnd markers i image.atomCount marker &&
+            rows.any (fun row => row.scope == marker.scope % productionScopeCapacity)
 
-/-- Measurements around an actual reentry poll. The reset range and prepared
-base are derived by the existing source checker. Counts are qualification
-observations, not a visit field or a runtime scheduling rule. -/
+private def scopeResetWrites (hasEpochs : Bool) (body : List DecodedRollRow)
+    (preserved : List DecodedRollRow) : Nat :=
+  (body.map fun row =>
+    if preserved.any (fun outer => row.scope != outer.scope && row.nestedWithin outer) then 0
+    else if preserved.contains row then 1
+    else if hasEpochs then 3 else 1).sum
+
+/-- Each contained scope writes its completion bit. With borrow epochs it
+also writes its epoch and credit, including a replacement by the same value. -/
+def rollCompletionWriteCount (image : RustDescriptorImage) (roll : DecodedRollRow) : Nat :=
+  let body := (image.decodeRollRows?.getD []).filter (·.nestedWithin roll)
+  scopeResetWrites image.usesBorrowEpochs body []
+
+theorem a_whole_body_reset_charges_each_contained_scope
+    (image : RustDescriptorImage) (roll : DecodedRollRow) :
+    rollCompletionWriteCount image roll =
+      ((image.decodeRollRows?.getD []).filter (·.nestedWithin roll)).length *
+        (if image.usesBorrowEpochs then 3 else 1) := by
+  unfold rollCompletionWriteCount scopeResetWrites
+  induction ((image.decodeRollRows?.getD []).filter (·.nestedWithin roll)) with
+  | nil => simp
+  | cons head rest ih => simp_all [Nat.succ_mul, Nat.add_comm]
+
+/-- Count a single reset given the source-independent credited child rows.
+An outer preserved child spends one credit. All scopes and events beneath
+that child keep their state, even if an inner child also has a credit.
+A successful operation subsequently marks its own event once. -/
+def rollResetWriteCount (image : RustDescriptorImage) (roll : DecodedRollRow)
+    (preserved : List DecodedRollRow) : Nat :=
+  let hasEpochs := image.usesBorrowEpochs
+  let body := (image.decodeRollRows?.getD []).filter (·.nestedWithin roll)
+  let kept := if !hasEpochs || preserved.isEmpty then [] else
+    body.filter (fun child => child.scope != roll.scope && preserved.contains child)
+  let cleared := (List.range roll.eventLength).filter fun i =>
+    !kept.any (fun child => child.eventStart ≤ roll.eventStart + i &&
+      roll.eventStart + i < child.eventStart + child.eventLength)
+  cleared.length + scopeResetWrites hasEpochs body kept
+
+theorem a_whole_body_reset_counts_every_event_and_scope_write
+    (image : RustDescriptorImage) (roll : DecodedRollRow) :
+    rollResetWriteCount image roll [] = roll.eventLength + rollCompletionWriteCount image roll := by
+  have all : (List.range roll.eventLength).filter (fun _ => true) = List.range roll.eventLength :=
+    List.filter_eq_self.mpr (by simp)
+  simp [rollResetWriteCount, rollCompletionWriteCount, all]
+
+/-- Measurements for a single whole-body reset with no preserved child.
+The physical constructor currently prepares exactly that reset. Its endpoint
+poll also contributes the final event mark. -/
 def actorReentryMutationCheck
     (sample : ActorReentryCommitObservation) (wire : OwnedWireObservation)
     (image : RustDescriptorImage) (choreo : Choreo) (session before after : Nat) : Bool :=
@@ -29,8 +78,7 @@ def actorReentryMutationCheck
         after == before + roll.eventLength + rollCompletionWriteCount image roll + 1
 
 /-- A measured fresh visit uses the same checked source commit and accounts
-for each body-row clear, retained-visit write and successful event mark. No
-global drain or reset of an independent sibling is part of this boundary. -/
+for each body-row clear, scope metadata write and successful event mark. -/
 theorem a_measured_reentry_has_its_source_reset_and_exact_writes
     {sample : ActorReentryCommitObservation} {wire : OwnedWireObservation}
     {image : RustDescriptorImage} {choreo : Choreo} {session before after : Nat}

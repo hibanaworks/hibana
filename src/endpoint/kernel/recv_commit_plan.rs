@@ -114,7 +114,7 @@ where
                 validate(payload).map_err(RecvError::Codec)
             }
         });
-        self.reconcile_retirements();
+        let retired = self.reconcile_retirements();
         if let Some(kind) = self.session_fault() {
             plan.payload.discard_uncommitted();
             return Err(RecvError::SessionFault(kind));
@@ -122,6 +122,21 @@ where
         if let Err(err) = validation {
             plan.payload.discard_uncommitted();
             return Err(err);
+        }
+
+        // A successful wire validator can drop a completed sibling without
+        // faulting the session. A fresh visit still needs its entry resources.
+        if retired
+            && !self
+                .preflight_roll_entry_views(plan.delta.event())
+                .is_ok_and(|scope| {
+                    plan.delta
+                        .body_reentry()
+                        .same(scope.unwrap_or_else(crate::global::const_dsl::ScopeId::none))
+                })
+        {
+            plan.payload.discard_uncommitted();
+            return Err(RecvError::PhaseInvariant);
         }
 
         let RecvCommitPlan {

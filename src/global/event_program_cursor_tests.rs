@@ -1752,7 +1752,6 @@ impl ProductionCursorTrace {
                 target_label,
                 crate::eff::EventPayload::Wire(target_schema),
             ),
-            None,
             &mut committed_arm_for_scope,
             &mut preview_controller_arm_for_scope,
             &mut selected_arm_for_scope,

@@ -51,7 +51,6 @@ fn check_receive_prefix(hint: u8, received: bool, arm: bool) {
     let mut calls = 0;
     let result = cursor.send_preview_meta_for_contract(
         MessageSelector::new(1, meta.label, meta.payload_kind),
-        None,
         &mut |_| None,
         &mut |_| {
             assert!(received, "resolver ran before its required receive");

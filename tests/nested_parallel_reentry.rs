@@ -12,6 +12,397 @@ type Work = g::Msg<232, ()>;
 type Ack = g::Msg<233, ()>;
 type Tick = g::Msg<234, ()>;
 
+#[path = "common/admission_observations.rs"]
+mod admission_observations;
+use admission_observations::{observed_poll, record_contracts, record_observation};
+
+fn record_visit_polls(direction: &str, arms: [u8; 2], polls: [&str; 3], histories: [String; 4]) {
+    record_observation(&format!(
+        "{direction} {} {} {} {} {} | {}",
+        arms[0],
+        arms[1],
+        polls[0],
+        polls[1],
+        polls[2],
+        histories.join(" | ")
+    ));
+}
+
+/// The fixture's carrier accepts and publishes each successful send in the same
+/// poll. Read the physical queue before delivery, and check those witnesses
+/// against both actors' synchronous commit observations at each measured cut.
+#[derive(Default)]
+struct VisitCapture {
+    taps: std::cell::RefCell<Vec<(usize, hibana::runtime::tap::TapEvent)>>,
+    accepted: std::cell::RefCell<Vec<(u64, [u8; 9])>>,
+}
+
+impl VisitCapture {
+    fn accepted(&self, net: &common::TestTransport, receiver: u8) {
+        let frame = net.newest_accepted_frame(receiver);
+        let header = frame.header.bytes();
+        assert_eq!(header[6], receiver);
+        self.accepted.borrow_mut().push((frame.witness, header));
+    }
+
+    fn history(&self, session: SessionId, checkpoints: [Option<u32>; 2]) -> String {
+        use hibana::runtime::tap;
+        let mut counts = [0; 2];
+        let frames = self.accepted.borrow();
+        let mut sent = 0;
+        let mut points = Vec::new();
+        for &(producer, event) in self.taps.borrow().iter() {
+            assert_eq!(
+                event.ts(),
+                counts[producer],
+                "missing or reordered producer record"
+            );
+            counts[producer] += 1;
+            let side = match event.id() {
+                tap::ENDPOINT_SEND => "s",
+                tap::ENDPOINT_RECV => "r",
+                tap::ENDPOINT_SESSION => panic!("unexpected session operation"),
+                _ => continue,
+            };
+            let actor = event.causal_key() >> 8;
+            let [view, lane, high, low] = event.arg1().to_be_bytes();
+            let origin = u16::from_be_bytes([high, low]);
+            assert_eq!(usize::from(actor), producer);
+            assert_eq!(event.causal_key() as u8, if side == "s" { 1 } else { 2 });
+            assert_eq!(event.arg0(), session.raw());
+            if event.id() == tap::ENDPOINT_SEND {
+                let (witness, header) = frames[sent];
+                assert_eq!(witness, sent as u64);
+                assert_eq!(header[..4], session.raw().to_be_bytes());
+                assert_eq!(
+                    (header[4], header[5], header[7], header[8]),
+                    (lane, view, high, low)
+                );
+                points.push(format!("a{actor}/{view}/{origin}>{}", header[6]));
+                sent += 1;
+            }
+            points.push(format!("{side}{actor}/{view}/{origin}"));
+        }
+        assert_eq!(sent, frames.len(), "physical send missing its publication");
+        assert_eq!(checkpoints, counts.map(Some), "incomplete capture");
+        points.join(",")
+    }
+}
+
+#[derive(Default)]
+struct VisitWake(std::sync::atomic::AtomicBool);
+
+impl std::task::Wake for VisitWake {
+    fn wake(self: std::sync::Arc<Self>) {
+        self.wake_by_ref()
+    }
+    fn wake_by_ref(self: &std::sync::Arc<Self>) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn alternate_visit_send_waits_for_the_other_delegated_views_receipt()
+-> Result<(), hibana::EndpointError> {
+    use core::{future::poll_fn, pin::pin, task::Poll};
+    use hibana::Endpoint;
+
+    const SERVICE: u8 = 0;
+    const HOLDER: u8 = 1;
+    const GAUGE: u8 = 2;
+    const FILE: u8 = 3;
+    type Loan<'r, const R: u8> = g::Msg<R, Endpoint<'r, R>>;
+    type First = g::Msg<10, u8>;
+    type Second = g::Msg<11, u8>;
+    type Reading = g::Msg<12, u8>;
+    let measure = g::seq(
+        g::route(
+            g::send::<GAUGE, SERVICE, First>(),
+            g::send::<GAUGE, SERVICE, Second>(),
+        ),
+        g::seq(
+            g::send::<SERVICE, GAUGE, Reading>(),
+            g::send::<GAUGE, FILE, Reading>(),
+        ),
+    );
+    let global = g::seq(
+        g::send::<SERVICE, HOLDER, Loan<GAUGE>>(),
+        g::seq(g::send::<SERVICE, HOLDER, Loan<FILE>>(), measure.roll()),
+    );
+    let service_program = project::<SERVICE>(&global);
+    let holder_program = project::<HOLDER>(&global);
+    let gauge_program = project::<GAUGE>(&global);
+    let file_program = project::<FILE>(&global);
+
+    record_contracts("send", &holder_program);
+    for (first, next_first) in [(true, true), (true, false), (false, true), (false, false)] {
+        let net = common::TestTransport::new();
+        let mut service_slab = [0; 32 * 1024];
+        let mut holder_slab = [0; 32 * 1024];
+        let capture = VisitCapture::default();
+        let observe_service = |event| capture.taps.borrow_mut().push((0, event));
+        let observe_holder = |event| capture.taps.borrow_mut().push((1, event));
+        let mut service_storage = SessionKitStorage::uninit();
+        let mut holder_storage = SessionKitStorage::uninit();
+        let owner = service_storage
+            .init()
+            .rendezvous(&mut service_slab, net.clone())
+            .unwrap();
+        let guest = holder_storage
+            .init()
+            .rendezvous(&mut holder_slab, net.clone())
+            .unwrap();
+        owner.observe(&observe_service);
+        guest.observe(&observe_holder);
+        let session = SessionId::new(11);
+        let history = || {
+            capture.history(
+                session,
+                [owner.tap().checkpoint(), guest.tap().checkpoint()],
+            )
+        };
+        let mut service = owner.enter(session, &service_program).unwrap();
+        let mut holder = guest.enter(session, &holder_program).unwrap();
+        service
+            .send::<Loan<GAUGE>>(owner.enter(session, &gauge_program).unwrap())
+            .await?;
+        capture.accepted(&net, HOLDER);
+        let mut gauge = holder.recv::<Loan<GAUGE>>().await?;
+        service
+            .send::<Loan<FILE>>(owner.enter(session, &file_program).unwrap())
+            .await?;
+        capture.accepted(&net, HOLDER);
+        let mut file = holder.recv::<Loan<FILE>>().await?;
+
+        let request = if first {
+            gauge.send::<First>(&1).await?;
+            capture.accepted(&net, SERVICE);
+            service.recv::<First>().await?
+        } else {
+            gauge.send::<Second>(&1).await?;
+            capture.accepted(&net, SERVICE);
+            service.recv::<Second>().await?
+        };
+        service.send::<Reading>(&request).await?;
+        capture.accepted(&net, GAUGE);
+        let before_own = history();
+        // The gauge still owes its own receive. It cannot wait on itself.
+        let own_receipt = {
+            let mut premature = pin!(async {
+                if next_first {
+                    gauge.send::<First>(&2).await
+                } else {
+                    gauge.send::<Second>(&2).await
+                }
+            });
+            let poll = poll_fn(|cx| Poll::Ready(premature.as_mut().poll(cx))).await;
+            assert!(matches!(&poll, Poll::Ready(Err(e)) if e.is_unavailable()));
+            observed_poll(&poll)
+        };
+        assert_eq!(history(), before_own);
+        let reading = gauge.recv::<Reading>().await?;
+        gauge.send::<Reading>(&reading).await?;
+        capture.accepted(&net, FILE);
+        let before_wait = history();
+        net.pause_send(GAUGE);
+        let mut next = pin!(async {
+            if next_first {
+                gauge.send::<First>(&2).await
+            } else {
+                gauge.send::<Second>(&2).await
+            }
+        });
+        let woke = std::sync::Arc::new(VisitWake::default());
+        let waker = woke.clone().into();
+        let waiting = next
+            .as_mut()
+            .poll(&mut core::task::Context::from_waker(&waker));
+        assert!(waiting.is_pending());
+        assert!(!net.paused_send_is_waiting(GAUGE));
+        assert_eq!(history(), before_wait);
+        assert_eq!(file.recv::<Reading>().await?, 1);
+        assert!(
+            woke.0.load(std::sync::atomic::Ordering::Relaxed),
+            "file receipt must wake the parked send"
+        );
+        assert!(net.queue_is_empty());
+        let before_ready = history();
+        // The same future can now reach transport. A full carrier must not
+        // turn protocol permission into rejection or publish a frame early.
+        let blocked = next
+            .as_mut()
+            .poll(&mut core::task::Context::from_waker(&waker));
+        assert!(blocked.is_pending());
+        assert!(net.paused_send_is_waiting(GAUGE));
+        assert!(net.queue_is_empty());
+        assert_eq!(history(), before_ready);
+        woke.0.store(false, std::sync::atomic::Ordering::Relaxed);
+        net.resume_send();
+        assert!(woke.0.load(std::sync::atomic::Ordering::Relaxed));
+        let completed = poll_fn(|cx| Poll::Ready(next.as_mut().poll(cx))).await;
+        assert!(matches!(completed, Poll::Ready(Ok(()))));
+        capture.accepted(&net, SERVICE);
+        record_visit_polls(
+            "send",
+            [
+                if first { 10 } else { 11 },
+                if next_first { 10 } else { 11 },
+            ],
+            [
+                own_receipt,
+                observed_poll(&waiting),
+                observed_poll(&completed),
+            ],
+            [before_own, before_wait, before_ready, history()],
+        );
+        let Poll::Ready(result) = completed else {
+            panic!("second visit did not send after the receipt")
+        };
+        result?;
+        let second = if next_first {
+            service.recv::<First>().await?
+        } else {
+            service.recv::<Second>().await?
+        };
+        assert_eq!(second, 2);
+        assert!(net.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn alternate_visit_grant_waits_while_another_view_holds_the_tool()
+-> Result<(), hibana::EndpointError> {
+    use core::{future::poll_fn, pin::pin, task::Poll};
+    use hibana::Endpoint;
+    const CABINET: u8 = 0;
+    const HOLDER: u8 = 1;
+    const A: u8 = 2;
+    const B: u8 = 3;
+    const TOOL: u8 = 4;
+    type Loan<'r, const V: u8> = g::Msg<V, Endpoint<'r, V>>;
+    type Alpha<'r> = g::Msg<10, Endpoint<'r, TOOL>>;
+    type Beta<'r> = g::Msg<11, Endpoint<'r, TOOL>>;
+    type Returned<'r> = g::Msg<12, Endpoint<'r, TOOL>>;
+    type Use = g::Msg<13, u8>;
+    let alpha = g::seq(
+        g::send::<CABINET, A, Alpha>(),
+        g::seq(g::send::<TOOL, A, Use>(), g::send::<A, CABINET, Returned>()),
+    );
+    let beta = g::seq(
+        g::send::<CABINET, B, Beta>(),
+        g::seq(g::send::<TOOL, B, Use>(), g::send::<B, CABINET, Returned>()),
+    );
+    let global = g::seq(
+        g::send::<CABINET, HOLDER, Loan<A>>(),
+        g::seq(
+            g::send::<CABINET, HOLDER, Loan<B>>(),
+            g::route(alpha, beta).roll(),
+        ),
+    );
+    let cabinet_program = project::<CABINET>(&global);
+    let holder_program = project::<HOLDER>(&global);
+    let a_program = project::<A>(&global);
+    let b_program = project::<B>(&global);
+    let tool_program = project::<TOOL>(&global);
+    let net = common::TestTransport::new();
+    record_contracts("recv", &holder_program);
+    let mut cabinet_slab = [0; 32 * 1024];
+    let mut holder_slab = [0; 32 * 1024];
+    let capture = VisitCapture::default();
+    let observe_cabinet = |event| capture.taps.borrow_mut().push((0, event));
+    let observe_holder = |event| capture.taps.borrow_mut().push((1, event));
+    let mut cs = SessionKitStorage::uninit();
+    let mut hs = SessionKitStorage::uninit();
+    let issuer = cs
+        .init()
+        .rendezvous(&mut cabinet_slab, net.clone())
+        .unwrap();
+    let receiver = hs.init().rendezvous(&mut holder_slab, net.clone()).unwrap();
+    issuer.observe(&observe_cabinet);
+    receiver.observe(&observe_holder);
+    let session = SessionId::new(112);
+    let history = || {
+        capture.history(
+            session,
+            [issuer.tap().checkpoint(), receiver.tap().checkpoint()],
+        )
+    };
+    let mut cabinet = issuer.enter(session, &cabinet_program).unwrap();
+    let mut holder = receiver.enter(session, &holder_program).unwrap();
+    cabinet
+        .send::<Loan<A>>(issuer.enter(session, &a_program).unwrap())
+        .await?;
+    capture.accepted(&net, HOLDER);
+    let mut a = holder.recv::<Loan<A>>().await?;
+    cabinet
+        .send::<Loan<B>>(issuer.enter(session, &b_program).unwrap())
+        .await?;
+    capture.accepted(&net, HOLDER);
+    let mut b = holder.recv::<Loan<B>>().await?;
+    cabinet
+        .send::<Alpha>(issuer.enter(session, &tool_program).unwrap())
+        .await?;
+    capture.accepted(&net, A);
+    let mut tool = a.recv::<Alpha>().await?;
+
+    let mut tool = {
+        let mut grant = pin!(b.recv::<Beta>());
+        let woke = std::sync::Arc::new(VisitWake::default());
+        let waker = woke.clone().into();
+        let mut cx = core::task::Context::from_waker(&waker);
+        let before_use = history();
+        let other_holds_tool = grant.as_mut().poll(&mut cx);
+        assert!(other_holds_tool.is_pending());
+        assert_eq!(history(), before_use);
+        assert!(net.queue_is_empty());
+        tool.send::<Use>(&1).await?;
+        capture.accepted(&net, A);
+        assert_eq!(a.recv::<Use>().await?, 1);
+        a.send::<Returned>(tool).await?;
+        capture.accepted(&net, CABINET);
+        let tool = cabinet.recv::<Returned>().await?;
+        assert!(
+            woke.0.swap(false, std::sync::atomic::Ordering::Relaxed),
+            "tool progress must wake the other bench"
+        );
+        let before_grant = history();
+        let returned = grant.as_mut().poll(&mut cx);
+        assert!(returned.is_pending());
+        assert_eq!(history(), before_grant);
+        cabinet.send::<Beta>(tool).await?;
+        capture.accepted(&net, B);
+        assert!(
+            woke.0.load(std::sync::atomic::Ordering::Relaxed),
+            "delivery must wake the waiting recipient"
+        );
+        let before_ready = history();
+        let granted = poll_fn(|cx| Poll::Ready(grant.as_mut().poll(cx))).await;
+        record_visit_polls(
+            "recv",
+            [10, 11],
+            [
+                observed_poll(&other_holds_tool),
+                observed_poll(&returned),
+                observed_poll(&granted),
+            ],
+            [before_use, before_grant, before_ready, history()],
+        );
+        let Poll::Ready(result) = granted else {
+            panic!("queued tool loan was not received")
+        };
+        result?
+    };
+    tool.send::<Use>(&2).await?;
+    assert_eq!(b.recv::<Use>().await?, 2);
+    b.send::<Returned>(tool).await?;
+    let _returned = cabinet.recv::<Returned>().await?;
+    assert!(net.queue_is_empty());
+    Ok(())
+}
+
 #[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
 async fn a_resolved_choice_preview_is_shared_by_the_holders_parallel_views()
@@ -741,6 +1132,113 @@ async fn a_retained_completion_cannot_send_before_the_next_visits_own_loan()
         .await;
     };
 
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn alternate_visit_fragment_waits_for_its_same_role_sibling()
+-> Result<(), hibana::EndpointError> {
+    use core::{future::poll_fn, pin::pin, task::Poll};
+
+    let global = g::par(
+        g::send::<0, 1, Tick>(),
+        g::seq(g::send::<0, 1, Work>(), g::send::<0, 1, Ack>()),
+    )
+    .roll();
+    let sender_program = project::<0>(&global);
+    let receiver_program = project::<1>(&global);
+    record_contracts("fragment", &sender_program);
+    let network = common::TestTransport::new();
+    let capture = VisitCapture::default();
+    let observe_sender = |event| capture.taps.borrow_mut().push((0, event));
+    let observe_receiver = |event| capture.taps.borrow_mut().push((1, event));
+    let [mut sender_slab, mut receiver_slab] = [[0; 32 * 1024]; 2];
+    let mut sender_storage = SessionKitStorage::uninit();
+    let mut receiver_storage = SessionKitStorage::uninit();
+    let sender_runtime = sender_storage
+        .init()
+        .rendezvous(&mut sender_slab, network.clone())
+        .unwrap();
+    let receiver_runtime = receiver_storage
+        .init()
+        .rendezvous(&mut receiver_slab, network.clone())
+        .unwrap();
+    sender_runtime.observe(&observe_sender);
+    receiver_runtime.observe(&observe_receiver);
+    let session = SessionId::new(9317);
+    let history = || {
+        capture.history(
+            session,
+            [
+                sender_runtime.tap().checkpoint(),
+                receiver_runtime.tap().checkpoint(),
+            ],
+        )
+    };
+    let mut sender = sender_runtime.enter(session, &sender_program).unwrap();
+    let mut receiver = receiver_runtime.enter(session, &receiver_program).unwrap();
+    let [mut ticks, mut work] = sender.par()?;
+
+    ticks.send::<Tick>(&()).await?;
+    capture.accepted(&network, 1);
+    receiver.recv::<Tick>().await?;
+    work.send::<Work>(&()).await?;
+    capture.accepted(&network, 1);
+    receiver.recv::<Work>().await?;
+    let before_own = history();
+    let own = {
+        let mut premature = pin!(work.send::<Work>(&()));
+        let poll = poll_fn(|cx| Poll::Ready(premature.as_mut().poll(cx))).await;
+        assert!(matches!(&poll, Poll::Ready(Err(e)) if e.is_unavailable()));
+        observed_poll(&poll)
+    };
+    assert_eq!(history(), before_own);
+    work.send::<Ack>(&()).await?;
+    capture.accepted(&network, 1);
+    receiver.recv::<Ack>().await?;
+
+    work.send::<Work>(&()).await?;
+    capture.accepted(&network, 1);
+    receiver.recv::<Work>().await?;
+    work.send::<Ack>(&()).await?;
+    capture.accepted(&network, 1);
+    receiver.recv::<Ack>().await?;
+    let before_wait = history();
+    {
+        let mut next = pin!(work.send::<Work>(&()));
+        let woke = std::sync::Arc::new(VisitWake::default());
+        let waker = std::task::Waker::from(woke.clone());
+        let waiting = next
+            .as_mut()
+            .poll(&mut core::task::Context::from_waker(&waker));
+        assert!(
+            waiting.is_pending(),
+            "only the sibling still owes Tick: {waiting:?}"
+        );
+        assert_eq!(history(), before_wait);
+        assert!(network.queue_is_empty());
+        ticks.send::<Tick>(&()).await?;
+        assert!(woke.0.load(std::sync::atomic::Ordering::Relaxed));
+        capture.accepted(&network, 1);
+        receiver.recv::<Tick>().await?;
+        let before_ready = history();
+        let completed = poll_fn(|cx| Poll::Ready(next.as_mut().poll(cx))).await;
+        assert!(matches!(completed, Poll::Ready(Ok(()))));
+        capture.accepted(&network, 1);
+        record_observation(&format!(
+            "fragment {own} {} {} | {}",
+            observed_poll(&waiting),
+            observed_poll(&completed),
+            [before_own, before_wait, before_ready, history()].join(" | ")
+        ));
+    }
+    receiver.recv::<Work>().await?;
+    work.send::<Ack>(&()).await?;
+    receiver.recv::<Ack>().await?;
+    ticks.send::<Tick>(&()).await?;
+    receiver.recv::<Tick>().await?;
+    assert!(network.queue_is_empty());
     Ok(())
 }
 

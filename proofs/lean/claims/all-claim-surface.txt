@@ -1289,6 +1289,20 @@ And
         (@Eq.{1} Hibana.OwnedWireObservation sent.wire received.wire))
 Hibana.a_covered_flow_preserves_its_input : ∀ (flow : Hibana.CausalFlowExpr) (facts : Hibana.CausalRoles),
   @Eq.{1} Bool (Hibana.CausalFlowExpr.coveredBy facts flow) true → @Eq.{1} Hibana.CausalRoles (flow.eval facts) facts
+@Hibana.a_credited_ancestor_excludes_its_child_from_parent_reentry : ∀ {data : Hibana.DecodedActorOrder}
+  {path : Hibana.EndpointDelegation.NormalizedPath} {rolls : List.{0} Hibana.DecodedRollRow} {credits : List.{0} Nat}
+  {parent outer child : Hibana.DecodedRollRow} {entry : Nat},
+  @Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+      (@List.instMembership.{0} Hibana.DecodedRollRow) rolls outer →
+    @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) credits outer.scope →
+      @Ne.{1} Nat outer.scope parent.scope →
+        @Eq.{1} Bool (outer.nestedWithin parent) true →
+          @Ne.{1} Nat child.scope outer.scope →
+            @Eq.{1} Bool (child.nestedWithin outer) true →
+              Not
+                (@Membership.mem.{0, 0} Hibana.DecodedRollRow (List.{0} Hibana.DecodedRollRow)
+                  (@List.instMembership.{0} Hibana.DecodedRollRow)
+                  (Hibana.sourceIndependentRetainedChildren data path rolls credits parent entry) child)
 @Hibana.a_current_choice_has_its_latest_actual_source_origin : ∀ {image : Hibana.RustDescriptorImage}
   {choreo : Hibana.Choreo} {session scope : Nat} {arm : Hibana.RouteArm}
   {first final : Prod.{0, 0} Hibana.ActorProgressObservation Nat} {cleared : List.{0} Nat} {commits : Nat},
@@ -3755,7 +3769,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   {before base : Hibana.ActorProgressObservation} {previousPath nextPath scope event : Nat}
   {roll : Hibana.DecodedRollRow},
   @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
-      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event)
+      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event (@List.nil.{0} Nat))
       (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
         (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
     @Eq.{1} (Option.{0} (List.{0} (Prod.{0, 0} Nat (Option.{0} Hibana.RouteArm))))
@@ -3835,7 +3849,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   {choreo : Hibana.Choreo} {before base : Hibana.ActorProgressObservation}
   {previousPath nextPath scope event required : Nat} {roll : Hibana.DecodedRollRow},
   @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
-      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event)
+      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event (@List.nil.{0} Nat))
       (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
         (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
     @Eq.{1} Bool (base.doneState.done required) true →
@@ -3848,7 +3862,7 @@ Hibana.a_pending_payload_requires_its_own_send : ∀ (resource : Nat) (sent : Op
   {before : Hibana.ActorProgressObservation} {previousPath nextPath scope event : Nat} {roll : Hibana.DecodedRollRow}
   {base : Hibana.ActorProgressObservation},
   @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
-      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event)
+      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event (@List.nil.{0} Nat))
       (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
         (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
     @Eq.{1} (Option.{0} Hibana.SessionFault) base.fault before.fault
@@ -6307,6 +6321,22 @@ Hibana.a_selected_parallel_expansion_does_not_relax_original_global_ownership : 
           (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat Nat)
             (@Prod.snd.{0, 0} Nat (Prod.{0, 0} Nat (Prod.{0, 0} Nat Nat)) tag)))
         snapshot.counter
+Hibana.a_whole_body_reset_charges_each_contained_scope : ∀ (image : Hibana.RustDescriptorImage)
+  (roll : Hibana.DecodedRollRow),
+  @Eq.{1} Nat (Hibana.rollCompletionWriteCount image roll)
+    (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat)
+      (@List.length.{0} Hibana.DecodedRollRow
+        (@List.filter.{0} Hibana.DecodedRollRow (fun x => x.nestedWithin roll)
+          (@Option.getD.{0} (List.{0} Hibana.DecodedRollRow) image.decodeRollRows?
+            (@List.nil.{0} Hibana.DecodedRollRow))))
+      (@ite.{1} Nat (@Eq.{1} Bool image.usesBorrowEpochs true) (instDecidableEqBool image.usesBorrowEpochs true)
+        (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))
+Hibana.a_whole_body_reset_counts_every_event_and_scope_write : ∀ (image : Hibana.RustDescriptorImage)
+  (roll : Hibana.DecodedRollRow),
+  @Eq.{1} Nat (Hibana.rollResetWriteCount image roll (@List.nil.{0} Hibana.DecodedRollRow))
+    (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) roll.eventLength
+      (Hibana.rollCompletionWriteCount image roll))
 @Hibana.a_wire_class_contains_only_one_static_source_position : ∀ {image : Hibana.RustDescriptorImage}
   {key : Hibana.SourceFrameKey} {left right : Nat},
   @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (image.frameClassRows key) left →
@@ -13378,23 +13408,24 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
         (@some.{0} Hibana.TransportBoundaryState restored) →
       @Eq.{1} Hibana.TransportBoundaryState restored current
 @Hibana.prepared_actor_body_queries_match_single_preparation : ∀ {image : Hibana.RustDescriptorImage}
-  {choreo : Hibana.Choreo} {before : Hibana.ActorProgressObservation}
+  {choreo : Hibana.Choreo} {before : Hibana.ActorProgressObservation} {credits : List.{0} Nat}
   {query : Nat → Nat → Nat → Nat → Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)}
   {previous next scope event : Nat},
   @Eq.{1}
       (Option.{0}
         (Nat → Nat → Nat → Nat → Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)))
-      (Hibana.observedActorBodyQueries? image choreo before (@List.nil.{0} Nat))
+      (Hibana.observedActorBodyQueries? image choreo before credits)
       (@some.{0}
         (Nat → Nat → Nat → Nat → Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
         query) →
     @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
-      (query previous next scope event) (Hibana.prepareObservedActorBody? image choreo before previous next scope event)
+      (query previous next scope event)
+      (Hibana.prepareObservedActorBody? image choreo before previous next scope event credits)
 @Hibana.prepared_actor_body_source_facts : ∀ {image : Hibana.RustDescriptorImage} {choreo : Hibana.Choreo}
   {before base : Hibana.ActorProgressObservation} {previousPath nextPath scope event : Nat}
   {roll : Hibana.DecodedRollRow},
   @Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
-      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event)
+      (Hibana.prepareObservedActorBody? image choreo before previousPath nextPath scope event (@List.nil.{0} Nat))
       (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
         (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)) →
     @Exists.{1} Hibana.DecodedActorOrder fun data =>
@@ -13477,7 +13508,7 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
       And
         (@Eq.{1} (Option.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation))
           (Hibana.prepareObservedActorBody? image choreo sample.before sample.previousPath sample.nextPath sample.scope
-            sample.event)
+            sample.event (@List.nil.{0} Nat))
           (@some.{0} (Prod.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation)
             (@Prod.mk.{0, 0} Hibana.DecodedRollRow Hibana.ActorProgressObservation roll base)))
         (And (@Eq.{1} Hibana.ActorProgressObservation step.before base)
@@ -15486,6 +15517,14 @@ Hibana.select_innermost_scope_equal_range_uses_source_preorder : ∀ (outer inne
       (Hibana.selectInnermostScope (@some.{0} Hibana.ScopeSelection { scope := outer, start := start, stop := stop })
         inner start stop)
       (@some.{0} Hibana.ScopeSelection { scope := inner, start := start, stop := stop })
+@Hibana.selected_actor_eq_of_same_decision_scopes : ∀ {columns : Hibana.DecodedProgramColumns}
+  {first second : Nat → Option.{0} Hibana.RouteArm},
+  (∀ (row : Hibana.DecodedActorDecision),
+      @Membership.mem.{0, 0} Hibana.DecodedActorDecision (List.{0} Hibana.DecodedActorDecision)
+          (@List.instMembership.{0} Hibana.DecodedActorDecision) columns.actorDecisions row →
+        @Eq.{1} (Option.{0} Hibana.RouteArm) (first row.scope) (second row.scope)) →
+    ∀ (reference : Nat),
+      @Eq.{1} (Option.{0} Nat) (columns.selectedActor? first reference) (columns.selectedActor? second reference)
 Hibana.selected_arm_unique : ∀ (state : Hibana.CommitState) (conflict : Nat) (chosenA chosenB : Hibana.RouteArm),
   @Eq.{1} (Option.{0} Hibana.RouteArm) (state.selected conflict) (@some.{0} Hibana.RouteArm chosenA) →
     @Eq.{1} (Option.{0} Hibana.RouteArm) (state.selected conflict) (@some.{0} Hibana.RouteArm chosenB) →

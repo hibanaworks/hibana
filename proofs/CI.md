@@ -174,6 +174,110 @@ the frame; an actual choice may retain its knowledge. Its exact pre-Drop source
 row is checked against the same source predicate, without treating the absence
 of a retained ordinary preview as an absent successful offer.
 
+For a fresh non-local wire send or receive on a whole view or a parallel fragment,
+`AlternateVisitWait.public_call_exact` classifies **all** matching occurrences
+on a selected finite source path. The physical actor must perform the action.
+The public contract specifies the local view, direction, label and payload.
+The caller supplies neither the remote peer nor a visit index. A ready
+occurrence takes priority. If none is ready, the result is pending exactly
+when independent actions can enable a matching occurrence while the caller
+retains its view. A missing mandatory predecessor that needs that view rules
+out that occurrence. Lean also proves that the candidate list contains exactly
+the fresh entries specified by the source bindings, and that a wait witness
+extends the same source execution through the call. The contract matcher is
+shared with the generated public-call checker.
+
+`public_unavailable_iff_no_projected_suffix` proves the converse directly
+against projected operations. At each prefix, the acting participant must have
+completed its local prerequisites and satisfy its roll resumption guard. Sender
+publication and receiver commit require the matching transport acceptance.
+If any schedule of independent operations satisfying those conditions reaches
+any matching entry, the source verdict cannot be unavailable.
+
+A fragment uses the original source interval on every roll visit. An operation
+on the same logical role can proceed on a sibling when a source `par` places
+the whole fragment in one arm and the operation in the other. A sequential
+prefix or continuation that needs the borrowed parent continues to block.
+Transferring the endpoint as a payload requires the whole endpoint. For a validated
+operation cut, every matching descriptor row inside the interval has a
+lane in the actual borrow mask. Keyed transport acceptances keep their
+source position across replays of the same physical word. On every finite
+physical execution, an accepted call stays outstanding until its one sender
+publication. The receiver can consume its frame before that publication.
+
+`remote_commits_preserve_local_choices` proves that an actor's committed
+route choices stay unchanged throughout a physical execution with no commit
+by that actor. Other nodes can send, publish and receive in that interval.
+The TCP regression queues the loan and the decision before its holder
+process starts. After receiving the loan, the holder polls its resource send
+and still sees an unresolved branch. Receiving the decision locally wakes
+that same send and the controller receives its value.
+
+After a checked local retirement, activity elsewhere cannot reissue the
+retired view at this actor. If the restarted part of a roll requires that view
+locally, it cannot pass the reentry check at that cut. A native receive test
+drops such a view inside a successful wire validator, after frame acceptance
+and before commit. It checks that the next visit never commits. An independent
+child that retains its visit has a separate custody requirement.
+
+For a parent restart the public source query derives the independent child
+visits from the caller's pre-operation credits. A credited enclosing child takes
+precedence over its credited descendants before independence from the entry
+is tested. A three-level source exercises both credit orders, an entry inside
+the enclosing child, and a credit held by the inner child alone. The preserved
+children's event bits and existing
+completion bits survive the restart. A real receiver with two nested roll
+scopes exercises both cases. It records 11 writes when all four events reset
+and seven when the two child events keep their visit. These counts include
+the final operation mark and the epoch, credit and completion writes that
+occur even when the stored value is unchanged. The measured-history
+constructor for whole-body resets covers the first case. The second checks
+its credit-aware source preparation, actual commit and measured writes.
+
+The open-choice regression lends a resource and polls its next wire send
+before its holder learns the controller's decision. Only one arm needs the
+resource for a preceding operation. The other arm wakes the same future and
+allows delivery. The Lean comparison checks the compiled source and derives
+the public wait from both normalized paths. A second Endpoint case requires
+a refusal when different predecessors need the held view on both arms.
+
+`checked_image_held_predecessors_cover_iff` checks a supplied set of
+predecessor rows. For every completion of the known choices, at least one
+row must pass its canonical source guard and select the caller in the supplied
+actor bindings. Different completions may have different blocking rows.
+For an indexed row in the same validated image, with actor decisions consistent
+with a normalized source path, `checked_row_query_binds_source_public_contract`
+relates that selection to the source actor and logical endpoint. The same
+source occurrence has the same message label and payload on each path that
+contains it. An unresolved choice and a renewed visit keep distinct keys
+where the source permits them to differ.
+`actual_packed_walk_step` relates the two passes over the read decisions and
+their 64-bit masks to the next consistent path in first-read order. Skipping
+completed or already excluded rows of an earlier roll preserves the order
+and membership of unfinished rows on every completion of the current visit.
+`scanned_step_iff_unfinished` proves that scanning the actual 32-bit
+completion words with the iterator's subtraction and bitwise AND returns all
+and only unfinished indices in the requested half-open range. Relating each
+returned index to a mandatory occurrence on the same visit in every reachable
+Rust cursor remains a separate obligation.
+
+The 11M gauge fixture compares three public polls to Lean for each of the four
+two-visit arm combinations. A loan receive adds three polls around the other
+bench's tool return and the cabinet's next send. Lean compares the sealed
+source and control rows, the physical sends and actor/view commits preceding
+each poll, the poll result and the final commit. The parked futures also have
+to wake after the sibling progresses and, for the loan, after delivery.
+In all four send cases the carrier blocks the same future before acceptance.
+The test checks that the protocol wait never polls the carrier, the sibling's
+receipt wakes the future, and the next poll reaches the blocked carrier without
+emitting a frame or committing. Carrier readiness then wakes the future again.
+To establish this for the Rust implementation in general, a recoverable refusal
+would have to rule out every reachable matching operation within the caller's
+borrow range and lanes, on every continuation compatible with the branch
+knowledge at that call. This correspondence remains open. A protocol-ready
+send may still wait for transport acceptance. Eventual delivery requires a
+separate progress assumption.
+
 For an actual call returning `EndpointError::is_unavailable()`, both generated
 drivers also require the post-call operation cut to equal the pre-call cut and
 the capture to remain unchanged. This checks progress, custody, fault and parked
@@ -307,8 +411,9 @@ exactly the equal rows. Kani checks the actual Rust loop for every prefix and
 every supported 16-bit row count, including bounds on each probe. The two
 inbound-key harnesses compare production matching to the independently chosen
 input tuples, including all wire labels and both payload variants.
-For every row of a decoded image, Lean proves that a typed receive lookup
-includes each matching alias in the borrowed view, source range and lanes.
+For every decoded non-local send or receive row, Lean proves that the
+corresponding typed lookup in the source checker includes each matching alias
+in the borrowed view, source range and lanes, including aliases at other peers.
 Once a row is admitted by the source guards, its exact queued FIFO head
 prevents the executable Lean oracle from returning an empty ready set.
 `source_ready_survives_completed_row_filter` also shows that a source-ready

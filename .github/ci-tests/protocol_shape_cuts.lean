@@ -202,12 +202,64 @@ private theorem mapped_input_occurs {f : α → Option β} {inputs : List α} {o
           simp [Option.some.inj firstAt]
         · exact List.mem_cons_of_mem _ (ih restAt later)
 
-/-- A borrowed receive row is present in the actual contract lookup used by
-the source oracle. The caller may name a different occurrence of the same
-contract. No hypothesis mentions the returned candidate list. -/
-theorem typed_receive_lookup_includes_each_borrowed_alias
+/-- The maximum used to allocate a view's slots includes every projected row
+of that view, regardless of where it occurs in the descriptor. -/
+theorem projected_row_lane_lt_operation_slot_count
+    {image : RustDescriptorImage} {row view lane : Nat} (present : row < image.eventCount)
+    (onView : image.eventView? row = some view) (laneAt : image.eventLane? row = some lane) :
+    lane < image.operationSlotCount view := by
+  unfold RustDescriptorImage.operationSlotCount
+  apply scan (target := row)
+  · intro count index
+    by_cases same : image.eventView? index = some view
+    · cases read : image.eventLane? index with
+      | none => simp [same]
+      | some found => simpa [same, read] using Nat.le_max_left count (found + 1)
+    · simp [same]
+  · intro count
+    simp only [onView, laneAt]
+    exact Nat.lt_of_lt_of_le (Nat.lt_succ_self lane) (Nat.le_max_right count (lane + 1))
+  · exact Or.inl (List.mem_range.mpr present)
+where
+  scan {update : Nat → Nat → Nat} {target lane : Nat}
+      (grows : ∀ count index, count ≤ update count index)
+      (found : ∀ count, lane < update count target)
+      {rows : List Nat} {count : Nat} (known : target ∈ rows ∨ lane < count) :
+      lane < rows.foldl update count := by
+    induction rows generalizing count with
+    | nil => simpa using known
+    | cons head tail ih =>
+      apply ih
+      rcases known with member | counted
+      · rcases List.mem_cons.mp member with same | later
+        · subst head
+          exact Or.inr (found count)
+        · exact Or.inl later
+      · exact Or.inr (Nat.lt_of_lt_of_le counted (grows count head))
+
+/-- Every descriptor row of the target view whose original source position
+is inside the borrow contributes its lane to the checked operation handle. -/
+theorem a_checked_borrow_owns_each_in_range_row_lane
+    {cut : PublicOperationCut} {image : RustDescriptorImage} {row origin lane : Nat}
+    (checked : cut.matches image = true) (present : row < image.eventCount)
+    (onView : image.eventView? row = some cut.target.view)
+    (originAt : image.eventEffIndex? row = some origin) (laneAt : image.eventLane? row = some lane)
+    (inside : cut.target.start ≤ origin ∧ origin < cut.target.stop) :
+    lane ∈ cut.target.ownedLanes := by
+  rw [a_checked_operation_cut_uses_the_descriptor_borrow_mask checked]
+  apply List.mem_filter.mpr
+  refine ⟨List.mem_range.mpr (projected_row_lane_lt_operation_slot_count present onView laneAt),
+    ?_⟩
+  rw [Bool.or_eq_true]
+  right
+  exact List.any_eq_true.mpr ⟨row, List.mem_range.mpr present, by simp [onView, laneAt, originAt, inside]⟩
+
+/-- Every non-local row of the requested direction, view, label and schema
+inside the borrowed fragment occurs in the executable contract lookup.
+The call can name a different occurrence, including one at another peer. -/
+theorem typed_wire_lookup_includes_each_borrowed_alias
     {cut : PublicOperationCut} {image : RustDescriptorImage} {origin row event lane peer : Nat}
-    {atoms : List DecodedProgramAtom} {requested : DecodedProgramAtom} {query}
+    {atoms : List DecodedProgramAtom} {requested : DecodedProgramAtom} {query} (receive : Bool)
     (prepared : cut.contractQueries? image = some query)
     (decoded : image.decodeAtoms? = some atoms)
     (selected : atoms.find? (fun atom => atom.effIndex == origin) = some requested)
@@ -215,10 +267,12 @@ theorem typed_receive_lookup_includes_each_borrowed_alias
     (view : image.eventView? row = some cut.target.view)
     (source : image.eventEffIndex? row = some event)
     (port : image.eventLane? row = some lane)
-    (action : image.eventAction? row = some (.recv peer requested.label requested.schema))
+    (action : image.eventAction? row = some (if receive then .recv peer requested.label requested.schema
+                                               else .send peer requested.label requested.schema))
     (range : cut.target.start ≤ event ∧ event < cut.target.stop)
-    (borrowed : lane ∈ cut.target.ownedLanes) :
-    ∃ candidates, query origin true = some candidates ∧ row ∈ candidates := by
+    (checked : cut.matches image = true) :
+    ∃ candidates, query origin receive = some candidates ∧ row ∈ candidates := by
+  have borrowed := a_checked_borrow_owns_each_in_range_row_lane checked inImage view source port range
   unfold PublicOperationCut.contractQueries? at prepared
   obtain ⟨actualAtoms, actualAt, prepared⟩ := Option.bind_eq_some_iff.mp prepared
   rw [decoded] at actualAt
@@ -227,12 +281,14 @@ theorem typed_receive_lookup_includes_each_borrowed_alias
   cases Option.some.inj built
   simp only [selected, Bind.bind, Option.bind, Pure.pure]
   refine ⟨_, rfl, List.mem_filterMap.mpr ?_⟩
-  refine ⟨(row, cut.target.view, event, lane, .recv peer requested.label requested.schema),
+  let wireAction : LocalAction := if receive then .recv peer requested.label requested.schema
+                                 else .send peer requested.label requested.schema
+  refine ⟨(row, cut.target.view, event, lane, wireAction),
     mapped_input_occurs mapped (List.mem_range.mpr inImage) ?_, ?_⟩
-  · simp [view, source, port, action]
-  · simp [range, borrowed, LocalAction.label, LocalAction.schema]
+  · simp [view, source, port, action, wireAction]
+  · cases receive <;> simp [wireAction, range, borrowed, LocalAction.label, LocalAction.schema]
 
-#print axioms typed_receive_lookup_includes_each_borrowed_alias
+#print axioms typed_wire_lookup_includes_each_borrowed_alias
 
 /-- The completion-bit prefilter of the candidate iterator may discard a row
 only in an image without reentry. A source-ready row in a checked image is

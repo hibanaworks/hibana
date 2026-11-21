@@ -13,7 +13,8 @@ pub(crate) use inbound_key::{DeterministicInboundKey, InboundFrameKey};
 mod kani;
 mod meta;
 pub(crate) use meta::{
-    EventCommitMeta, LocalMeta, MessageSelector, RecvMeta, SendMeta, state_index_to_usize,
+    EventCommitMeta, LocalMeta, MessageSelector, OperationBorrow, RecvMeta, SendMeta,
+    state_index_to_usize,
 };
 mod passive_child;
 pub(crate) use passive_child::PassiveArmChildFact;

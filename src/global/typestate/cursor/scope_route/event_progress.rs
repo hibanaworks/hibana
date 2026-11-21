@@ -4,9 +4,14 @@ use super::super::{
     RelocatableResidentLaneStep, ScopeId, StateIndex,
 };
 use crate::global::event_program::LocalEventRow;
-use crate::global::{role_program::RoleLocalDirection, typestate::EventCommitMeta};
+use crate::global::{
+    role_program::RoleLocalDirection,
+    typestate::{EventCommitMeta, OperationBorrow},
+};
 
 mod recovery;
+mod wait_choices;
+use wait_choices::wait_across_choices;
 
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "event_progress/reentry_tests.rs"]
@@ -71,10 +76,45 @@ impl EventCursor {
         &self,
         index: usize,
         blocked: (u8, Option<u8>),
-        borrowed: Option<&dyn Fn(u8) -> bool>,
+        borrowed: OperationBorrow<'_>,
         conflict: PackedEventConflict,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> EventAdmissionError {
+        let conditional_view = self
+            .event_actor_is_local(index, selected)
+            .is_none()
+            .then(|| self.logical_role_at(index))
+            .flatten();
+        wait_across_choices(self.program_ref().source_scope_count(), &mut |unknown| {
+            let mut choices = |scope| {
+                selected(scope)
+                    .or_else(|| self.preview_conflict_arm(conflict, scope))
+                    .or_else(|| unknown(scope, false))
+            };
+            if !self.event_conflict_row_allows_with_preview(conflict, conflict, &mut choices)
+                || self.event_actor_is_local(index, &mut choices) == Some(false)
+            {
+                return EventAdmissionError::PredecessorPending;
+            }
+            self.source_predecessor_wait_on_path(
+                (index, conditional_view),
+                blocked,
+                borrowed,
+                conflict,
+                &mut choices,
+            )
+        })
+    }
+
+    fn source_predecessor_wait_on_path(
+        &self,
+        target: (usize, Option<u8>),
+        blocked: (u8, Option<u8>),
+        borrowed: OperationBorrow<'_>,
+        conflict: PackedEventConflict,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> EventAdmissionError {
+        let (index, conditional_view) = target;
         if self.retired_receipt_blocks(index, ScopeId::none(), selected) {
             return EventAdmissionError::PredecessorPending;
         }
@@ -98,14 +138,30 @@ impl EventCursor {
                 .event_program()
                 .operation_at(prior)
                 .unwrap_or_else(|| crate::invariant());
-            let (carrier, payload) = before_direction
-                .required_views(self.program_ref().event_atom_at(before.dense_ordinal()));
-            let uses_view = |role| carrier == role || payload == Some(role);
-            let uses_caller = uses_view(blocked.0);
-            if !(uses_caller
-                || blocked.1.is_some_and(uses_view)
-                || borrowed
-                    .is_some_and(|borrowed| borrowed(carrier) || payload.is_some_and(borrowed)))
+            let atom = self.program_ref().event_atom_at(before.dense_ordinal());
+            let (carrier, payload) = before_direction.required_views(atom);
+            // A receipt can establish which actor owns the queried view. A
+            // waiting call cannot retain that view through its own issuance.
+            let installs_view = before_direction == RoleLocalDirection::Recv
+                && conditional_view
+                    .is_some_and(|role| atom.payload == crate::eff::EventPayload::Endpoint(role));
+            let uses_view = |role| {
+                carrier == role
+                    || payload == Some(role)
+                    || (installs_view && conditional_view == Some(role))
+            };
+            let uses_caller = payload == Some(blocked.0)
+                || (installs_view && conditional_view == Some(blocked.0))
+                || (carrier == blocked.0
+                    && borrowed.holds_carrier(self.program_ref(), before.dense_ordinal()));
+            // A second held-only predecessor cannot strengthen this path's
+            // verdict. A prerequisite of the caller can still take priority.
+            if !uses_caller
+                && (wait == EventAdmissionError::HeldPredecessorPending
+                    || !(blocked.1.is_some_and(uses_view)
+                        || borrowed.peers.is_some_and(|borrowed| {
+                            borrowed(carrier) || payload.is_some_and(borrowed)
+                        })))
             {
                 continue;
             }
@@ -223,14 +279,14 @@ impl EventCursor {
         event: EventCommitMeta,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<EnabledEventCommit, EventAdmissionError> {
-        self.event_enabled_borrowing(idx, event, None, arm_for_scope)
+        self.event_enabled_borrowing(idx, event, OperationBorrow::default(), arm_for_scope)
     }
 
     pub(crate) fn event_enabled_borrowing(
         &self,
         idx: usize,
         event: EventCommitMeta,
-        borrowed: Option<&dyn Fn(u8) -> bool>,
+        borrowed: OperationBorrow<'_>,
         arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<EnabledEventCommit, EventAdmissionError> {
         let row = self
@@ -241,9 +297,24 @@ impl EventCursor {
             .ok_or(EventAdmissionError::Invariant)?;
         self.event_eligibility(row, event.body_reentry, arm_for_scope)
             .map_err(|blocker| match blocker {
+                EventBlocker::Invariant
+                    if (row.direction() == RoleLocalDirection::Recv
+                        || (row.direction() == RoleLocalDirection::Send
+                            && matches!(
+                                row.atom().payload,
+                                crate::eff::EventPayload::Wire(_)
+                            )))
+                        && self.alternate_entry_waits_for_view(
+                            idx,
+                            event,
+                            borrowed,
+                            &mut |scope| arm_for_scope(scope, EventArmView::Committed),
+                        ) =>
+                {
+                    EventAdmissionError::OtherViewPending
+                }
                 EventBlocker::Invariant => EventAdmissionError::Invariant,
-                EventBlocker::OwnershipPending => EventAdmissionError::PredecessorPending,
-                EventBlocker::SourcePredecessor => {
+                EventBlocker::OwnershipPending | EventBlocker::SourcePredecessor => {
                     let moved_role = if row.direction() == RoleLocalDirection::Send
                         && let crate::eff::EventPayload::Endpoint(role) = row.atom().payload
                     {
@@ -394,6 +465,54 @@ mod tests {
         );
     }
 
+    /// The source lends view 3 to actor 1, runs a two-message resource
+    /// exchange in parallel with a one-message notice, then returns view 3.
+    /// Enumerate both source choices independently of all cursor predicates.
+    fn nested_prefix_wait(
+        completed: u32,
+        known: [Option<u8>; 2],
+        target: usize,
+        caller: u8,
+        payload: Option<u8>,
+    ) -> EventAdmissionError {
+        use EventAdmissionError::{HeldPredecessorPending, OtherViewPending, PredecessorPending};
+        let mut best = PredecessorPending;
+        for exchange in [0, 1] {
+            for notification in [0, 1] {
+                if known[0].is_some_and(|arm| arm != exchange)
+                    || known[1].is_some_and(|arm| arm != notification)
+                {
+                    continue;
+                }
+                let request = 1 + usize::from(exchange) * 2;
+                let reply = request + 1;
+                let notice = 5 + usize::from(notification);
+                if ![0, request, reply, notice, 7].contains(&target) {
+                    continue;
+                }
+                let missing = |view| {
+                    [(0, 1), (request, 3), (reply, 3), (notice, 1)]
+                        .into_iter()
+                        .any(|(prior, role)| {
+                            let precedes = target == 7
+                                || (target != 0 && prior == 0)
+                                || (target == reply && prior == request);
+                            role == view && precedes && completed & (1 << prior) == 0
+                        })
+                };
+                if missing(caller) {
+                    continue;
+                }
+                if payload.is_some_and(missing) {
+                    best = HeldPredecessorPending;
+                } else {
+                    return OtherViewPending;
+                }
+            }
+        }
+        best
+    }
+
     #[test]
     fn nested_owned_prefix_classification_matches_the_source_predecessor_set() {
         type Loan<'r> = g::Msg<1, Endpoint<'r, 3>>;
@@ -425,77 +544,28 @@ mod tests {
             program.role_image_ref(),
             |cursor| {
                 let steps = cursor.local_steps_len();
-                let routes = cursor.machine().route_scope_slot_count();
-                assert!(steps <= 10 && routes <= 3);
+                assert_eq!(steps, 8);
+                assert_eq!(cursor.machine().route_scope_slot_count(), 2);
+                for (index, label) in [1, 2, 3, 4, 5, 6, 7, 1].into_iter().enumerate() {
+                    assert_eq!(cursor.event_row_at(index).unwrap().atom().label, label);
+                }
                 for completed in 0..1u32 << steps {
                     cursor.completed_event_words_mut()[0] = completed;
-                    for choices in 0..3usize.pow(routes as u32) {
-                        let selected = |scope| {
-                            let slot = cursor.route_scope_slot(scope)?;
-                            match choices / 3usize.pow(slot as u32) % 3 {
-                                0 => None,
-                                1 => Some(0),
-                                _ => Some(1),
-                            }
-                        };
+                    for choices in 0..9 {
+                        let arms = [choices % 3, choices / 3]
+                            .map(|digit| [None, Some(0u8), Some(1u8)][digit]);
+                        let selected = |scope| arms[cursor.route_scope_slot(scope)?];
                         for index in 0..steps {
-                            let (after, after_direction) = cursor
-                                .machine()
-                                .event_program()
-                                .operation_at(index)
-                                .unwrap();
                             let conflict = cursor.machine().event_conflict_for_index(index);
                             for caller in 0..4 {
                                 for payload in [None, Some(0), Some(1), Some(2), Some(3)] {
-                                    let live: std::vec::Vec<_> = (0..index)
-                                        .filter(|&prior| {
-                                            let (before, direction) = cursor
-                                                .machine()
-                                                .event_program()
-                                                .operation_at(prior)
-                                                .unwrap();
-                                            completed & (1 << prior) == 0
-                                                && (if before == after {
-                                                    direction == RoleLocalDirection::Send
-                                                        && after_direction
-                                                            == RoleLocalDirection::Recv
-                                                } else {
-                                                    cursor.program_ref().source_precedes(
-                                                        before.dense_ordinal(),
-                                                        after.dense_ordinal(),
-                                                    )
-                                                })
-                                                && cursor
-                                                    .event_actor_is_local(prior, &mut |scope| {
-                                                        selected(scope)
-                                                    })
-                                                    != Some(false)
-                                                && cursor.event_conflict_row_allows_with_preview(
-                                                    cursor
-                                                        .machine()
-                                                        .event_conflict_for_index(prior),
-                                                    conflict,
-                                                    &mut |scope| selected(scope),
-                                                )
-                                        })
-                                        .collect();
-                                    let expected = if live
-                                        .iter()
-                                        .any(|&prior| cursor.uses_view_at(prior, caller))
-                                    {
-                                        EventAdmissionError::PredecessorPending
-                                    } else if payload.is_some_and(|role| {
-                                        live.iter().any(|&prior| cursor.uses_view_at(prior, role))
-                                    }) {
-                                        EventAdmissionError::HeldPredecessorPending
-                                    } else {
-                                        EventAdmissionError::OtherViewPending
-                                    };
+                                    let expected =
+                                        nested_prefix_wait(completed, arms, index, caller, payload);
                                     assert_eq!(
                                         cursor.source_predecessor_wait(
                                             index,
                                             (caller, payload),
-                                            None,
+                                            OperationBorrow::default(),
                                             conflict,
                                             &mut |scope| selected(scope)
                                         ),

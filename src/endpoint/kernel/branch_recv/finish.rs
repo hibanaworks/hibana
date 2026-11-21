@@ -210,12 +210,21 @@ where
                 meta,
                 cursor_index: publish_branch.cursor_index,
             };
-            let delta = match self.prepare_recv_commit_delta(
-                meta.label,
-                meta.payload_kind,
-                descriptor,
-                &frame,
-            ) {
+            // The preview can outlive its original poll. Admit its row against
+            // current local progress before preparing the commit.
+            let enabled =
+                self.recv_event_enabled(state_index_to_usize(descriptor.cursor_index), meta.into());
+            let delta = match enabled
+                .map_err(|_| RecvError::PhaseInvariant)
+                .and_then(|enabled| {
+                    self.prepare_recv_commit_delta(
+                        meta.label,
+                        meta.payload_kind,
+                        descriptor,
+                        &frame,
+                        enabled,
+                    )
+                }) {
                 Ok(delta) => delta,
                 Err(error) => {
                     frame.discard_uncommitted();

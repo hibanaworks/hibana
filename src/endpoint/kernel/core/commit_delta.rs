@@ -50,7 +50,7 @@ impl PreparedCommitDelta {
         self.event
     }
 
-    pub(in crate::endpoint::kernel::core) const fn body_reentry(
+    pub(in crate::endpoint::kernel) const fn body_reentry(
         &self,
     ) -> crate::global::const_dsl::ScopeId {
         self.body_reentry

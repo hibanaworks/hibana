@@ -576,39 +576,39 @@ theorem shapeOriginalActorsMatch_checks_each_occurrence (plan : SourceOccurrence
 -- A public call selects a logical role, direction and message contract.
 -- Its alias in a generated script does not select a source occurrence.
 def shapeMatchesRequest (expected actual : Message) (receive : Bool) : Bool :=
-  decide (expected.label = actual.label ∧ expected.payload = actual.payload ∧
-    (if receive then expected.receiver = actual.receiver else expected.sender = actual.sender))
+  decide (publicMessageContract expected receive = publicMessageContract actual receive)
 
 theorem shapeRequest_matches_its_exact_public_contract
     (expected actual : Message) (receive : Bool) :
     shapeMatchesRequest expected actual receive = true ↔
       expected.label = actual.label ∧ expected.payload = actual.payload ∧
         (if receive then expected.receiver = actual.receiver else expected.sender = actual.sender) := by
-  simp [shapeMatchesRequest]
+  cases receive <;> simp [shapeMatchesRequest, publicMessageContract]
 
 /-- At a fixed direction, two aliases of the same public call match exactly
 the same candidate occurrences, including occurrences at a different peer. -/
 theorem matching_aliases_preserve_every_candidate (a b candidate : Message) (receive : Bool)
     (same : shapeMatchesRequest a b receive = true) :
     shapeMatchesRequest a candidate receive = shapeMatchesRequest b candidate receive := by
-  cases receive <;> simp_all [shapeMatchesRequest]
+  simp only [shapeMatchesRequest, decide_eq_true_eq] at same ⊢
+  rw [same]
 
 #print axioms matching_aliases_preserve_every_candidate
 
 theorem a_send_alias_does_not_select_the_remote_peer
     (message : Message) (peer : EndpointKey) :
     shapeMatchesRequest message { message with receiver := peer } false = true := by
-  simp [shapeMatchesRequest]
+  simp [shapeMatchesRequest, publicMessageContract]
 
 theorem a_receive_alias_does_not_select_the_remote_peer
     (message : Message) (peer : EndpointKey) :
     shapeMatchesRequest message { message with sender := peer } true = true := by
-  simp [shapeMatchesRequest]
+  simp [shapeMatchesRequest, publicMessageContract]
 
 theorem equal_labels_do_not_erase_the_sending_role
     (expected actual : Message) (different : expected.sender ≠ actual.sender) :
     shapeMatchesRequest expected actual false = false := by
-  simp [shapeMatchesRequest, different]
+  simp [shapeMatchesRequest, publicMessageContract, different]
 
 #print axioms shapeRequest_matches_its_exact_public_contract
 #print axioms a_send_alias_does_not_select_the_remote_peer

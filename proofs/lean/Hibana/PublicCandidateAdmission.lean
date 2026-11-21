@@ -4,6 +4,11 @@ import Hibana.ActorCandidateAdmission
 namespace Hibana
 open EndpointDelegation
 
+/-- The call fixes its local endpoint and wire contract. The remote peer and
+the source occurrence are selected by the choreography. -/
+def publicMessageContract (message : Message) (receive : Bool) : Nat × Payload × EndpointKey :=
+  (message.label, message.payload, if receive then message.receiver else message.sender)
+
 /-- The handle's copied epoch identifies a preparation for this borrow, not
 another visit counter. Source ranges and completion come from the canonical
 choreography. Once consumed, the old borrow cannot prepare that visit again. -/
@@ -30,15 +35,13 @@ def sourceRestartAllows (prepared : Option Nat) (scope : Nat) : Bool :=
 needs the source's entry resources. Resources used only by a retained
 independent child keep that child's current visit and are not restarted. -/
 def sourceRestartEntryHeadersMatch (source : CanonicalProgramSource) (image : RustDescriptorImage)
-    (data : DecodedActorOrder) (previous : NormalizedPath)
-    (before : ActorProgressObservation) (rolls : List DecodedRollRow)
-    (credits : List Nat) (roll : DecodedRollRow) (event : Nat) (preview : Bool) : Bool :=
+    (data : DecodedActorOrder) (before : ActorProgressObservation)
+    (roll : DecodedRollRow) (preserved : List DecodedRollRow) (preview : Bool) : Bool :=
   (show Option Bool from do
     let entries ← image.decodeRollEntryResources?
     let (_, entries) ← resolveUnique? (entries.filter fun entry => entry.1.scope == roll.scope)
     if entries.isEmpty then return true
     let columns ← image.decodeProgramColumns?
-    let preserved := sourceIndependentRetainedChildren data previous rolls credits roll event
     if preserved.isEmpty && !preview then
       return observedEntryHeadersMatch before columns entries
     let rows ← (data.rows.filter fun row =>
@@ -283,14 +286,15 @@ def PublicOperationCut.sourceQueries? (cut : PublicOperationCut)
                 match restartQuery previous next roll.scope row.eventId with
                 | none => false
                 | some (actual, base) =>
-                    sourceRestartEntryHeadersMatch source image data previousPath before rolls credits actual row.eventId
+                    let preserved := sourceIndependentRetainedChildren data previousPath rolls credits actual row.eventId
+                    let retainedAfter := retainedAfterSourceRestart rolls actual retained preserved
+                    sourceRestartEntryHeadersMatch source image data before actual preserved
                       (preview && (image.eventAction? row.eventId).any (fun action =>
                         match action with | .send .. => false | _ => true)) &&
                     publicPreviewAgrees source previews base path &&
                     publicQueryInputAgrees source cut previews base row input &&
-                    sourceOutgoingPriorChoicesKnown source rolls
-                      (retainedAfterSourceRestart rolls actual retained) data path base row &&
-                    sourceCandidateRowReady image choreo (retainedAfterSourceRestart rolls actual retained)
+                    sourceOutgoingPriorChoicesKnown source rolls retainedAfter data path base row &&
+                    sourceCandidateRowReady image choreo retainedAfter
                       data path base row)
         then some row.eventId else none
       let preferred := candidates resumed previews

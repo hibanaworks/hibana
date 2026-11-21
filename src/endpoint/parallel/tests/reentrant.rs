@@ -413,3 +413,75 @@ async fn a_reentrant_branch_drop_preserves_its_selected_frame()
 
     Ok(())
 }
+
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn a_wire_validator_cannot_restart_a_roll_after_dropping_its_entry_view()
+-> core::result::Result<(), hibana::EndpointError> {
+    use crate::transport::wire::{CodecError, Payload, ReceivedPayload, WireEncode, WirePayload};
+
+    std::thread_local! { static RETIRE: DropHook = const { DropHook(Cell::new(None)) }; }
+    struct Request;
+    impl WireEncode for Request {
+        fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+            ().encode_into(out)
+        }
+    }
+    impl WirePayload for Request {
+        const SCHEMA_ID: u32 = <() as WirePayload>::SCHEMA_ID;
+        type Decoded<'a> = ();
+
+        fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+            <() as WirePayload>::validate_payload(input)?;
+            RETIRE.with(DropHook::fire);
+            Ok(())
+        }
+
+        fn decode_validated_payload(_input: ReceivedPayload<'_, Self>) {}
+    }
+
+    type Loan = g::Msg<144, crate::Endpoint<'static, 2>>;
+    type Start = g::Msg<145, Request>;
+    type Ack = g::Msg<146, ()>;
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(g::send::<0, 1, Start>(), g::send::<2, 0, Ack>()).roll(),
+    );
+    let mut slab = [0; 32 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, TestTransport::new())
+        .unwrap();
+    let sid = SessionId::new(1965);
+    let mut sender = rv.enter(sid, &project::<0>(&global)).unwrap();
+    let mut receiver = rv.enter(sid, &project::<1>(&global)).unwrap();
+    let resource = rv.enter(sid, &project::<2>(&global)).unwrap();
+    sender.send::<Loan>(resource).await?;
+    let mut resource = receiver.recv::<Loan>().await?;
+    sender.send::<Start>(&Request).await?;
+    receiver.recv::<Start>().await?;
+    resource.send::<Ack>(&()).await?;
+    sender.recv::<Ack>().await?;
+    sender.send::<Start>(&Request).await?;
+
+    let target = RefCell::new(Some(resource));
+    let commits = || {
+        rv.tap()
+            .filter(|event| event.id() == crate::observe::ids::ENDPOINT_RECV)
+            .count()
+    };
+    let before = commits();
+    RETIRE.with(|hook| hook.arm(&target));
+    let result = receiver.recv::<Start>().await;
+    assert!(
+        target.borrow().is_none(),
+        "the wire validator retired the completed view"
+    );
+    assert!(
+        matches!(result, Err(error) if !error.is_unavailable()),
+        "an accepted frame cannot be retried"
+    );
+    assert_eq!(commits(), before, "the next visit never committed");
+    Ok(())
+}

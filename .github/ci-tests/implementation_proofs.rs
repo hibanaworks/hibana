@@ -8,8 +8,8 @@ use std::{
 };
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
-    let [repo] = args.as_slice() else {
-        panic!("usage: implementation-proofs REPO");
+    let [repo, output] = args.as_slice() else {
+        panic!("usage: implementation-proofs REPO OUTPUT");
     };
     let repo = PathBuf::from(repo);
     let toolchain = fs::read_to_string(repo.join("proofs/lean/lean-toolchain"))
@@ -57,7 +57,10 @@ fn main() {
     assert!(!files.is_empty(), "no implementation proofs");
     for file in &files {
         println!("CHECK {}", file.strip_prefix(&repo).unwrap().display());
-        lean_module::check(lean, file, None).expect("compiled implementation theorem closures");
+        let wait_module = Path::new(output).join("AlternateVisitWait.olean");
+        let compiled = (file.file_name().unwrap() == "AlternateVisitWait.lean")
+            .then_some(wait_module.as_path());
+        lean_module::check(lean, file, compiled).expect("compiled implementation theorem closures");
     }
     println!("PASS implementation proof modules={}", files.len());
 }

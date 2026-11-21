@@ -89,7 +89,7 @@ LEAN_BIN="$lean_binary" bash "${ROOT_DIR}/.github/scripts/lib/supplemental_proof
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(run_audit \
   theorem-inventory \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1316 796 382 138)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 1320 800 382 138)"
 printf '%s\n' "${static_audit_output}"
 printf '%s\n' "${static_audit_output}" | bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" proof-guard markers static
 bash "${ROOT_DIR}/.github/scripts/lib/lean_audit_tool.sh" theorem-inventory \

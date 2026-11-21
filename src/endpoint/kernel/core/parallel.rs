@@ -27,6 +27,17 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         .then_some(scope)
     }
 
+    pub(super) fn operation_borrow<'b>(
+        &self,
+        bounds: &'b core::ops::Range<usize>,
+        peers: &'b dyn Fn(u8) -> bool,
+    ) -> crate::global::typestate::OperationBorrow<'b> {
+        crate::global::typestate::OperationBorrow {
+            fragment: (!self.region.is_whole()).then_some(bounds),
+            peers: self.held.map(|_| peers),
+        }
+    }
+
     pub(crate) fn event_enabled(
         &self,
         index: usize,
@@ -45,7 +56,7 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
         let enabled = self.progress.cursor.event_enabled_borrowing(
             index,
             event,
-            held.map(|_| &borrowed as &dyn Fn(u8) -> bool),
+            self.operation_borrow(&self.region.bounds(), &borrowed),
             arms,
         )?;
         self.admit_enabled_entry_views(index, event, enabled)

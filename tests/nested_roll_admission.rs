@@ -2,6 +2,7 @@
 mod common;
 #[path = "../examples/support/in_process.rs"]
 pub mod in_process;
+use core::{future::poll_fn, pin::pin, task::Poll};
 use hibana::{
     g,
     runtime::{SessionKitStorage, ids::SessionId, program::project},
@@ -156,6 +157,20 @@ impl Letter {
     }
 }
 
+// The source inventory asks whether transport can accept a send at this cut.
+// Prefix replay and any independent continuation are driven by real endpoints.
+async fn accepted_at_cut(
+    send: impl Future<Output = Result<(), hibana::EndpointError>>,
+) -> Result<bool, hibana::EndpointError> {
+    let mut send = pin!(send);
+    match poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await {
+        Poll::Ready(Ok(())) => Ok(true),
+        Poll::Pending => panic!("unexpected wait without an independent continuation"),
+        Poll::Ready(Err(error)) if error.is_unavailable() => Ok(false),
+        Poll::Ready(Err(error)) => Err(error),
+    }
+}
+
 #[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
 async fn every_bounded_source_grouping_can_be_driven()
@@ -207,7 +222,10 @@ async fn every_bounded_source_grouping_can_be_driven()
                     .init()
                     .rendezvous(&mut slab1, network.clone())
                     .unwrap();
-                let rv2 = storage2.init().rendezvous(&mut slab2, network).unwrap();
+                let rv2 = storage2
+                    .init()
+                    .rendezvous(&mut slab2, network.clone())
+                    .unwrap();
                 let sid = SessionId::new(9282);
                 let mut a = rv0.enter(sid, &p0).unwrap();
                 let mut b = rv1.enter(sid, &p1).unwrap();
@@ -218,12 +236,15 @@ async fn every_bounded_source_grouping_can_be_driven()
                         if chunk[0].1 == 0 {
                             for (letter, _) in chunk {
                                 if position == prefix.len() {
-                                    let result = match letter {
-                                        Letter::Prefix => a.send::<Prefix>(&()).await,
-                                        Letter::Exchange => a.send::<Work>(&()).await,
-                                        Letter::Tick => a.send::<Tick>(&()).await,
+                                    return match letter {
+                                        Letter::Prefix => {
+                                            accepted_at_cut(a.send::<Prefix>(&())).await
+                                        }
+                                        Letter::Exchange => {
+                                            accepted_at_cut(a.send::<Work>(&())).await
+                                        }
+                                        Letter::Tick => accepted_at_cut(a.send::<Tick>(&())).await,
                                     };
-                                    return Ok::<_, hibana::EndpointError>(result.is_ok());
                                 }
                                 assert!(matches!(letter, Letter::Prefix));
                                 async {
@@ -239,15 +260,45 @@ async fn every_bounded_source_grouping_can_be_driven()
                             let [mut ticker] = c.par()?;
                             for (letter, _) in chunk {
                                 if position == prefix.len() {
-                                    let result = match letter {
-                                        Letter::Prefix if child == 0 => {
-                                            exchanges.send::<Prefix>(&()).await
+                                    return match letter {
+                                        // Neither fragment contains the outer Prefix.
+                                        Letter::Prefix => {
+                                            let rejected = if child == 0 {
+                                                exchanges.send::<Prefix>(&()).await
+                                            } else {
+                                                ticks.send::<Prefix>(&()).await
+                                            };
+                                            assert!(
+                                                rejected.is_err() && network.queue_is_empty(),
+                                                "case={case}"
+                                            );
+                                            Ok(false)
                                         }
-                                        Letter::Prefix => ticks.send::<Prefix>(&()).await,
-                                        Letter::Exchange => exchanges.send::<Work>(&()).await,
-                                        Letter::Tick => ticks.send::<Tick>(&()).await,
+                                        // A blocked Tick can wait while the exchange and
+                                        // its remote peer finish the previous visit.
+                                        Letter::Tick if *expected == 0 => {
+                                            let mut next = pin!(ticks.send::<Tick>(&()));
+                                            assert!(
+                                                poll_fn(|cx| Poll::Ready(next.as_mut().poll(cx)))
+                                                    .await
+                                                    .is_pending(),
+                                                "case={case}"
+                                            );
+                                            exchanges.send::<Work>(&()).await?;
+                                            server.recv::<Work>().await?;
+                                            server.send::<Ack>(&()).await?;
+                                            exchanges.recv::<Ack>().await?;
+                                            next.await?;
+                                            ticker.recv::<Tick>().await?;
+                                            Ok(false)
+                                        }
+                                        Letter::Exchange => {
+                                            accepted_at_cut(exchanges.send::<Work>(&())).await
+                                        }
+                                        Letter::Tick => {
+                                            accepted_at_cut(ticks.send::<Tick>(&())).await
+                                        }
                                     };
-                                    return Ok(result.is_ok());
                                 }
                                 match letter {
                                     Letter::Prefix => {
@@ -596,7 +647,10 @@ async fn completed_child_repetitions_cannot_skip_a_pending_exchange_at_the_next_
                 .init()
                 .rendezvous(&mut slab0, network.clone())
                 .unwrap();
-            let rv1 = storage1.init().rendezvous(&mut slab1, network).unwrap();
+            let rv1 = storage1
+                .init()
+                .rendezvous(&mut slab1, network.clone())
+                .unwrap();
             let mut a = rv0.enter(SessionId::new(9286), &p0).unwrap();
             let mut b = rv1.enter(SessionId::new(9286), &p1).unwrap();
             a.send::<Left>(&()).await.unwrap();
@@ -621,7 +675,26 @@ async fn completed_child_repetitions_cannot_skip_a_pending_exchange_at_the_next_
             peer_left.recv::<Left>().await.unwrap();
             peer_left.send::<LeftReply>(&()).await.unwrap();
             left.recv::<LeftReply>().await.unwrap();
-            assert!(left.send::<Left>(&()).await.is_err(), "extra={extra}");
+            let mut next_left = pin!(left.send::<Left>(&()));
+            assert!(
+                poll_fn(|cx| Poll::Ready(next_left.as_mut().poll(cx)))
+                    .await
+                    .is_pending(),
+                "extra={extra}"
+            );
+            assert!(network.queue_is_empty());
+            peer_right.send::<RightReply>(&()).await.unwrap();
+            assert!(
+                poll_fn(|cx| Poll::Ready(next_left.as_mut().poll(cx)))
+                    .await
+                    .is_pending(),
+                "extra={extra}"
+            );
+            right.recv::<RightReply>().await.unwrap();
+            assert!(network.queue_is_empty());
+            next_left.await.unwrap();
+            peer_left.recv::<Left>().await.unwrap();
+            assert!(network.queue_is_empty());
         }
     };
 

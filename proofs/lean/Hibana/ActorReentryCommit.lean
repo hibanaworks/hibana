@@ -94,6 +94,14 @@ theorem observed_entry_header_requires_issued_resource
   apply observed_issued_view_has_current_header
   simpa only [resolved, observedEntryHeaderMatches, if_pos rfl] using one
 
+/-- Equal projected ranges are ordered by their source scope ordinals. -/
+def DecodedRollRow.nestedWithin (inner outer : DecodedRollRow) : Bool :=
+  inner.scope == outer.scope ||
+    (outer.eventStart ≤ inner.eventStart &&
+      inner.eventStart + inner.eventLength ≤ outer.eventStart + outer.eventLength &&
+      (inner.eventStart != outer.eventStart || inner.eventLength != outer.eventLength ||
+        outer.scope < inner.scope))
+
 def resetObservedActor
     (snapshot : ActorProgressObservation) (roll : DecodedRollRow)
     (choices : List (Nat × Option RouteArm))
@@ -170,19 +178,17 @@ def sourceActorBodyComplete (source : CanonicalProgramSource)
     if roll.eventStart ≤ row.eventId && row.eventId < roll.eventStart + roll.eventLength
     then sourceActorBodyChoicesKnown source before roll row preserved else true)
 
-/-- A completed child may keep its current work while an independent parallel
-entry begins its parent. An entry inside that child, or sequentially ordered
-with any of its participating rows, cannot spend that historical completion.
-The relation is derived from the source order, not the runtime's ready bit. -/
+/-- Only the outermost credited child on a row's ancestor chain may
+contribute to a parent restart. Test that child's independence against the
+entering row after considering all pre-cut credits inside the parent. -/
 def sourceIndependentRetainedChildren (data : DecodedActorOrder) (path : NormalizedPath)
     (rolls : List DecodedRollRow) (retained : List Nat)
     (parent : DecodedRollRow) (entry : Nat) : List DecodedRollRow :=
   if retained.isEmpty then [] else rolls.filter fun child =>
-    retained.contains child.scope && child.scope != parent.scope &&
-    parent.eventStart ≤ child.eventStart &&
-    child.eventStart + child.eventLength ≤ parent.eventStart + parent.eventLength &&
-    (parent.eventStart != child.eventStart || parent.eventLength != child.eventLength ||
-      parent.scope < child.scope) &&
+    retained.contains child.scope && child.scope != parent.scope && child.nestedWithin parent &&
+    rolls.all (fun outer =>
+      !(retained.contains outer.scope && outer.scope != parent.scope && outer.nestedWithin parent &&
+        child.scope != outer.scope && child.nestedWithin outer)) &&
     !(child.eventStart ≤ entry && entry < child.eventStart + child.eventLength) &&
     (data.activeRows path).any (fun row => child.eventStart ≤ row.eventId &&
       row.eventId < child.eventStart + child.eventLength) &&
@@ -191,6 +197,27 @@ def sourceIndependentRetainedChildren (data : DecodedActorOrder) (path : Normali
       then !(data.sourcePredecessors path entry).contains row.eventId &&
         !(data.sourcePredecessors path row.eventId).contains entry else true) &&
     (data.activeRows path).any (·.eventId == entry)
+
+/-- A credit strictly between the restarting parent and the child rules the
+child out for every entering operation, even if that ancestor cannot itself
+be retained. The hypothesis uses the observed credit and source roll rows
+without assuming the result of any independence or admission test. -/
+theorem a_credited_ancestor_excludes_its_child_from_parent_reentry
+    {data : DecodedActorOrder} {path : NormalizedPath} {rolls : List DecodedRollRow}
+    {credits : List Nat} {parent outer child : DecodedRollRow} {entry : Nat}
+    (existsOuter : outer ∈ rolls) (credited : outer.scope ∈ credits)
+    (belowParent : outer.scope ≠ parent.scope) (inParent : outer.nestedWithin parent = true)
+    (belowOuter : child.scope ≠ outer.scope) (inOuter : child.nestedWithin outer = true) :
+    child ∉ sourceIndependentRetainedChildren data path rolls credits parent entry := by
+  intro member
+  unfold sourceIndependentRetainedChildren at member
+  split at member
+  · simp at member
+  · have allowed := (List.mem_filter.mp member).2
+    simp only [Bool.and_eq_true, and_assoc] at allowed
+    have unshadowed := List.all_eq_true.mp allowed.2.2.2.1 outer existsOuter
+    simp [belowParent, inParent, belowOuter, inOuter] at unshadowed
+    exact unshadowed credited
 
 theorem a_retained_source_child_excludes_the_entering_operation
     {data : DecodedActorOrder} {path : NormalizedPath} {rolls : List DecodedRollRow}
@@ -203,7 +230,7 @@ theorem a_retained_source_child_excludes_the_entering_operation
   next nonempty =>
     have allowed := (List.mem_filter.mp member).2
     simp only [Bool.and_eq_true, and_assoc] at allowed
-    exact allowed.2.2.2.2.2.1
+    exact allowed.2.2.2.2.1
 
 theorem retained_source_child_rows_are_parallel_to_the_entering_operation
     {data : DecodedActorOrder} {path : NormalizedPath} {rolls : List DecodedRollRow}
@@ -220,7 +247,7 @@ theorem retained_source_child_rows_are_parallel_to_the_entering_operation
   next nonempty =>
     have allowed := (List.mem_filter.mp member).2
     simp only [Bool.and_eq_true, and_assoc] at allowed
-    have ready := List.all_eq_true.mp allowed.2.2.2.2.2.2.2.1 row active
+    have ready := List.all_eq_true.mp allowed.2.2.2.2.2.2.1 row active
     simp only [Bool.and_eq_true] at inside
     simpa only [if_pos inside] using ready
 
@@ -294,14 +321,15 @@ def observedActorBodyQueries?
 
 def prepareObservedActorBody?
     (image : RustDescriptorImage) (choreo : Choreo) (before : ActorProgressObservation)
-    (previousPath nextPath scope event : Nat) : Option (DecodedRollRow × ActorProgressObservation) := do
-  let query ← observedActorBodyQueries? image choreo before
+    (previousPath nextPath scope event : Nat) (credits : List Nat := []) :
+    Option (DecodedRollRow × ActorProgressObservation) := do
+  let query ← observedActorBodyQueries? image choreo before credits
   query previousPath nextPath scope event
 
 theorem prepared_actor_body_queries_match_single_preparation
-    (prepared : observedActorBodyQueries? image choreo before = some query) :
+    (prepared : observedActorBodyQueries? image choreo before credits = some query) :
     query previous next scope event =
-      prepareObservedActorBody? image choreo before previous next scope event := by
+      prepareObservedActorBody? image choreo before previous next scope event credits := by
   simp [prepareObservedActorBody?, prepared]
 
 theorem prepared_actor_body_source_facts

@@ -627,7 +627,7 @@ impl EventCursor {
                 super::EventAdmissionError::Invariant
                 | super::EventAdmissionError::EntryViewUnavailable => SendPreviewError::Invariant,
                 super::EventAdmissionError::HeldPredecessorPending
-                    if selector.borrowed.is_some()
+                    if selector.borrowed.peers.is_some()
                         && matches!(target_payload, crate::eff::EventPayload::Wire(_)) =>
                 {
                     SendPreviewError::Unavailable
@@ -667,7 +667,6 @@ impl EventCursor {
     pub(crate) fn send_preview_meta_for_contract(
         &self,
         selector: crate::global::typestate::MessageSelector,
-        source: Option<core::ops::Range<usize>>,
         committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         preview_controller_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
@@ -677,7 +676,7 @@ impl EventCursor {
         let target_payload = selector.payload_kind;
         let mut idx = match self.send_preview_start_for_contract(
             selector,
-            source,
+            selector.borrowed.fragment.cloned(),
             committed_arm_for_scope,
         )? {
             Some(idx) => {

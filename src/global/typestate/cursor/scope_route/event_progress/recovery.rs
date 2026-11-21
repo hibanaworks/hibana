@@ -1,11 +1,61 @@
 //! Read-only recovery admission over the projected resource receipt index.
-use super::{EventAdmissionError, EventArmView, EventCursor, ScopeId};
+use super::{EventAdmissionError, EventArmView, EventCursor, OperationBorrow, ScopeId};
 use crate::global::{
     role_program::{PackedLaneRange, RoleLocalDirection},
     typestate::{EventCommitMeta, PackedEventConflict, state_index_to_usize},
 };
 
 impl EventCursor {
+    /// An alternative at the head of a future visit may be waiting on another
+    /// view to finish the current visit. This query cannot admit or reset it.
+    pub(super) fn alternate_entry_waits_for_view(
+        &self,
+        index: usize,
+        event: EventCommitMeta,
+        borrowed: OperationBorrow<'_>,
+        committed: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        let conflict = self.event_conflict_for_index(index);
+        let super::super::ConflictAdmission::Excluded { scope: route, .. } =
+            self.event_conflict_row_admission(conflict, ScopeId::none(), None, committed)
+        else {
+            return false;
+        };
+        self.machine()
+            .event_program()
+            .roll_ancestors(index)
+            .any(|body| {
+                if !self.route_scope_contained_in_roll_scope(route, body)
+                    || self.roll_scope_events_complete_at(body, Some(index), committed)
+                {
+                    return false;
+                }
+                let mut choices = |scope, view| {
+                    if matches!(view, EventArmView::Preview)
+                        && self.route_scope_contained_in_roll_scope(scope, body)
+                        && !self.roll_reentry_preserves_route(body, scope, index)
+                    {
+                        self.preview_conflict_arm(conflict, scope)
+                    } else {
+                        committed(scope)
+                    }
+                };
+                let mut fresh = |scope| choices(scope, EventArmView::Preview);
+                self.event_conflict_row_allows_with_preview(conflict, conflict, &mut fresh)
+                    && self.event_actor_is_local(index, &mut fresh) == Some(true)
+                    && self.roll_scope_head_allows_index(body, index, event.lane, &mut fresh)
+                    && self.reentry_view_wait(
+                        index,
+                        EventCommitMeta {
+                            body_reentry: body,
+                            ..event
+                        },
+                        borrowed,
+                        &mut choices,
+                    ) == EventAdmissionError::OtherViewPending
+            })
+    }
+
     /// An empty receive cannot use a previous visit if its FIFO has already
     /// delivered evidence of the current visit, whose required send must
     /// come from this very view. Leave queued frames to ordinary matching.
@@ -74,7 +124,7 @@ impl EventCursor {
         &self,
         index: usize,
         event: EventCommitMeta,
-        borrowed: Option<&dyn Fn(u8) -> bool>,
+        borrowed: OperationBorrow<'_>,
         arms: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> EventAdmissionError {
         let Some(scope) = (!event.body_reentry.is_none())
@@ -107,6 +157,34 @@ impl EventCursor {
         else {
             return EventAdmissionError::Invariant;
         };
+        let conflict = self.machine().event_conflict_for_index(index);
+        super::wait_across_choices(self.program_ref().source_scope_count(), &mut |unknown| {
+            self.reentry_wait_on_path(index, event, scope, borrowed, &mut |route, view| {
+                let preview = matches!(view, EventArmView::Preview);
+                arms(route, view).or_else(|| {
+                    let renewed = self.route_scope_contained_in_roll_scope(route, scope)
+                        && !self.roll_reentry_preserves_route(scope, route, index);
+                    // The candidate implies its own guard only in its visit.
+                    // An enclosing or preserved choice is shared by both.
+                    if (preview || !renewed)
+                        && let Some(arm) = self.preview_conflict_arm(conflict, route)
+                    {
+                        return Some(arm);
+                    }
+                    unknown(route, preview && renewed)
+                })
+            })
+        })
+    }
+
+    fn reentry_wait_on_path(
+        &self,
+        index: usize,
+        event: EventCommitMeta,
+        scope: ScopeId,
+        borrowed: OperationBorrow<'_>,
+        arms: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
+    ) -> EventAdmissionError {
         let (source, direction) =
             crate::invariant_some(self.machine().event_program().operation_at(index));
         let (role, sent) =
@@ -116,7 +194,10 @@ impl EventCursor {
         };
         let conflict = self.machine().event_conflict_for_index(index);
         let mut selected = |scope| arms(scope, EventArmView::Preview);
-        if self.retired_receipt_blocks(index, scope, &mut selected) {
+        if !self.event_conflict_row_allows_with_preview(conflict, conflict, &mut selected)
+            || self.event_actor_is_local(index, &mut selected) == Some(false)
+            || self.retired_receipt_blocks(index, scope, &mut selected)
+        {
             return EventAdmissionError::PredecessorPending;
         }
         let mut wait = EventAdmissionError::OtherViewPending;
@@ -124,6 +205,21 @@ impl EventCursor {
         // choices. Preserve its independent child credits and actor binding.
         let mut committed = |scope| arms(scope, EventArmView::Committed);
         for pending in self.pending_event_steps(row.start()..row.end()) {
+            let (source, direction) =
+                crate::invariant_some(self.machine().event_program().operation_at(pending));
+            let (carrier, payload) =
+                direction.required_views(self.program_ref().event_atom_at(source.dense_ordinal()));
+            let uses_view = |role| carrier == role || payload == Some(role);
+            let own = payload == Some(role)
+                || (carrier == role
+                    && borrowed.holds_carrier(self.program_ref(), source.dense_ordinal()));
+            let held = sent.is_some_and(uses_view)
+                || borrowed
+                    .peers
+                    .is_some_and(|borrowed| borrowed(carrier) || payload.is_some_and(borrowed));
+            if !own && (wait == EventAdmissionError::HeldPredecessorPending || !held) {
+                continue;
+            }
             if self.event_lane_at(pending).is_none()
                 || self.event_actor_is_local(pending, &mut committed) == Some(false)
                 || !self.event_conflict_row_allows(
@@ -138,20 +234,10 @@ impl EventCursor {
             {
                 continue;
             }
-            let (source, direction) =
-                crate::invariant_some(self.machine().event_program().operation_at(pending));
-            let (carrier, payload) =
-                direction.required_views(self.program_ref().event_atom_at(source.dense_ordinal()));
-            let uses_view = |role| carrier == role || payload == Some(role);
-            if uses_view(role) {
+            if own {
                 return EventAdmissionError::PredecessorPending;
             }
-            if sent.is_some_and(uses_view)
-                || borrowed
-                    .is_some_and(|borrowed| borrowed(carrier) || payload.is_some_and(borrowed))
-            {
-                wait = EventAdmissionError::HeldPredecessorPending;
-            }
+            wait = EventAdmissionError::HeldPredecessorPending;
         }
         let mut selected = |scope| arms(scope, EventArmView::Preview);
         let end = index.min(row.end());
@@ -165,11 +251,15 @@ impl EventCursor {
             let (carrier, payload) =
                 direction.required_views(self.program_ref().event_atom_at(before.dense_ordinal()));
             let uses_view = |role| carrier == role || payload == Some(role);
-            let uses_caller = uses_view(role);
-            if !(uses_caller
-                || sent.is_some_and(uses_view)
-                || borrowed
-                    .is_some_and(|borrowed| borrowed(carrier) || payload.is_some_and(borrowed)))
+            let uses_caller = payload == Some(role)
+                || (carrier == role
+                    && borrowed.holds_carrier(self.program_ref(), before.dense_ordinal()));
+            if !uses_caller
+                && (wait == EventAdmissionError::HeldPredecessorPending
+                    || !(sent.is_some_and(uses_view)
+                        || borrowed.peers.is_some_and(|borrowed| {
+                            borrowed(carrier) || payload.is_some_and(borrowed)
+                        })))
             {
                 prior += 1;
                 continue;
@@ -305,10 +395,14 @@ impl EventCursor {
     fn receipt_has_prior_return(
         &self,
         receipts: PackedLaneRange,
+        current: usize,
         event: EventCommitMeta,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         for receipt in receipts.start()..receipts.end() {
+            if receipt == current {
+                continue;
+            }
             let Some((index, prior)) = self.pending_resource_receipt(receipt, selected) else {
                 continue;
             };
@@ -328,6 +422,7 @@ impl EventCursor {
         &self,
         receipts: PackedLaneRange,
         blocked: (u8, Option<u8>),
+        borrowed: OperationBorrow<'_>,
         selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> EventAdmissionError {
         let mut verdict = EventAdmissionError::EntryViewUnavailable;
@@ -342,13 +437,18 @@ impl EventCursor {
             };
             let conflict = self.machine().event_conflict_for_index(index);
             let role = crate::invariant_some(self.logical_role_at(index));
-            if !self.receipt_has_prior_return(receipts, meta, selected) {
-                let wait = if role == blocked.0 {
+            if !self.receipt_has_prior_return(receipts, receipt, meta, selected) {
+                let wait = if role == blocked.0
+                    && borrowed.holds_carrier(self.program_ref(), meta.eff_index.dense_ordinal())
+                {
                     EventAdmissionError::PredecessorPending
                 } else {
                     let wait =
-                        self.source_predecessor_wait(index, blocked, None, conflict, selected);
-                    if wait == EventAdmissionError::OtherViewPending && blocked.1 == Some(role) {
+                        self.source_predecessor_wait(index, blocked, borrowed, conflict, selected);
+                    if wait == EventAdmissionError::OtherViewPending
+                        && (blocked.1 == Some(role)
+                            || borrowed.peers.is_some_and(|held| held(role)))
+                    {
                         EventAdmissionError::HeldPredecessorPending
                     } else {
                         wait

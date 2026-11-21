@@ -479,3 +479,164 @@ theorem parallelActualReceiveHasItsFreshAcceptedOccurrence :
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("ActorParallelReentryGenerated.lean"), source).unwrap();
 }
+
+#[cfg(not(miri))]
+#[hibana_runtime::main(crate::test_support::in_process::InProcess::default())]
+#[test]
+async fn a_parent_reset_counts_the_actual_credited_child_writes()
+-> core::result::Result<(), hibana::EndpointError> {
+    use crate::test_support::{lean_choreo::LeanChoreo, lean_descriptor::descriptor_source};
+    use std::fmt::Write;
+
+    type Head = g::Msg<0, ()>;
+    type Reply = g::Msg<1, ()>;
+    type Child = g::Msg<2, ()>;
+    type ChildReply = g::Msg<3, ()>;
+    type Body = g::Roll<
+        g::Par<
+            g::Seq<g::Send<0, 1, Head>, g::Send<1, 0, Reply>>,
+            g::Roll<g::Seq<g::Send<0, 1, Child>, g::Send<1, 0, ChildReply>>>,
+        >,
+    >;
+    let global = g::Program::<Body>::new();
+    let sender_program = crate::runtime::program::project::<0>(&global);
+    let receiver_program = crate::runtime::program::project::<1>(&global);
+    let image = receiver_program.role_image_ref();
+    assert_eq!(image.footprint().borrow_epoch_count, 2);
+    let mut slab = [0; 32 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let network = TestTransport::new();
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, network.clone())
+        .unwrap();
+    let sid = SessionId::new(1975);
+    let mut sender = rv.enter(sid, &sender_program).unwrap();
+    let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+    let mut source = std::format!(
+        "import Hibana.ActorMutationCoverage\nopen Hibana\nset_option maxRecDepth 10000\n\n\
+         def protocol : Choreo := {}\ndef image : RustDescriptorImage := {}\n",
+        Body::lean_source(),
+        descriptor_source(RoleDescriptorRef::from_resident(image)),
+    );
+    sender.send::<Head>(&()).await?;
+    receiver.recv::<Head>().await?;
+    receiver.send::<Reply>(&()).await?;
+    sender.recv::<Reply>().await?;
+    sender.send::<Child>(&()).await?;
+    receiver.recv::<Child>().await?;
+    receiver.send::<ChildReply>(&()).await?;
+    sender.recv::<ChildReply>().await?;
+
+    for (visit, credited) in ["uncredited", "preserved"].into_iter().zip([false, true]) {
+        if credited {
+            // Start the child again after the parent has finished its visit.
+            // Its reply is still owed when the independent parent head arrives.
+            sender.send::<Child>(&()).await?;
+            receiver.recv::<Child>().await?;
+        }
+        sender.send::<Head>(&()).await?;
+        let (header, payload) = network.queued_frame(1);
+        // SAFETY: both samples use the receiver's pinned TestTransport actor.
+        let before = unsafe { actor_snapshot(&receiver) };
+        receiver.recv::<Head>().await?;
+        let after = unsafe { actor_snapshot(&receiver) };
+        let parent = before.steps[0].reentry_scope.unwrap();
+        let child = (0..image.footprint().roll_scope_count)
+            .map(|slot| image.roll_scope_row(slot).unwrap())
+            .find(|row| row.event_row().len() == 2)
+            .unwrap()
+            .scope()
+            .local_ordinal();
+        assert_eq!(
+            before.credited_rolls,
+            if credited {
+                std::vec![child]
+            } else {
+                std::vec![]
+            }
+        );
+        assert!(after.credited_rolls.is_empty());
+        assert_eq!(
+            before
+                .steps
+                .iter()
+                .map(|r| r.done)
+                .collect::<std::vec::Vec<_>>(),
+            [true, true, true, !credited]
+        );
+        assert_eq!(
+            after
+                .steps
+                .iter()
+                .map(|r| r.done)
+                .collect::<std::vec::Vec<_>>(),
+            [true, false, credited, false]
+        );
+        // Each reset scope writes its epoch, credit and retained bit. The
+        // independent child costs only one credit write when preserved.
+        assert_eq!(
+            after.completion_mutations - before.completion_mutations,
+            if credited {
+                2 + 3 + 1 + 1
+            } else {
+                4 + 2 * 3 + 1
+            }
+        );
+        writeln!(source, "
+namespace {visit}
+def before : ActorProgressObservation := {}
+def after : ActorProgressObservation := {}
+def retainedBefore : List Nat := {:?}
+def retainedAfter : List Nat := {:?}
+def creditBefore : List Nat := {:?}
+def creditAfter : List Nat := {:?}
+def firstWrite : Nat := {}
+def lastWrite : Nat := {}
+def parent : Nat := {}
+def child : Nat := {}
+def wire : OwnedWireObservation := {{ session := {}, lane := {}, sender := {}, receiver := {}, frameLabel := {}, payload := {:?} }}
+def sample : ActorReentryCommitObservation := {{ previousPath := 0, nextPath := 0, scope := parent, event := 0, view := 1, before, after }}
+def base := (prepareObservedActorBody? image protocol before 0 0 parent 0 creditBefore).get (by decide)
+def order := (image.decodeActorOrder? protocol).get (by decide)
+def path := (order.normalized.paths[0]?).get (by decide)
+def kept := sourceIndependentRetainedChildren order path (image.decodeRollRows?.get (by decide)) creditBefore base.1 0
+def checkedStep : ActorCommitRecord := {{ step := {{ pathIndex := 0, event := 0, view := 1, before := base.2, after }}, wire }}
+theorem actualCommit : checkedStep.check image protocol {} = true := by decide
+theorem measuredWrites : lastWrite = firstWrite + rollResetWriteCount image base.1 kept + 1 := by decide
+end {visit}",
+            crate::endpoint::proof_snapshot::observation_source(&before),
+            crate::endpoint::proof_snapshot::observation_source(&after),
+            before.retained_rolls, after.retained_rolls, before.credited_rolls, after.credited_rolls,
+            before.completion_mutations, after.completion_mutations, parent, child,
+            header.session().raw(), header.lane(), header.source_role(), header.target_role(),
+            header.label().raw(), payload, sid.raw()).unwrap();
+        receiver.send::<Reply>(&()).await?;
+        sender.recv::<Reply>().await?;
+        if !credited {
+            sender.send::<Child>(&()).await?;
+            receiver.recv::<Child>().await?;
+        }
+        receiver.send::<ChildReply>(&()).await?;
+        sender.recv::<ChildReply>().await?;
+    }
+    assert!(network.queue_is_empty());
+    source.push_str(r#"
+theorem zeroCreditMeasured :
+    uncredited.creditBefore = [] ∧ uncredited.creditAfter = [] ∧ uncredited.kept.isEmpty ∧
+    actorReentryMutationCheck uncredited.sample uncredited.wire image protocol 1975
+      uncredited.firstWrite uncredited.lastWrite = true := by decide
+
+theorem retainedChildMeasured :
+    preserved.creditBefore = [preserved.child] ∧ preserved.creditAfter = [] ∧
+    preserved.kept.map (·.scope) = [preserved.child] ∧
+    preserved.retainedBefore.contains preserved.child ∧ preserved.retainedAfter.contains preserved.child ∧
+    preserved.base.2.progress = [false, false, true, false] ∧
+    preserved.after.progress = [true, false, true, false] ∧
+    preserved.lastWrite = preserved.firstWrite + 2 + 3 + 1 + 1 := by decide
+"#);
+    if let Some(output) = std::env::var_os("HIBANA_REENTRY_WRITE_PROOF") {
+        std::fs::write(output, source).unwrap();
+    }
+    Ok(())
+}

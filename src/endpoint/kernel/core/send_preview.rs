@@ -109,7 +109,8 @@ where
                     target_payload,
                 );
 
-                selector.borrowed = held.map(|_| &borrowed as &dyn Fn(u8) -> bool);
+                let bounds = endpoint.region.bounds();
+                selector.borrowed = endpoint.operation_borrow(&bounds, &borrowed);
 
                 let mut committed_arm_for_scope = |scope| endpoint.selected_arm_for_scope(scope);
                 let mut preview_controller_arm_for_scope =
@@ -133,7 +134,6 @@ where
                 };
                 endpoint.progress.cursor.send_preview_meta_for_contract(
                     selector,
-                    (!endpoint.region.is_whole()).then(|| endpoint.region.bounds()),
                     &mut committed_arm_for_scope,
                     &mut preview_controller_arm_for_scope,
                     &mut selected_arm_for_scope,

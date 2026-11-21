@@ -75,15 +75,13 @@ private theorem current_completion_implies_candidate_readiness
 This is the derived state of the existing bits after one restart, not another
 runtime counter or an application progress table. -/
 def retainedAfterSourceRestart (rolls : List DecodedRollRow)
-    (restarting : DecodedRollRow) (retained : List Nat) : List Nat :=
+    (restarting : DecodedRollRow) (retained : List Nat)
+    (preserved : List DecodedRollRow := []) : List Nat :=
   rolls.filterMap fun roll =>
-    if roll.scope = restarting.scope then some roll.scope
-    else if retained.contains roll.scope &&
-        !(restarting.eventStart ≤ roll.eventStart &&
-          roll.eventStart + roll.eventLength ≤ restarting.eventStart + restarting.eventLength &&
-          (roll.eventStart != restarting.eventStart || roll.eventLength != restarting.eventLength ||
-            restarting.scope < roll.scope)) then some roll.scope
-    else none
+    if roll.scope == restarting.scope ||
+        (retained.contains roll.scope &&
+          (!roll.nestedWithin restarting || preserved.any fun child => roll.nestedWithin child))
+    then some roll.scope else none
 
 /-- Source readiness for the still-current visit. Unknown choices remain
 unknown; only recorded choices must agree with the selected source path. -/

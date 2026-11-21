@@ -764,4 +764,23 @@ theorem accepted_actor_rows_bind_candidate_operations
           exact ⟨source, normalized, rows, fields.1, fields.2.1, rfl,
             beq_iff_eq.mp checked.1.2.1⟩
 
+/-- Actor resolution can consult only scopes named in its immutable decision
+rows. This also preserves decoding failure for an invalid reference. -/
+theorem selected_actor_eq_of_same_decision_scopes
+    {columns : DecodedProgramColumns} {first second : Nat → Option RouteArm}
+    (same : ∀ row ∈ columns.actorDecisions, first row.scope = second row.scope)
+    (reference : Nat) : columns.selectedActor? first reference = columns.selectedActor? second reference := by
+  unfold DecodedProgramColumns.selectedActor?
+  generalize columns.actorDecisions.length + 1 = fuel
+  induction fuel generalizing reference with
+  | zero => rfl
+  | succ n ih =>
+    by_cases direct : reference < 256
+    · simp only [selectActorWithBound, if_pos direct]
+    · cases read : columns.actorDecisions[reference - 256]? with
+      | none => simp [selectActorWithBound, direct, read]
+      | some row =>
+        have member := List.mem_of_getElem? read
+        simp [selectActorWithBound, direct, read, same row member, ih]
+
 end Hibana

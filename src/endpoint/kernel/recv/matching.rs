@@ -36,7 +36,7 @@ where
         if !key.matches_recv(meta) {
             return Ok(None);
         }
-        let Ok(_) = self.recv_event_enabled(idx, meta.into()) else {
+        let Ok(enabled) = self.recv_event_enabled(idx, meta.into()) else {
             return Ok(None);
         };
 
@@ -45,7 +45,7 @@ where
                 meta,
                 cursor_index: StateIndex::from_usize(idx),
             },
-            admission: Ok(()),
+            admission: Ok(enabled),
         }))
     }
 
@@ -82,7 +82,7 @@ where
             if !observed.matches_recv(meta) {
                 continue;
             }
-            let admission = self.recv_event_enabled(idx, meta.into()).map(|_| ());
+            let admission = self.recv_event_enabled(idx, meta.into());
             if matches!(
                 admission,
                 Err(crate::global::typestate::EventAdmissionError::Invariant)

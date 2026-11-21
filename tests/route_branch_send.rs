@@ -1,4 +1,8 @@
+#[path = "common/admission_observations.rs"]
+mod admission_observations;
 mod common;
+use admission_observations::{observed_poll, record_contracts, record_observation};
+
 #[path = "../examples/support/in_process.rs"]
 pub mod in_process;
 
@@ -18,6 +22,232 @@ const BRANCH_SEND_LEFT: u8 = 63;
 const BRANCH_SEND_RIGHT: u8 = 64;
 const HIGH_CONTROLLER: u8 = 254;
 const HIGH_PEER: u8 = 255;
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_fresh_send_can_wait_for_a_choice_that_skips_its_own_predecessor()
+-> Result<(), hibana::EndpointError> {
+    use core::{future::Future, pin::pin, task::Context, task::Waker};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    #[derive(Default)]
+    struct WakeFlag(AtomicBool);
+    impl std::task::Wake for WakeFlag {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+    type Loan<'r> = Msg<1, hibana::Endpoint<'r, 2>>;
+    type Work = Msg<2, ()>;
+    type Skip = Msg<3, ()>;
+    type Optional = Msg<4, ()>;
+    type ResultValue = Msg<5, u8>;
+
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::route(
+                g::seq(g::send::<0, 1, Work>(), g::send::<2, 0, Optional>()),
+                g::send::<0, 1, Skip>(),
+            ),
+            g::send::<2, 0, ResultValue>(),
+        ),
+    );
+    let owner_program = project::<0>(&global);
+    let holder_program = project::<1>(&global);
+    let resource_program = project::<2>(&global);
+    record_contracts("open-choice", &holder_program);
+    // First deliver the same suffix with the resource already borrowed. Then
+    // poll the resource before the holder learns which arm the owner selects.
+    for (poll_before_choice, work) in [(false, false), (true, false), (false, true)] {
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 32 * 1024];
+        let mut holder_slab = [0; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut holder_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let holder_rv = holder_storage
+            .init()
+            .rendezvous(&mut holder_slab, network.clone())
+            .unwrap();
+        let session = SessionId::new(920);
+        let mut owner = owner_rv.enter(session, &owner_program).unwrap();
+        let mut holder = holder_rv.enter(session, &holder_program).unwrap();
+        owner
+            .send::<Loan>(owner_rv.enter(session, &resource_program).unwrap())
+            .await?;
+        let mut resource = holder.recv::<Loan>().await?;
+        if work {
+            owner.send::<Work>(&()).await?;
+            holder.recv::<Work>().await?;
+            {
+                let mut blocked = pin!(resource.send::<ResultValue>(&17));
+                let poll = blocked
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()));
+                assert!(matches!(poll, core::task::Poll::Ready(Err(e)) if e.is_unavailable()));
+                assert!(network.queue_is_empty());
+            }
+            resource.send::<Optional>(&()).await?;
+            owner.recv::<Optional>().await?;
+        }
+        let wake = Arc::new(WakeFlag::default());
+        let waker = Waker::from(Arc::clone(&wake));
+        let mut send = pin!(resource.send::<ResultValue>(&17));
+        if poll_before_choice {
+            let poll = send.as_mut().poll(&mut Context::from_waker(&waker));
+            record_observation(&format!("open-choice {}", observed_poll(&poll)));
+            assert!(
+                poll.is_pending(),
+                "the skip arm can enable this send: {poll:?}"
+            );
+            assert!(network.queue_is_empty());
+            wake.0.store(false, Ordering::Relaxed);
+        }
+        if !work {
+            owner.send::<Skip>(&()).await?;
+            holder.recv::<Skip>().await?;
+        }
+        if poll_before_choice {
+            assert!(wake.0.load(Ordering::Relaxed));
+        }
+        send.await?;
+        assert_eq!(owner.recv::<ResultValue>().await?, 17);
+        assert!(network.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn both_arms_need_the_held_view_even_when_their_predecessors_differ()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+    type Loan<'r> = Msg<1, hibana::Endpoint<'r, 2>>;
+    type Left = Msg<2, ()>;
+    type Right = Msg<3, ()>;
+    type LeftWork = Msg<4, ()>;
+    type RightWork = Msg<5, ()>;
+    type Done = Msg<6, ()>;
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::seq(
+            g::route(
+                g::seq(g::send::<0, 1, Left>(), g::send::<2, 0, LeftWork>()),
+                g::seq(g::send::<0, 1, Right>(), g::send::<2, 0, RightWork>()),
+            ),
+            g::send::<2, 0, Done>(),
+        ),
+    );
+    let owner_program = project::<0>(&global);
+    let holder_program = project::<1>(&global);
+    let resource_program = project::<2>(&global);
+    for left in [false, true] {
+        let network = TestTransport::new();
+        let mut owner_slab = [0; 32 * 1024];
+        let mut holder_slab = [0; 32 * 1024];
+        let mut owner_storage = SessionKitStorage::uninit();
+        let mut holder_storage = SessionKitStorage::uninit();
+        let owner_rv = owner_storage
+            .init()
+            .rendezvous(&mut owner_slab, network.clone())
+            .unwrap();
+        let holder_rv = holder_storage
+            .init()
+            .rendezvous(&mut holder_slab, network.clone())
+            .unwrap();
+        let session = SessionId::new(921);
+        let mut owner = owner_rv.enter(session, &owner_program).unwrap();
+        let mut holder = holder_rv.enter(session, &holder_program).unwrap();
+        owner
+            .send::<Loan>(owner_rv.enter(session, &resource_program).unwrap())
+            .await?;
+        let mut resource = holder.recv::<Loan>().await?;
+        {
+            let mut send = pin!(resource.send::<Done>(&()));
+            let poll = send.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+            assert!(matches!(poll, Poll::Ready(Err(e)) if e.is_unavailable()));
+            assert!(network.queue_is_empty());
+        }
+        if left {
+            owner.send::<Left>(&()).await?;
+            holder.recv::<Left>().await?;
+            resource.send::<LeftWork>(&()).await?;
+            owner.recv::<LeftWork>().await?;
+        } else {
+            owner.send::<Right>(&()).await?;
+            holder.recv::<Right>().await?;
+            resource.send::<RightWork>(&()).await?;
+            owner.recv::<RightWork>().await?;
+        }
+        resource.send::<Done>(&()).await?;
+        owner.recv::<Done>().await?;
+        assert!(network.queue_is_empty());
+    }
+    Ok(())
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn a_held_resource_can_wait_for_a_choice_that_keeps_its_current_holder()
+-> Result<(), hibana::EndpointError> {
+    use core::{
+        future::Future,
+        pin::pin,
+        task::{Context, Waker},
+    };
+
+    type Loan<'r> = Msg<1, hibana::Endpoint<'r, 2>>;
+    type Keep = Msg<2, ()>;
+    type Value = Msg<3, u8>;
+    let global = g::seq(
+        g::route(g::send::<0, 1, Loan>(), g::send::<0, 1, Keep>()),
+        g::send::<2, 0, Value>(),
+    );
+    let owner_program = project::<0>(&global);
+    let worker_program = project::<1>(&global);
+    let resource_program = project::<2>(&global);
+    let network = TestTransport::new();
+    let mut owner_slab = [0; 32 * 1024];
+    let mut worker_slab = [0; 32 * 1024];
+    let mut owner_storage = SessionKitStorage::uninit();
+    let mut worker_storage = SessionKitStorage::uninit();
+    let owner_rv = owner_storage
+        .init()
+        .rendezvous(&mut owner_slab, network.clone())
+        .unwrap();
+    let worker_rv = worker_storage
+        .init()
+        .rendezvous(&mut worker_slab, network.clone())
+        .unwrap();
+    let session = SessionId::new(922);
+    let mut owner = owner_rv.enter(session, &owner_program).unwrap();
+    let mut resource = owner_rv.enter(session, &resource_program).unwrap();
+    let mut worker = worker_rv.enter(session, &worker_program).unwrap();
+
+    let mut send = pin!(resource.send::<Value>(&23));
+    let poll = send.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+    assert!(
+        poll.is_pending(),
+        "the owner can keep this resource: {poll:?}"
+    );
+    assert!(network.queue_is_empty());
+    owner.send::<Keep>(&()).await?;
+    worker.recv::<Keep>().await?;
+    send.await?;
+    assert_eq!(owner.recv::<Value>().await?, 23);
+    assert!(network.queue_is_empty());
+    Ok(())
+}
 
 fn branch_send_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left = g::send::<0, 1, Msg<BRANCH_SEND_LEFT, u32>>();

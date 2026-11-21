@@ -14,8 +14,8 @@ use crate::{
     endpoint::{RecvError, RecvResult},
     global::role_program::{LANE_SET_VIEW_WORDS, LaneWord, lane_word_index},
     global::typestate::{
-        CursorInvariantError, DeterministicInboundKey, EventArmView, InboundFrameKey,
-        PackedEventConflict, state_index_to_usize,
+        CursorInvariantError, DeterministicInboundKey, EnabledEventCommit, EventArmView,
+        InboundFrameKey, PackedEventConflict, state_index_to_usize,
     },
     runtime_core::UniqueMatchFailure,
     transport::{
@@ -81,7 +81,11 @@ where
                     desc.meta.frame_label,
                     frame,
                 )?;
-                Ok(MatchedRecvFrame { desc, frame })
+                Ok(MatchedRecvFrame {
+                    desc,
+                    enabled: crate::invariant_ok(candidate.admission),
+                    frame,
+                })
             }
             Err(UniqueMatchFailure::None) => {
                 self.emit_materialization_mismatch_observation(
@@ -112,24 +116,25 @@ where
     ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
         let lane_limit = self.progress.cursor.logical_lane_count();
         let mut words = [0; LANE_SET_VIEW_WORDS];
-        let lanes = match self.live_recv_lanes(target_label, target_payload, &mut words) {
-            Ok(lanes) => lanes,
-            Err(RecvError::Unavailable | RecvError::OutOfOrder)
-                if self.operation.public_active_op == super::core::PublicActiveOp::Recv =>
-            {
-                // A transport poll that returned Pending accepted no frame.
-                // Another view can now exclude this contract without making
-                // this call a protocol violation. Every frame observed by a
-                // plain receive is committed or requeued within that poll.
-                return Poll::Ready(Err(RecvError::Unavailable));
-            }
-            // A materialized branch preview retains its terminal contract.
-            // Unavailability must not discard that already accepted input.
-            Err(RecvError::Unavailable) => {
-                return Poll::Ready(Err(RecvError::PhaseInvariant));
-            }
-            Err(error) => return Poll::Ready(Err(error)),
-        };
+        let (lanes, wait_candidate) =
+            match self.live_recv_lanes(target_label, target_payload, &mut words) {
+                Ok(live) => live,
+                Err(RecvError::Unavailable | RecvError::OutOfOrder)
+                    if self.operation.public_active_op == super::core::PublicActiveOp::Recv =>
+                {
+                    // A transport poll that returned Pending accepted no frame.
+                    // Another view can now exclude this contract without making
+                    // this call a protocol violation. Every frame observed by a
+                    // plain receive is committed or requeued within that poll.
+                    return Poll::Ready(Err(RecvError::Unavailable));
+                }
+                // A materialized branch preview retains its terminal contract.
+                // Unavailability must not discard that already accepted input.
+                Err(RecvError::Unavailable) => {
+                    return Poll::Ready(Err(RecvError::PhaseInvariant));
+                }
+                Err(error) => return Poll::Ready(Err(error)),
+            };
         let mut next = lanes.first_set(lane_limit);
         let mut pending_lane = false;
         let mut parked_lane = false;
@@ -193,7 +198,7 @@ where
                     let desc = candidate.desc;
                     let same_contract =
                         desc.meta.label == target_label && desc.meta.payload_kind == target_payload;
-                    if same_contract && candidate.admission.is_ok() {
+                    if same_contract && let Ok(enabled) = candidate.admission {
                         return Poll::Ready(
                             self.accept_materialized_transport_frame(
                                 lane_idx,
@@ -202,7 +207,11 @@ where
                                 desc.meta.frame_label,
                                 frame,
                             )
-                            .map(|frame| MatchedRecvFrame { desc, frame }),
+                            .map(|frame| MatchedRecvFrame {
+                                desc,
+                                enabled,
+                                frame,
+                            }),
                         );
                     }
                     // A recognized source operation can belong to another
@@ -249,14 +258,18 @@ where
             return Poll::Ready(Err(RecvError::PhaseInvariant));
         }
         if self.operation.public_active_op == super::core::PublicActiveOp::Recv
-            && (self.recv_contract_excludes_wait(target_label, target_payload, None)
-                || self.poll_excluding_receive_observation(
-                    target_label,
-                    target_payload,
-                    &words,
-                    pending_recv,
-                    cx,
-                )?)
+            && (self.recv_contract_excludes_wait(
+                target_label,
+                target_payload,
+                None,
+                Some(wait_candidate),
+            ) || self.poll_excluding_receive_observation(
+                target_label,
+                target_payload,
+                &words,
+                pending_recv,
+                cx,
+            )?)
         {
             return Poll::Ready(Err(RecvError::Unavailable));
         }
@@ -348,9 +361,27 @@ where
         payload_kind: crate::eff::EventPayload,
         matched: MatchedRecvFrame<'r>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
-        let MatchedRecvFrame { desc, frame } = matched;
-        let delta = match self.prepare_recv_commit_delta(logical_label, payload_kind, desc, &frame)
-        {
+        let MatchedRecvFrame {
+            desc,
+            enabled,
+            frame,
+        } = matched;
+        // A framed header is reported to the tap after matching. A callback
+        // can retire a co-resident view or borrow while the kernel is leased.
+        let retired = self.reconcile_retirements();
+        if let Some(kind) = self.session_fault() {
+            frame.discard_uncommitted();
+            return Err(RecvError::SessionFault(kind));
+        }
+        let enabled = if retired {
+            self.recv_event_enabled(state_index_to_usize(desc.cursor_index), desc.meta.into())
+                .map_err(|_| RecvError::PhaseInvariant)
+        } else {
+            Ok(enabled)
+        };
+        let delta = match enabled.and_then(|enabled| {
+            self.prepare_recv_commit_delta(logical_label, payload_kind, desc, &frame, enabled)
+        }) {
             Ok(delta) => delta,
             Err(err) => {
                 frame.discard_uncommitted();
@@ -366,6 +397,7 @@ where
         payload_kind: crate::eff::EventPayload,
         desc: RecvDescriptor,
         frame: &lane_port::ReceivedFrame<'_>,
+        enabled: EnabledEventCommit,
     ) -> RecvResult<PreparedCommitDelta> {
         let meta = desc.meta;
         if meta.label != logical_label {
@@ -388,12 +420,6 @@ where
         }
         let cursor_index = state_index_to_usize(desc.cursor_index);
         let preview_conflict = self.progress.cursor.event_conflict_for_index(cursor_index);
-        let enabled = match self.recv_event_enabled(cursor_index, meta.into()) {
-            Ok(enabled) => enabled,
-            Err(_) => {
-                return Err(RecvError::PhaseInvariant);
-            }
-        };
         let route_rows = if meta.route_arm.is_some() {
             let route_rows = {
                 let crate::endpoint::kernel::core::ActorProgress {

@@ -48,8 +48,15 @@ fn unfinished_roll_waits_distinguish_other_caller_and_borrowed_views() {
             Err(EventAdmissionError::OtherViewPending)
         );
         assert_eq!(
-            cursor
-                .event_enabled_borrowing(request, event, Some(&|role| role == 0), &mut |_, _| None),
+            cursor.event_enabled_borrowing(
+                request,
+                event,
+                OperationBorrow {
+                    peers: Some(&|role| role == 0),
+                    ..OperationBorrow::default()
+                },
+                &mut |_, _| None
+            ),
             Err(EventAdmissionError::HeldPredecessorPending)
         );
         cursor.clear_local_event_done(reply);
@@ -99,10 +106,15 @@ fn a_retired_optional_receipt_does_not_refuse_an_unknown_or_resource_free_arm() 
         event.body_reentry = image.roll_scope_row(0).unwrap().scope();
         for arm in [None, Some(0), Some(1)] {
             assert_eq!(
-                cursor.reentry_view_wait(index, event, None, &mut |_, view| match view {
-                    EventArmView::Committed => Some(0),
-                    EventArmView::Preview => arm,
-                }),
+                cursor.reentry_view_wait(
+                    index,
+                    event,
+                    OperationBorrow::default(),
+                    &mut |_, view| match view {
+                        EventArmView::Committed => Some(0),
+                        EventArmView::Preview => arm,
+                    }
+                ),
                 if arm == Some(0) {
                     EventAdmissionError::PredecessorPending
                 } else {
@@ -120,7 +132,7 @@ fn a_retired_optional_receipt_does_not_refuse_an_unknown_or_resource_free_arm() 
                 cursor.source_predecessor_wait(
                     index,
                     (3, None),
-                    None,
+                    OperationBorrow::default(),
                     cursor.event_conflict_for_index(index),
                     &mut |_| arm
                 ),

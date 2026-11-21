@@ -106,7 +106,8 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
     /// An external callback can destroy another borrow while this kernel owns
     /// the cursor. Reborrow only the affected I/O; never acquire another cursor
     /// or reconstruct a shared reference over a protected actor Drop.
-    pub(crate) fn reconcile_retirements(&mut self) {
+    pub(crate) fn reconcile_retirements(&mut self) -> bool {
+        let mut reconciled = false;
         loop {
             if let Some(ptr) = self.context.retired_operations.get() {
                 // SAFETY: the queue contains this actor's pinned operation slots.
@@ -178,8 +179,9 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                 }
                 drop(waiters);
             } else {
-                return;
+                return reconciled;
             }
+            reconciled = true;
         }
     }
 }

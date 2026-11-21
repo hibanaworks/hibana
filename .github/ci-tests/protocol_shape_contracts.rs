@@ -247,6 +247,20 @@ pub(super) fn protocol(rank: usize) -> Protocol {
         owned,
     };
     let seq = |left, right| Protocol::Seq(Box::new(left), Box::new(right));
+    if rank == 43 {
+        // Before the holder sees the choice, its delegated view can wait for
+        // the suffix: the skip arm never needs the optional operation on it.
+        return seq(
+            message(0, 1, true),
+            seq(
+                Protocol::Route(
+                    Box::new(seq(message(0, 1, false), message(3, 0, false))),
+                    Box::new(message(0, 1, false)),
+                ),
+                message(3, 0, false),
+            ),
+        );
+    }
     if rank == 42 {
         // The retry is sent on the holder's ordinary view. Restarting its
         // body also requires the loan, which has moved back to the publisher.
