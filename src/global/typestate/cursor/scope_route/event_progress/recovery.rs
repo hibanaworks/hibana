@@ -177,6 +177,27 @@ impl EventCursor {
         })
     }
 
+    /// A hypothetical visit reads enclosing choices first. An excluded
+    /// outer arm then excludes its whole subtree without assigning any of
+    /// its inner choices. Only guards from the sealed operation row are used.
+    fn visit_excludes_row(
+        &self,
+        guard: PackedEventConflict,
+        selected: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        if let Some(chain) = self.route_commit_range_for_conflict(guard) {
+            return self.route_commit_rows(chain).any(|row| {
+                let Some(crate::global::typestate::LocalConflict::RouteArm { scope, arm }) =
+                    row.to_conflict()
+                else {
+                    crate::invariant()
+                };
+                selected(scope).is_some_and(|choice| choice != arm)
+            });
+        }
+        !self.event_conflict_row_allows(guard, ScopeId::none(), None, selected)
+    }
+
     fn reentry_wait_on_path(
         &self,
         index: usize,
@@ -221,13 +242,11 @@ impl EventCursor {
                 continue;
             }
             if self.event_lane_at(pending).is_none()
-                || self.event_actor_is_local(pending, &mut committed) == Some(false)
-                || !self.event_conflict_row_allows(
+                || self.visit_excludes_row(
                     self.machine().event_conflict_for_index(pending),
-                    ScopeId::none(),
-                    None,
                     &mut committed,
                 )
+                || self.event_actor_is_local(pending, &mut committed) == Some(false)
                 || self
                     .roll_reentry_preserved_child(scope, pending, Some(index))
                     .is_some()
@@ -270,28 +289,18 @@ impl EventCursor {
                 || self
                     .program_ref()
                     .source_precedes(before.dense_ordinal(), event.eff_index.dense_ordinal()))
+                && !self.visit_excludes_row(
+                    self.machine().event_conflict_for_index(prior),
+                    &mut |scope| {
+                        selected(scope).or_else(|| self.preview_conflict_arm(conflict, scope))
+                    },
+                )
                 && self.event_actor_is_local(prior, &mut selected) != Some(false)
             {
-                match self.event_conflict_row_admission_with_preview(
-                    self.machine().event_conflict_for_index(prior),
-                    conflict,
-                    &mut selected,
-                ) {
-                    super::super::ConflictAdmission::Allowed => {
-                        if uses_caller {
-                            return EventAdmissionError::PredecessorPending;
-                        }
-                        // The carrier check above was false, so the matched
-                        // prerequisite is held by this operation's payload or
-                        // another exclusively borrowed view.
-                        wait = EventAdmissionError::HeldPredecessorPending;
-                    }
-                    super::super::ConflictAdmission::Excluded { scope, arm } => {
-                        prior = self.excluded_arm_end(prior, scope, arm).min(end);
-                        continue;
-                    }
-                    super::super::ConflictAdmission::Invalid => (),
+                if uses_caller {
+                    return EventAdmissionError::PredecessorPending;
                 }
+                wait = EventAdmissionError::HeldPredecessorPending;
             }
             prior += 1;
         }
@@ -470,4 +479,58 @@ impl EventCursor {
         }
         verdict
     }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+#[test]
+fn excluded_parent_prunes_unvisited_child_for_every_partial_choice() {
+    use crate::global::typestate::{LocalConflict, cursor::validated_metadata_tests::with_rows};
+    use crate::{g, runtime::program::project};
+
+    let global = g::route(
+        g::route(
+            g::send::<0, 1, g::Msg<1, ()>>(),
+            g::send::<0, 1, g::Msg<2, ()>>(),
+        ),
+        g::send::<0, 1, g::Msg<3, ()>>(),
+    )
+    .roll();
+    with_rows(project::<0>(&global).role_image_ref(), |cursor| {
+        let row = cursor.event_conflict_for_index(0);
+        let chain = cursor.route_commit_range_for_conflict(row).unwrap();
+        let mut guards = cursor.route_commit_rows(chain);
+        let Some(LocalConflict::RouteArm {
+            scope: parent,
+            arm: parent_arm,
+        }) = guards.next().unwrap().to_conflict()
+        else {
+            panic!("missing outer guard")
+        };
+        let Some(LocalConflict::RouteArm { scope: child, .. }) =
+            guards.next().unwrap().to_conflict()
+        else {
+            panic!("missing inner guard")
+        };
+        assert_ne!(parent, child);
+        assert!(guards.next().is_none());
+        for outer in [None, Some(0), Some(1)] {
+            for inner in [None, Some(0), Some(1)] {
+                let mut reads = std::vec::Vec::new();
+                let mut selected = |scope| if scope == parent { outer } else { inner };
+                let excluded = cursor.visit_excludes_row(row, &mut |scope| {
+                    reads.push(scope);
+                    selected(scope)
+                });
+                assert_eq!(
+                    excluded,
+                    !cursor.event_conflict_row_allows(row, ScopeId::none(), None, &mut selected,)
+                );
+                if outer.is_some_and(|arm| arm != parent_arm) {
+                    assert_eq!(reads, [parent]);
+                } else {
+                    assert_eq!(reads, [parent, child]);
+                }
+            }
+        }
+    });
 }

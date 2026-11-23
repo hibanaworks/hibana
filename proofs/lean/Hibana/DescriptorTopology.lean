@@ -826,6 +826,18 @@ private def canonicalRouteCommitChain
   (canonicalRouteCommitChainFrom
     source (source.resolvers.length + 1) (scope * 2 + arm)).reverse
 
+/-- Checking a hypothetical visit from its enclosing route inward yields the
+    same exclusion on every fixed assignment, including partial assignments. -/
+theorem route_visit_exclusion_preserves_assignments
+    (source : CanonicalProgramSource) (scope arm : Nat)
+    (selected : Nat → Option Nat) :
+    let excluded := fun row : Nat =>
+      (selected (row / 2)).any fun choice => choice != row % 2
+    (canonicalRouteCommitChain source scope arm).any excluded =
+      (canonicalRouteCommitChainFrom source (source.resolvers.length + 1)
+        (scope * 2 + arm)).any excluded := by
+  simp [canonicalRouteCommitChain]
+
 /-- A table entry records the exact source fact. Missing keys remain absent;
     absence is never interpreted as an unconditional parent. -/
 private def immutableScopeMemo {α β : Type} [DecidableEq α]
