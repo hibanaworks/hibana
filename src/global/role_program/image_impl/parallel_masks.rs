@@ -48,45 +48,6 @@ impl MaskRow {
             }
         }
     }
-
-    const fn collect<const E: usize>(
-        effects: &EffList<E>,
-        rows: LocalRows<'_, E>,
-        view: u8,
-        start: usize,
-        stop: usize,
-    ) -> Self {
-        if start >= stop || stop > effects.len() || stop > u16::MAX as usize {
-            crate::invariant();
-        }
-        let mut row = Self {
-            view,
-            start: start as u16,
-            stop: stop as u16,
-            len: 0,
-            bits: [0; MASK_BYTES],
-        };
-        let mut event = start;
-        while event < stop {
-            let mut side = 0;
-            while side < rows.count(effects, event) {
-                if logical_view(effects, rows, event, side) == view {
-                    let lane = effects.atom_at(event).lane as usize;
-                    row.bits[lane / 8] |= 1 << (lane % 8);
-                    let len = (lane / 8 + 1) as u8;
-                    if len > row.len {
-                        row.len = len;
-                    }
-                }
-                side += 1;
-            }
-            event += 1;
-        }
-        if row.len == 0 {
-            crate::invariant();
-        }
-        row
-    }
 }
 
 /// Compiler iterator workspace. Nothing here is attached to a live session.
@@ -95,6 +56,8 @@ pub(super) struct MaskRows {
     arm: u8,
     range: Option<(usize, usize)>,
     views: [u8; MASK_BYTES],
+    lanes: [[u8; MASK_BYTES]; 256],
+    lengths: [u8; 256],
 }
 
 impl MaskRows {
@@ -104,6 +67,8 @@ impl MaskRows {
             arm: 0,
             range: None,
             views: [0; MASK_BYTES],
+            lanes: [[0; MASK_BYTES]; 256],
+            lengths: [0; 256],
         }
     }
 
@@ -120,16 +85,21 @@ impl MaskRows {
                     if pending != 0 {
                         let bit = pending.trailing_zeros() as usize;
                         self.views[byte] &= !(1 << bit);
-                        return Some(MaskRow::collect(
-                            effects,
-                            rows,
-                            (byte * 8 + bit) as u8,
-                            start,
-                            stop,
-                        ));
+                        let view = byte * 8 + bit;
+                        let result = MaskRow {
+                            view: view as u8,
+                            start: start as u16,
+                            stop: stop as u16,
+                            len: self.lengths[view],
+                            bits: self.lanes[view],
+                        };
+                        self.lanes[view] = [0; MASK_BYTES];
+                        self.lengths[view] = 0;
+                        return Some(result);
                     }
                     byte += 1;
                 }
+                self.range = None;
             }
             let markers = effects.scope_markers();
             if self.marker == markers.len() {
@@ -150,14 +120,12 @@ impl MaskRows {
                 self.arm = 0;
                 (right_start, right_stop)
             };
-            self.range = Some((start, stop));
             if rows.range(effects, start, stop).is_absent_or_zero_len() {
                 continue;
             }
-            if matches!(rows, LocalRows::Role(_)) {
-                let view = rows.actor() as usize;
-                self.views[view / 8] |= 1 << (view % 8);
-                continue;
+            self.range = Some((start, stop));
+            if start >= stop || stop > effects.len() || stop > u16::MAX as usize {
+                crate::invariant();
             }
             let mut event = start;
             while event < stop {
@@ -165,6 +133,12 @@ impl MaskRows {
                 while side < rows.count(effects, event) {
                     let view = logical_view(effects, rows, event, side) as usize;
                     self.views[view / 8] |= 1 << (view % 8);
+                    let lane = effects.atom_at(event).lane as usize;
+                    self.lanes[view][lane / 8] |= 1 << (lane % 8);
+                    let len = (lane / 8 + 1) as u8;
+                    if len > self.lengths[view] {
+                        self.lengths[view] = len;
+                    }
                     side += 1;
                 }
                 event += 1;
