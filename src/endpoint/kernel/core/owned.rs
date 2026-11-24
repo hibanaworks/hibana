@@ -170,6 +170,18 @@ impl<'r, T: Transport + 'r> OperationKernel<'_, 'r, T> {
                     if view.is_some_and(|view| view.public_header.generation() != 0) {
                         true
                     } else {
+                        // A completed and dropped file, for example, cannot
+                        // supply another visit to its own arm. Its absence
+                        // does not block an arm which never uses the view.
+                        if event.is_some_and(|event| {
+                            self.context.program.source_roll_entry_excludes_role(
+                                scope,
+                                event.eff_index().dense_ordinal(),
+                                role,
+                            )
+                        }) {
+                            continue;
+                        }
                         let borrowed = |role| {
                             self.held.is_some_and(|views| {
                                 views.contains(self.public_header.actor(), role)

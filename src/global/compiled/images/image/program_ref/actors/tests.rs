@@ -10,6 +10,38 @@ use crate::global::{
 mod source_order;
 
 #[test]
+fn a_route_choice_excludes_only_resources_confined_to_its_other_arm_in_this_visit() {
+    use crate::{Endpoint, g, global::compiled::lowering::CompiledProgramImage};
+    type Loan = g::Msg<1, Endpoint<'static, 7>>;
+    type Work = g::Msg<2, ()>;
+    type Lend = g::Seq<g::Send<0, 1, Loan>, g::Send<1, 0, Loan>>;
+    type Inner = g::Roll<g::Route<Lend, g::Send<0, 2, Work>>>;
+    type Steps = g::Roll<g::Seq<g::Route<Inner, g::Send<0, 3, Work>>, g::Send<0, 4, Work>>>;
+    const SOURCE: g::ProgramSourceData<32> = g::ProgramSourceData::lower::<Steps>();
+    const PLAN: ProgramImagePlan = ProgramImagePlan::from_source(&SOURCE);
+    const SUMMARY: CompiledProgramImage = CompiledProgramImage::scan_const(SOURCE.eff_list());
+    static BYTES: ProgramImageBytes<512> =
+        ProgramImageBytes::from_source_if_fits(&SOURCE, PLAN.columns()).expect("test image fits");
+    let image = BYTES.compiled_ref(&SUMMARY, PLAN.columns());
+    let outer = image.source_roll_containing(0, 5).unwrap();
+    let inner = image.source_roll_containing(0, 3).unwrap();
+    assert_ne!(outer, inner);
+    // Entering the outer right arm excludes all three ways a role can
+    // participate in the other arm (sender, receiver and owned payload).
+    for role in [1, 2, 7] {
+        assert!(image.source_roll_entry_excludes_role(outer, 3, role));
+    }
+    for role in [0, 3, 4] {
+        assert!(!image.source_roll_entry_excludes_role(outer, 3, role));
+    }
+    // A later inner visit can choose to lend even when this visit does not.
+    assert!(!image.source_roll_entry_excludes_role(outer, 2, 7));
+    assert!(image.source_roll_entry_excludes_role(inner, 2, 7));
+    // The common continuation implies no choice about the preceding route.
+    assert!(!image.source_roll_entry_excludes_role(outer, 4, 7));
+}
+
+#[test]
 fn packed_repetition_heads_and_parent_links_are_checked_before_publication() {
     use crate::{g, global::compiled::lowering::CompiledProgramImage};
     type Step = g::Send<0, 1, g::Msg<1, ()>>;

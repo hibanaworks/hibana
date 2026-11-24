@@ -316,6 +316,54 @@ async fn returning_a_conditionally_held_endpoint_preserves_its_selected_owner_gu
 
 #[hibana_runtime::main(crate::in_process::InProcess::default())]
 #[test]
+async fn reentering_a_route_requires_the_views_used_by_its_selected_arm() {
+    type Loan<'r> = g::Msg<1, Endpoint<'r, 3>>;
+    type Start = g::Msg<2, ()>;
+    type Work = g::Msg<3, ()>;
+    type Publish = g::Msg<4, ()>;
+    let global = g::seq(
+        g::send::<0, 1, Loan>(),
+        g::route(
+            g::seq(g::send::<1, 0, Start>(), g::send::<3, 0, Work>()),
+            g::send::<1, 0, Publish>(),
+        )
+        .roll(),
+    );
+    let service_program = project::<0>(&global);
+    let client_program = project::<1>(&global);
+    let file_program = project::<3>(&global);
+    let sid = SessionId::new(9173);
+    // SAFETY: this run issues one Endpoint for its one fixture resource.
+    let network = InMemoryTransport::new(unsafe { [((sid, 3), EndpointBinding::new())] });
+    let mut slab = [0; 64 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let rv = storage.init().rendezvous(&mut slab, network).unwrap();
+    let mut service = rv.enter(sid, &service_program).unwrap();
+    let mut client = rv.enter(sid, &client_program).unwrap();
+    let file = rv.enter(sid, &file_program).unwrap();
+    service.send::<Loan>(file).await.unwrap();
+    let mut file = client.recv::<Loan>().await.unwrap();
+    client.send::<Start>(&()).await.unwrap();
+    service.recv::<Start>().await.unwrap();
+    file.send::<Work>(&()).await.unwrap();
+    service.recv::<Work>().await.unwrap();
+    drop(file);
+
+    assert!(
+        client
+            .send::<Start>(&())
+            .await
+            .unwrap_err()
+            .is_unavailable()
+    );
+    for _ in 0..2 {
+        client.send::<Publish>(&()).await.unwrap();
+        service.recv::<Publish>().await.unwrap();
+    }
+}
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
 async fn moving_an_unrelated_resource_preserves_the_retained_roll() {
     type Loan<'r> = g::Msg<0, Endpoint<'r, 3>>;
     type Work = g::Msg<1, ()>;

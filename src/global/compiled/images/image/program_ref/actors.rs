@@ -378,6 +378,35 @@ impl CompiledProgramRef {
         self.source_range_parallel_to_event(start, end, event)
     }
 
+    /// The entering event selects one arm of each enclosing route in this
+    /// visit. A route inside a nested roll may choose again in another visit.
+    pub(crate) fn source_roll_entry_excludes_role(
+        &self,
+        roll: ScopeId,
+        entry: usize,
+        role: u8,
+    ) -> bool {
+        let Some((start, _, end)) = self.source_scope_bounds(roll) else {
+            return false;
+        };
+        if !(start..end).contains(&entry) {
+            return false;
+        }
+        (start..end).all(|event| {
+            let atom = self.event_atom_at(event);
+            if atom.from != role && atom.to != role && atom.payload != EventPayload::Endpoint(role)
+            {
+                return true;
+            }
+            let Some((route, _)) = self.source_separating_route(event.min(entry), event.max(entry))
+            else {
+                return false;
+            };
+            let (first, _, finish) = crate::invariant_some(self.source_scope_bounds(route));
+            self.source_roll_containing(first, finish) == Some(roll)
+        })
+    }
+
     /// A distinct fragment can execute the event while the complete source
     /// interval is borrowed only across opposite arms of an enclosing par.
     pub(crate) const fn source_range_parallel_to_event(
