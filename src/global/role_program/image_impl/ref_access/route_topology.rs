@@ -14,7 +14,6 @@ struct OfferAlternativeReader<'a> {
     count: usize,
     route_scopes: usize,
     route_index: usize,
-    predecessors: usize,
     permutation: usize,
     heads: usize,
     forks: usize,
@@ -35,7 +34,6 @@ impl<'a> OfferAlternativeReader<'a> {
             count,
             route_scopes: image.columns.route_scopes.offset as usize,
             route_index: image.route_index_start as usize,
-            predecessors,
             permutation,
             heads,
             forks: heads + count * 2,
@@ -68,17 +66,13 @@ impl<'a> OfferAlternativeReader<'a> {
     }
 
     const fn expected_fork(&self, before: usize, after: usize) -> Option<usize> {
-        let Some((scope, split)) = self
+        let Some((scope, _)) = self
             .image
             .program()
             .source_separating_route(self.effect(before), self.effect(after))
         else {
             return None;
         };
-        let prior = read_u16(self.bytes, self.predecessors + after * 2);
-        if prior != u16::MAX && self.effect(prior as usize) >= split {
-            return None;
-        }
         if scope.raw() >= self.image.columns.route_index_len {
             invalid_resident_descriptor();
         }
@@ -152,7 +146,7 @@ impl RoleImageRef {
     }
 
     /// Reconstruct every record and chain from source separation and the
-    /// independently sealed key permutation and causal predecessors. Future
+    /// independently sealed view/lane permutation. Future
     /// targets are checked before their outer links are used by this sweep.
     const fn validate_offer_alternatives<const E: usize>(&self, rows: &ValidationRows<E>) {
         let plan = OfferAlternativeReader::new(self, rows);

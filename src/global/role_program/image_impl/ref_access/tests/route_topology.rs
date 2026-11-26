@@ -160,15 +160,7 @@ fn compare_alternative_links(rows: &RoleImageRef) {
                 };
                 let target = raw.local_step_event(entry).unwrap().eff_index as usize;
                 let scope = raw.route_scope_by_slot(slot).unwrap();
-                if !rows.program().source_route_separates(scope, effect, target)
-                    || (right.start()..right.end()).any(|before| {
-                        rows.local_step_logical_role(before) == view
-                            && rows.program().source_precedes_scan(
-                                raw.local_step_event(before).unwrap().eff_index as usize,
-                                target,
-                            )
-                    })
-                {
+                if !rows.program().source_route_separates(scope, effect, target) {
                     continue;
                 }
                 if expected.is_none_or(|prior| entry < prior) {

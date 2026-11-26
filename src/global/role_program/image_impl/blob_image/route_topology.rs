@@ -9,7 +9,6 @@ use crate::global::{
 struct OfferAlternativeColumns<'a> {
     columns: &'a RoleImageColumns,
     route_index: usize,
-    predecessors: usize,
     permutation: usize,
     heads: usize,
     forks: usize,
@@ -28,7 +27,6 @@ impl<'a> OfferAlternativeColumns<'a> {
         Self {
             columns,
             route_index,
-            predecessors,
             permutation,
             heads,
             forks: heads + count * 2,
@@ -146,10 +144,8 @@ impl<const N: usize> RoleImageBytes<N> {
                 && right_start <= after
                 && after < right_start + right_len
             {
-                let prior = self.topology_u16(columns.predecessors + after * 2);
-                if prior != u16::MAX && prior as usize >= right_start {
-                    return None;
-                }
+                // This row leads into the right subtree. Even if its own
+                // predecessor is pending, a nested sibling can be enabled.
                 return Some(slot as usize);
             }
             conflict = PackedEventConflict::from_conflict(scopes.conflict(scope));

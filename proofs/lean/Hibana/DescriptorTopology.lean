@@ -1868,10 +1868,10 @@ private def offerAlternativeRoutes?
 private def sameOfferViewLane (left right : OfferTopologyEvent) : Bool :=
   left.view == right.view && left.lane == right.lane
 
-/-- Derive a target's fork from its preceding same-key source row. The causal
-predecessor is recomputed from all earlier rows, never from the stored table. -/
+/-- A link locates the first row on a nested path. Causal admission is
+checked for each visited row, including descendants of an unavailable row. -/
 private def expectedOfferAlternativeFork
-    (events : List OfferTopologyEvent) (regions : List ParallelRegion)
+    (events : List OfferTopologyEvent)
     (routes : List OfferAlternativeRoute) (step : Nat)
     (event : OfferTopologyEvent) : Option OfferAlternativeFork := do
   let previous ← ((events.take step).zipIdx.reverse).find? fun entry =>
@@ -1879,14 +1879,7 @@ private def expectedOfferAlternativeFork
   let route ← resolveUnique? (routes.filter fun route =>
     decide (route.start ≤ previous.1.effect ∧ previous.1.effect < route.split ∧
       route.split ≤ event.effect ∧ event.effect < route.stop))
-  let predecessor := greatestOfferViewPredecessor events regions step event
-  if predecessor == packedU16Absent then
-    pure { route, previous := previous.2 }
-  else
-    let prior ← events[predecessor]?
-    if prior.effect < route.split then
-      pure { route, previous := previous.2 }
-    else none
+  pure { route, previous := previous.2 }
 
 /-- Search source-derived records in increasing row order. Outer links use
 the target's previous left witness, not the target in the route's right arm. -/
@@ -1905,10 +1898,10 @@ private def expectedOfferAlternativeTarget
         | _, _ => false).getD packedU16Absent
 
 private def offerAlternativeColumnsExact
-    (events : List OfferTopologyEvent) (regions : List ParallelRegion)
+    (events : List OfferTopologyEvent)
     (routes : List OfferAlternativeRoute) (scopes heads forkSlots outer : List Nat) : Bool :=
   let forks := events.zipIdx.map fun (event, step) =>
-    expectedOfferAlternativeFork events regions routes step event
+    expectedOfferAlternativeFork events routes step event
   decide scopes.Nodup &&
   heads.length == events.length && forkSlots.length == events.length &&
   outer.length == events.length &&
@@ -1924,7 +1917,6 @@ private def offerAlternativeColumnsExact
 private def RustDescriptorImage.roleOfferAlternativesCheck?
     (image : RustDescriptorImage) : Option Bool := do
   let markers ← image.decodeScopeMarkers?
-  let regions ← offerSourceBinaryRegions? markers image.atomCount
   let routes ← offerAlternativeRoutes? markers image.atomCount
   let events ← image.decodeOfferTopologyEvents?
   let scopes ← image.decodeRouteScopeRows?
@@ -1934,19 +1926,17 @@ private def RustDescriptorImage.roleOfferAlternativesCheck?
   let heads ← readColumn image.roleOfferAlternativeHeadOffset
   let forkSlots ← readColumn image.roleOfferAlternativeScopeOffset
   let outer ← readColumn image.roleOfferAlternativeOuterOffset
-  pure (offerAlternativeColumnsExact events regions routes scopes heads forkSlots outer)
+  pure (offerAlternativeColumnsExact events routes scopes heads forkSlots outer)
 
 private def nestedRightOfferAlternativeColumns (heads forkSlots outer : List Nat) : Bool :=
   let events : List OfferTopologyEvent :=
     [{ effect := 0, view := 0, lane := 0, receive := true },
      { effect := 1, view := 0, lane := 0, receive := true },
      { effect := 2, view := 0, lane := 0, receive := true }]
-  let regions : List ParallelRegion :=
-    [{ start := 0, split := 1, stop := 3 }, { start := 1, split := 2, stop := 3 }]
   let routes : List OfferAlternativeRoute :=
     [{ scope := 0, start := 0, split := 1, stop := 3 },
      { scope := 1, start := 1, split := 2, stop := 3 }]
-  offerAlternativeColumnsExact events regions routes [0, 1] heads forkSlots outer
+  offerAlternativeColumnsExact events routes [0, 1] heads forkSlots outer
 
 /-- Omitting a head, changing a fork identity, or linking into a right-arm
 descendant must fail even if the remaining targets stay in source order. -/
@@ -1960,6 +1950,25 @@ private theorem nested_right_offer_alternative_source_controls :
     nestedRightOfferAlternativeColumns [1, 2, 65535] [65535, 0, 1]
       [65535, 2, 65535] = false := by
   decide
+
+/-- In A | ((B; reply) | C), the reply shares A and C's lane. B is on
+another lane. The reply needs B, while C is an independent branch entry.
+The lane's links must reach C through the reply. -/
+private theorem nested_offer_link_crosses_a_blocked_reply :
+    let reply : OfferTopologyEvent := { effect := 2, view := 0, lane := 0, receive := false }
+    let c : OfferTopologyEvent := { effect := 3, view := 0, lane := 0, receive := true }
+    let events : List OfferTopologyEvent :=
+      [{ effect := 0, view := 0, lane := 0, receive := true },
+       { effect := 1, view := 0, lane := 1, receive := true }, reply, c]
+    let routes : List OfferAlternativeRoute :=
+      [{ scope := 0, start := 0, split := 1, stop := 4 },
+       { scope := 1, start := 1, split := 3, stop := 4 }]
+    let regions : List ParallelRegion :=
+      [{ start := 0, split := 1, stop := 4 }, { start := 1, split := 3, stop := 4 }]
+    greatestOfferViewPredecessor events regions 2 reply = 1 ∧
+      greatestOfferViewPredecessor events regions 3 c = packedU16Absent ∧
+      offerAlternativeColumnsExact events routes [0, 1] [2, 65535, 3, 65535]
+        [65535, 65535, 0, 1] [65535, 65535, 65535, 65535] = true := by decide
 
 private def RustDescriptorImage.roleRollOfferHeadsCheck?
     (image : RustDescriptorImage) : Option Bool := do

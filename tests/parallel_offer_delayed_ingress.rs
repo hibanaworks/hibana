@@ -190,3 +190,82 @@ async fn offer_observes_delayed_receive_in_parallel_with_local_send_route()
     }
     panic!("parked on upstream TestTransport");
 }
+
+#[hibana_runtime::main(crate::in_process::InProcess::default())]
+#[test]
+async fn offer_reaches_a_nested_receive_past_an_unavailable_reply() {
+    use hibana::runtime::tap;
+
+    type Checkout = g::Msg<36, u64>;
+    type Receipt = g::Msg<37, u64>;
+    type CheckedOut = g::Msg<38, ()>;
+    let first = g::seq(
+        g::par(
+            g::send::<0, 2, g::Msg<30, ()>>(),
+            g::send::<0, 1, g::Msg<31, ()>>(),
+        ),
+        g::send::<1, 0, g::Msg<32, ()>>(),
+    );
+    let second = g::seq(
+        g::par(
+            g::send::<0, 2, g::Msg<33, ()>>(),
+            g::send::<0, 1, g::Msg<34, ()>>(),
+        ),
+        g::send::<1, 0, g::Msg<35, ()>>(),
+    );
+    let checkout = g::seq(
+        g::send::<0, 1, Checkout>(),
+        g::seq(g::send::<1, 0, Receipt>(), g::send::<0, 2, CheckedOut>()),
+    );
+    let global = g::route(first, g::route(second, checkout)).roll();
+    let source_program = project::<0>(&global);
+    let store_program = project::<1>(&global);
+    let observer_program = project::<2>(&global);
+    let lane = |label: u8| {
+        let event = tap::projected(&store_program)
+            .find(|row| {
+                matches!(row.id(), tap::PROJECTED_SEND | tap::PROJECTED_RECV)
+                    && row.arg0() as u8 == label
+            })
+            .unwrap();
+        (event.arg0() >> 8) as u8
+    };
+    assert_eq!(lane(32), lane(36));
+    assert_eq!(lane(35), lane(36));
+    assert_ne!(lane(34), lane(35));
+
+    let mut slab = [0; 32 * 1024];
+    let mut storage = SessionKitStorage::uninit();
+    let session = SessionId::new(169);
+    let rv = storage
+        .init()
+        .rendezvous(&mut slab, common::TestTransport::new())
+        .unwrap();
+    let mut source = rv.enter(session, &source_program).unwrap();
+    let mut store = rv.enter(session, &store_program).unwrap();
+    let mut observer = rv.enter(session, &observer_program).unwrap();
+    async {
+        for _ in 0..2 {
+            observer.recv::<CheckedOut>().await.unwrap();
+        }
+    };
+    async {
+        for expected in [1, 2] {
+            hibana_runtime::yield_now().await;
+            source.send::<Checkout>(&expected).await.unwrap();
+            assert_eq!(source.recv::<Receipt>().await.unwrap(), expected);
+            source.send::<CheckedOut>(&()).await.unwrap();
+        }
+    };
+    for expected in [1, 2] {
+        let request = store
+            .offer()
+            .await
+            .unwrap()
+            .recv::<Checkout>()
+            .await
+            .unwrap();
+        assert_eq!(request, expected);
+        store.send::<Receipt>(&request).await.unwrap();
+    }
+}
